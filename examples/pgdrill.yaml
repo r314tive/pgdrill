@@ -1,0 +1,25 @@
+cluster:
+  name: production-main
+
+provider:
+  type: wal-g
+  env:
+    WALG_FILE_PREFIX: /backups/postgresql/production-main
+
+target:
+  type: local
+  work_dir: /var/tmp/pgdrill/production-main
+
+recovery:
+  target: latest
+
+probes:
+  - type: pg_isready
+  - type: sql
+    name: server_version
+    query: "select version()"
+  - type: amcheck
+    mode: heap
+
+report:
+  format: json
