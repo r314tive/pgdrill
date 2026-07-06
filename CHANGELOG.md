@@ -8,6 +8,11 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- Initial pgBackRest catalog discovery adapter for `pgbackrest info
+  --output=json` with fixture-driven tests and `pgdrill catalog list` support.
+
 ## [0.1.0-alpha.1] - 2026-07-06
 
 ### Added

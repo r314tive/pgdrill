@@ -129,6 +129,78 @@ recovery:
 	}
 }
 
+func TestCatalogListCommandJSONPgBackRest(t *testing.T) {
+	dir := t.TempDir()
+	pgBackRestPath := filepath.Join(dir, "pgbackrest")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+
+	writeExecutable(t, pgBackRestPath, `#!/bin/sh
+if [ "$1" != "--config" ] || [ "$2" != "/etc/pgbackrest.conf" ] || [ "$3" != "--stanza" ] || [ "$4" != "main" ] || [ "$5" != "--repo" ] || [ "$6" != "1" ] || [ "$7" != "info" ] || [ "$8" != "--output=json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 64
+fi
+cat <<'JSON'
+[
+  {
+    "name": "main",
+    "status": {"code": 0, "message": "ok"},
+    "db": [{"id": 1, "system-id": 73924987654321, "version": "16"}],
+    "backup": [
+      {
+        "label": "20240502-030405F",
+        "type": "full",
+        "error": false,
+        "database": {"id": 1, "repo-key": 1},
+        "archive": {"start": "0000000100000000000000A1", "stop": "0000000100000000000000A2"},
+        "lsn": {"start": "0/A1000028", "stop": "0/A2000028"},
+        "timestamp": {"start": 1714619045, "stop": 1714619645}
+      }
+    ]
+  }
+]
+JSON
+`)
+
+	writeFile(t, configPath, `
+cluster:
+  name: test-main
+provider:
+  type: pgbackrest
+  binary: `+pgBackRestPath+`
+  config_path: /etc/pgbackrest.conf
+  stanza: main
+  repo: "1"
+target:
+  type: local
+  work_dir: `+dir+`
+recovery:
+  target: latest
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"catalog", "list", "-f", configPath, "-format", "json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+
+	var output catalogListOutput
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("parse catalog output: %v\n%s", err, stdout.String())
+	}
+	if output.Provider != model.ProviderPGBackRest {
+		t.Fatalf("unexpected provider %q", output.Provider)
+	}
+	if output.BackupCount != 1 || len(output.Backups) != 1 {
+		t.Fatalf("unexpected backups: count=%d backups=%#v", output.BackupCount, output.Backups)
+	}
+	if output.Backups[0].ID != "pgbackrest:main/20240502-030405F" {
+		t.Fatalf("unexpected backup id %q", output.Backups[0].ID)
+	}
+	if output.Backups[0].PostgreSQLVersion != "16" {
+		t.Fatalf("unexpected postgres version %q", output.Backups[0].PostgreSQLVersion)
+	}
+}
+
 func TestCatalogListRequiresConfig(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 

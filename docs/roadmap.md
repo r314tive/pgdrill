@@ -66,7 +66,9 @@ pgdrill catalog list -f pgdrill.yaml
 
 - Barman manifest generation workflows for backups that do not already have a
   manifest.
-- pgBackRest adapter: `info --output=json`, `check`, `verify`, `restore`.
+- pgBackRest catalog discovery: `info --output=json`.
+- pgBackRest provider checks and restore planning: `check`, `verify`,
+  `restore`.
 - Richer `pg_verifybackup` profiles and probe presets.
 - Metrics export.
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/r314tive/pgdrill/internal/adapters/barman"
+	"github.com/r314tive/pgdrill/internal/adapters/pgbackrest"
 	"github.com/r314tive/pgdrill/internal/adapters/walg"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
@@ -40,6 +41,17 @@ func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig)
 			RedactValues: cfg.RedactValues,
 			BarmanVerify: barmanVerifyConfig(cfg.BarmanVerify),
 			VerifyBackup: verifyBackup,
+		}, nil), nil
+	case model.ProviderPGBackRest:
+		return pgbackrest.New(pgbackrest.Config{
+			Binary:       cfg.Binary,
+			ConfigPath:   cfg.ConfigPath,
+			Stanza:       cfg.Stanza,
+			Repo:         cfg.Repo,
+			Env:          cfg.Env,
+			WorkDir:      cfg.WorkDir,
+			Timeout:      cfg.Timeout.Duration,
+			RedactValues: cfg.RedactValues,
 		}, nil), nil
 	default:
 		return nil, fmt.Errorf("provider %q is not implemented", cfg.Type)

@@ -13,8 +13,8 @@ operational question:
 
 Pre-alpha. The repository has the first canonical model, core interfaces,
 command runner, strict configuration loading, initial catalog discovery adapters
-for WAL-G and Barman, provider-side checks for Barman and optional WAL-G
-`wal-verify`, Barman `show-backup` evidence, optional Barman
+for WAL-G, Barman, and pgBackRest, provider-side checks for Barman and optional
+WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
 `verify-backup`, JSON drill report persistence, local PostgreSQL startup for
 restore targets, optional `pg_verifybackup` restore checks, `pg_isready`, SQL,
 `pg_amcheck`, and `pg_dump` probes, and first useful CLI surfaces for catalog,

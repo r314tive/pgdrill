@@ -32,6 +32,8 @@ type ProviderConfig struct {
 	Binary       string             `json:"binary,omitempty" yaml:"binary,omitempty"`
 	ConfigPath   string             `json:"config_path,omitempty" yaml:"config_path,omitempty"`
 	Server       string             `json:"server,omitempty" yaml:"server,omitempty"`
+	Stanza       string             `json:"stanza,omitempty" yaml:"stanza,omitempty"`
+	Repo         string             `json:"repo,omitempty" yaml:"repo,omitempty"`
 	WALVerify    WALVerifyConfig    `json:"wal_verify,omitempty" yaml:"wal_verify,omitempty"`
 	BarmanVerify BarmanVerifyConfig `json:"barman_verify_backup,omitempty" yaml:"barman_verify_backup,omitempty"`
 	Env          map[string]string  `json:"env,omitempty" yaml:"env,omitempty"`

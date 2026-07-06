@@ -177,6 +177,38 @@ target:
 	}
 }
 
+func TestLoadPgBackRestProviderConfig(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+provider:
+  type: pgbackrest
+  binary: /usr/bin/pgbackrest
+  config_path: /etc/pgbackrest.conf
+  stanza: main
+  repo: "1"
+target:
+  type: local
+`), "yaml")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Provider.Type != model.ProviderPGBackRest {
+		t.Fatalf("unexpected provider type %q", cfg.Provider.Type)
+	}
+	if cfg.Provider.Binary != "/usr/bin/pgbackrest" {
+		t.Fatalf("unexpected binary %q", cfg.Provider.Binary)
+	}
+	if cfg.Provider.ConfigPath != "/etc/pgbackrest.conf" {
+		t.Fatalf("unexpected config path %q", cfg.Provider.ConfigPath)
+	}
+	if cfg.Provider.Stanza != "main" {
+		t.Fatalf("unexpected stanza %q", cfg.Provider.Stanza)
+	}
+	if cfg.Provider.Repo != "1" {
+		t.Fatalf("unexpected repo %q", cfg.Provider.Repo)
+	}
+}
+
 func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 	_, err := Load(strings.NewReader(`
 provider:

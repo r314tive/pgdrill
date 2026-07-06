@@ -95,9 +95,22 @@ Initial value:
 
 ## pgBackRest
 
-Planned commands:
+Initial discovery command:
 
 - `pgbackrest info --output=json`
+
+Implemented normalization:
+
+- provider ID: `<stanza>/<backup-label>`
+- status: available unless the backup entry reports `error: true`
+- kind: `full`, `differential`, `incremental`
+- timestamps from `timestamp.start` and `timestamp.stop`
+- WAL range from `archive.start`, `archive.stop`, `lsn.start`, and `lsn.stop`
+- PostgreSQL version and system identifier from the stanza `db` metadata
+- backup chain metadata from `prior` and `reference-total`
+
+Planned commands:
+
 - `pgbackrest check`
 - `pgbackrest verify`
 - `pgbackrest restore`
