@@ -52,6 +52,7 @@ func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig)
 			WorkDir:      cfg.WorkDir,
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
+			Check:        pgBackRestCheckConfig(cfg.PGBackRest),
 		}, nil), nil
 	default:
 		return nil, fmt.Errorf("provider %q is not implemented", cfg.Type)
@@ -75,6 +76,17 @@ func barmanVerifyConfig(cfg config.BarmanVerifyConfig) barman.BarmanVerifyConfig
 		Enabled:      cfg.Enabled,
 		Timeout:      cfg.Timeout.Duration,
 		RedactValues: append([]string{}, cfg.RedactValues...),
+	}
+}
+
+func pgBackRestCheckConfig(cfg config.PGBackRestConfig) pgbackrest.CheckConfig {
+	return pgbackrest.CheckConfig{
+		Enabled:            cfg.Enabled,
+		Timeout:            cfg.Timeout.Duration,
+		NoArchiveCheck:     cfg.NoArchiveCheck,
+		NoArchiveModeCheck: cfg.NoArchiveModeCheck,
+		ArchiveTimeout:     cfg.ArchiveTimeout.Duration,
+		RedactValues:       append([]string{}, cfg.RedactValues...),
 	}
 }
 

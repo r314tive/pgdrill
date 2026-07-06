@@ -147,7 +147,7 @@ func TestAdapterDiscoverBackupsReturnsStructuredCommandFailure(t *testing.T) {
 	}
 }
 
-func TestValidateCatalogSkippedUntilPgBackRestChecksAreImplemented(t *testing.T) {
+func TestValidateCatalogSkipsPgBackRestCheckUntilEnabled(t *testing.T) {
 	report, err := New(Config{}, &fakeRunner{}).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{}, model.RecoveryTarget{})
 	if err != nil {
 		t.Fatalf("validate catalog: %v", err)
@@ -157,6 +157,81 @@ func TestValidateCatalogSkippedUntilPgBackRestChecksAreImplemented(t *testing.T)
 	}
 	if report.Checks[0].Status != model.CheckStatusSkipped {
 		t.Fatalf("expected skipped check, got %#v", report.Checks[0])
+	}
+	if report.Checks[0].Name != "pgbackrest-check" {
+		t.Fatalf("unexpected skipped check name %q", report.Checks[0].Name)
+	}
+}
+
+func TestValidateCatalogRunsPgBackRestCheck(t *testing.T) {
+	runner := &fakeRunner{result: successResult([]byte("check ok\n"))}
+	report, err := New(Config{
+		Binary:       "/usr/local/bin/pgbackrest",
+		ConfigPath:   "/etc/pgbackrest.conf",
+		Stanza:       "main",
+		Repo:         "1",
+		Timeout:      time.Minute,
+		RedactValues: []string{"secret"},
+		Check: CheckConfig{
+			Enabled:            true,
+			Timeout:            2 * time.Minute,
+			NoArchiveCheck:     true,
+			NoArchiveModeCheck: true,
+			ArchiveTimeout:     30 * time.Second,
+			RedactValues:       []string{"check-secret"},
+		},
+	}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{}, model.RecoveryTarget{})
+	if err != nil {
+		t.Fatalf("validate catalog: %v", err)
+	}
+	if len(report.Checks) != 1 {
+		t.Fatalf("expected one check, got %#v", report.Checks)
+	}
+	if report.Checks[0].Name != "pgbackrest-check" || report.Checks[0].Status != model.CheckStatusPassed {
+		t.Fatalf("unexpected check %#v", report.Checks[0])
+	}
+	if len(report.Evidence) != 1 {
+		t.Fatalf("expected command evidence, got %#v", report.Evidence)
+	}
+	wantArgs := []string{"--config", "/etc/pgbackrest.conf", "--stanza", "main", "--repo", "1", "check", "--no-archive-check", "--no-archive-mode-check", "--archive-timeout=30"}
+	if !reflect.DeepEqual(runner.invocation.Args, wantArgs) {
+		t.Fatalf("unexpected check args:\ngot  %#v\nwant %#v", runner.invocation.Args, wantArgs)
+	}
+	if runner.invocation.Timeout != 2*time.Minute {
+		t.Fatalf("unexpected check timeout %s", runner.invocation.Timeout)
+	}
+	if got, want := runner.invocation.RedactValues, []string{"secret", "check-secret"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected check redactions: got %#v want %#v", got, want)
+	}
+}
+
+func TestValidateCatalogReportsPgBackRestCheckFailure(t *testing.T) {
+	runner := &fakeRunner{result: command.Result{
+		Raw: command.RawEvidence{Stderr: []byte("archive missing")},
+		Evidence: model.CommandEvidence{
+			Path:   "pgbackrest",
+			Args:   []string{"check"},
+			Stderr: "archive missing",
+			ExitStatus: model.ExitStatus{
+				Started:  true,
+				Exited:   true,
+				ExitCode: 28,
+			},
+			FinishedAt: time.Date(2024, 5, 3, 4, 0, 0, 0, time.UTC),
+		},
+	}}
+	report, err := New(Config{Check: CheckConfig{Enabled: true}}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{}, model.RecoveryTarget{})
+	if err != nil {
+		t.Fatalf("validate catalog: %v", err)
+	}
+	if len(report.Checks) != 1 {
+		t.Fatalf("expected one check, got %#v", report.Checks)
+	}
+	if report.Checks[0].Status != model.CheckStatusFailed {
+		t.Fatalf("expected failed check, got %#v", report.Checks[0])
+	}
+	if !strings.Contains(report.Checks[0].Message, "exit code 28") {
+		t.Fatalf("expected structured exit status, got %#v", report.Checks[0])
 	}
 }
 

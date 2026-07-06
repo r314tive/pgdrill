@@ -185,6 +185,14 @@ provider:
   config_path: /etc/pgbackrest.conf
   stanza: main
   repo: "1"
+  pgbackrest_check:
+    enabled: true
+    timeout: 2m
+    no_archive_check: true
+    no_archive_mode_check: true
+    archive_timeout: 30s
+    redact_values:
+      - pgbackrest-secret
 target:
   type: local
 `), "yaml")
@@ -206,6 +214,21 @@ target:
 	}
 	if cfg.Provider.Repo != "1" {
 		t.Fatalf("unexpected repo %q", cfg.Provider.Repo)
+	}
+	if !cfg.Provider.PGBackRest.Enabled {
+		t.Fatal("expected pgbackrest_check to be enabled")
+	}
+	if cfg.Provider.PGBackRest.Timeout.Duration != 2*time.Minute {
+		t.Fatalf("unexpected pgbackrest_check timeout %s", cfg.Provider.PGBackRest.Timeout.Duration)
+	}
+	if !cfg.Provider.PGBackRest.NoArchiveCheck || !cfg.Provider.PGBackRest.NoArchiveModeCheck {
+		t.Fatalf("unexpected pgbackrest_check flags %#v", cfg.Provider.PGBackRest)
+	}
+	if cfg.Provider.PGBackRest.ArchiveTimeout.Duration != 30*time.Second {
+		t.Fatalf("unexpected pgbackrest_check archive timeout %s", cfg.Provider.PGBackRest.ArchiveTimeout.Duration)
+	}
+	if got, want := cfg.Provider.PGBackRest.RedactValues, []string{"pgbackrest-secret"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("unexpected pgbackrest_check redactions %#v", got)
 	}
 }
 

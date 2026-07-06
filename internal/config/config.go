@@ -36,6 +36,7 @@ type ProviderConfig struct {
 	Repo         string             `json:"repo,omitempty" yaml:"repo,omitempty"`
 	WALVerify    WALVerifyConfig    `json:"wal_verify,omitempty" yaml:"wal_verify,omitempty"`
 	BarmanVerify BarmanVerifyConfig `json:"barman_verify_backup,omitempty" yaml:"barman_verify_backup,omitempty"`
+	PGBackRest   PGBackRestConfig   `json:"pgbackrest_check,omitempty" yaml:"pgbackrest_check,omitempty"`
 	Env          map[string]string  `json:"env,omitempty" yaml:"env,omitempty"`
 	WorkDir      string             `json:"work_dir,omitempty" yaml:"work_dir,omitempty"`
 	Timeout      Duration           `json:"timeout,omitempty" yaml:"timeout,omitempty"`
@@ -56,6 +57,15 @@ type BarmanVerifyConfig struct {
 	Enabled      bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 	Timeout      Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	RedactValues []string `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
+}
+
+type PGBackRestConfig struct {
+	Enabled            bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Timeout            Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	NoArchiveCheck     bool     `json:"no_archive_check,omitempty" yaml:"no_archive_check,omitempty"`
+	NoArchiveModeCheck bool     `json:"no_archive_mode_check,omitempty" yaml:"no_archive_mode_check,omitempty"`
+	ArchiveTimeout     Duration `json:"archive_timeout,omitempty" yaml:"archive_timeout,omitempty"`
+	RedactValues       []string `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
 }
 
 type TargetConfig struct {

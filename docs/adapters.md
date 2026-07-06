@@ -109,9 +109,17 @@ Implemented normalization:
 - PostgreSQL version and system identifier from the stanza `db` metadata
 - backup chain metadata from `prior` and `reference-total`
 
+Implemented provider validation:
+
+- optional `pgbackrest check` when `provider.pgbackrest_check.enabled` is true
+- optional command flags for `--no-archive-check`,
+  `--no-archive-mode-check`, and `--archive-timeout=<seconds>`
+- disabled by default because `pgbackrest check` validates archive
+  configuration and may force PostgreSQL WAL/archive activity on the checked
+  host
+
 Planned commands:
 
-- `pgbackrest check`
 - `pgbackrest verify`
 - `pgbackrest restore`
 

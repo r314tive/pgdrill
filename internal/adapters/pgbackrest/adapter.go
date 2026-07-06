@@ -24,6 +24,16 @@ type Config struct {
 	WorkDir      string
 	Timeout      time.Duration
 	RedactValues []string
+	Check        CheckConfig
+}
+
+type CheckConfig struct {
+	Enabled            bool
+	Timeout            time.Duration
+	NoArchiveCheck     bool
+	NoArchiveModeCheck bool
+	ArchiveTimeout     time.Duration
+	RedactValues       []string
 }
 
 type Adapter struct {
@@ -76,16 +86,48 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 	return catalog, nil
 }
 
-func (a *Adapter) ValidateCatalog(_ context.Context, _ model.BackupCatalog, _ model.Backup, _ model.RecoveryTarget) (model.CheckReport, error) {
+func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, _ model.Backup, _ model.RecoveryTarget) (model.CheckReport, error) {
+	if !a.cfg.Check.Enabled {
+		return model.CheckReport{
+			Checks: []model.Check{{
+				Name:    "pgbackrest-check",
+				Status:  model.CheckStatusSkipped,
+				Message: "pgBackRest check is not enabled; archive configuration validation was not run.",
+				Attributes: map[string]string{
+					"operation": "pgbackrest-check",
+				},
+			}},
+		}, nil
+	}
+
+	result, err := a.runner.Run(ctx, command.Invocation{
+		Path:         a.binary(),
+		Args:         a.checkArgs(),
+		Env:          a.cfg.Env,
+		WorkDir:      a.cfg.WorkDir,
+		Timeout:      a.checkTimeout(),
+		RedactValues: a.checkRedactions(),
+	})
+	evidence := commandEvidence("check", result.Evidence)
+	check := model.Check{
+		Name:        "pgbackrest-check",
+		Status:      model.CheckStatusPassed,
+		EvidenceIDs: []string{evidence.ID},
+		Attributes: map[string]string{
+			"operation": "pgbackrest-check",
+		},
+	}
+	if err != nil {
+		check.Status = model.CheckStatusFailed
+		check.Message = fmt.Sprintf("run pgbackrest check: %v", err)
+	}
+	if !result.Evidence.ExitStatus.Success {
+		check.Status = model.CheckStatusFailed
+		check.Message = fmt.Sprintf("pgbackrest check failed: %s", result.Evidence.ExitStatus.Summary())
+	}
 	return model.CheckReport{
-		Checks: []model.Check{{
-			Name:    "pgbackrest-provider-validation",
-			Status:  model.CheckStatusSkipped,
-			Message: "pgBackRest check/verify integration is not implemented yet; catalog discovery evidence is still recorded.",
-			Attributes: map[string]string{
-				"operation": "pgbackrest-validation",
-			},
-		}},
+		Checks:   []model.Check{check},
+		Evidence: []model.EvidenceRecord{evidence},
 	}, nil
 }
 
@@ -106,6 +148,32 @@ func (a *Adapter) infoArgs() []string {
 	return args
 }
 
+func (a *Adapter) checkArgs() []string {
+	args := a.globalArgs()
+	args = append(args, "check")
+	if a.cfg.Check.NoArchiveCheck {
+		args = append(args, "--no-archive-check")
+	}
+	if a.cfg.Check.NoArchiveModeCheck {
+		args = append(args, "--no-archive-mode-check")
+	}
+	if a.cfg.Check.ArchiveTimeout > 0 {
+		args = append(args, "--archive-timeout="+durationSeconds(a.cfg.Check.ArchiveTimeout))
+	}
+	return args
+}
+
+func (a *Adapter) checkTimeout() time.Duration {
+	if a.cfg.Check.Timeout > 0 {
+		return a.cfg.Check.Timeout
+	}
+	return a.cfg.Timeout
+}
+
+func (a *Adapter) checkRedactions() []string {
+	return append(append([]string{}, a.cfg.RedactValues...), a.cfg.Check.RedactValues...)
+}
+
 func (a *Adapter) globalArgs() []string {
 	args := []string{}
 	if a.cfg.ConfigPath != "" {
@@ -118,6 +186,14 @@ func (a *Adapter) globalArgs() []string {
 		args = append(args, "--repo", a.cfg.Repo)
 	}
 	return args
+}
+
+func durationSeconds(duration time.Duration) string {
+	seconds := int64(duration / time.Second)
+	if seconds <= 0 {
+		seconds = 1
+	}
+	return strconv.FormatInt(seconds, 10)
 }
 
 func ParseInfo(data []byte, defaultStanza string) ([]model.Backup, error) {
