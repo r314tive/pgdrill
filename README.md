@@ -11,8 +11,14 @@ operational question:
 
 ## Status
 
-Pre-alpha. The repository is being initialized around the core model and command
-surface before provider adapters are implemented.
+Pre-alpha. The repository has the first canonical model, core interfaces,
+command runner, strict configuration loading, initial catalog discovery adapters
+for WAL-G and Barman, provider-side checks for Barman and optional WAL-G
+`wal-verify`, Barman `show-backup` evidence, optional Barman
+`verify-backup`, JSON drill report persistence, local PostgreSQL startup for
+restore targets, optional `pg_verifybackup` restore checks, `pg_isready`, SQL,
+`pg_amcheck`, and `pg_dump` probes, and first useful CLI surfaces for catalog,
+report, and drill execution.
 
 ## Goals
 
@@ -62,7 +68,16 @@ make check
 go run ./cmd/pgdrill version
 go run ./cmd/pgdrill sample-config
 go run ./cmd/pgdrill explain
+go run ./cmd/pgdrill catalog list -f examples/pgdrill.yaml
+go run ./cmd/pgdrill run -f examples/pgdrill.yaml
+go run ./cmd/pgdrill report show path/to/report.json
 ```
+
+See [docs/roadmap.md](docs/roadmap.md) for the current implementation sequence
+and CLI/UI direction.
+
+Release discipline is described in [docs/release.md](docs/release.md), and
+user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

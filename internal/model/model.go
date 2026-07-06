@@ -1,11 +1,17 @@
 package model
 
+import (
+	"strconv"
+	"time"
+)
+
 type ProviderType string
 
 const (
-	ProviderWALG       ProviderType = "wal-g"
-	ProviderBarman     ProviderType = "barman"
-	ProviderPGBackRest ProviderType = "pgbackrest"
+	ProviderWALG        ProviderType = "wal-g"
+	ProviderBarman      ProviderType = "barman"
+	ProviderPGBackRest  ProviderType = "pgbackrest"
+	ProviderPGProbackup ProviderType = "pg_probackup"
 )
 
 type RestoreTargetType string
@@ -36,11 +42,26 @@ const (
 	ProbePGDump    ProbeType = "pg_dump"
 )
 
+type ToolType string
+
+const (
+	ToolWALG           ToolType = "wal-g"
+	ToolBarman         ToolType = "barman"
+	ToolPGBackRest     ToolType = "pgbackrest"
+	ToolPGProbackup    ToolType = "pg_probackup"
+	ToolPGVerifyBackup ToolType = "pg_verifybackup"
+	ToolPGAMCheck      ToolType = "pg_amcheck"
+	ToolPGDump         ToolType = "pg_dump"
+	ToolPGIsReady      ToolType = "pg_isready"
+	ToolPSQL           ToolType = "psql"
+)
+
 type Overview struct {
 	Providers       []ProviderType       `json:"providers"`
 	RestoreTargets  []RestoreTargetType  `json:"restore_targets"`
 	RecoveryTargets []RecoveryTargetType `json:"recovery_targets"`
 	Probes          []ProbeType          `json:"probes"`
+	Tools           []ToolType           `json:"tools"`
 }
 
 func ProjectOverview() Overview {
@@ -49,6 +70,7 @@ func ProjectOverview() Overview {
 			ProviderWALG,
 			ProviderBarman,
 			ProviderPGBackRest,
+			ProviderPGProbackup,
 		},
 		RestoreTargets: []RestoreTargetType{
 			RestoreTargetLocal,
@@ -69,5 +91,251 @@ func ProjectOverview() Overview {
 			ProbeAMCheck,
 			ProbePGDump,
 		},
+		Tools: []ToolType{
+			ToolWALG,
+			ToolBarman,
+			ToolPGBackRest,
+			ToolPGProbackup,
+			ToolPGVerifyBackup,
+			ToolPGAMCheck,
+			ToolPGDump,
+			ToolPGIsReady,
+			ToolPSQL,
+		},
 	}
+}
+
+type BackupKind string
+
+const (
+	BackupKindUnknown      BackupKind = "unknown"
+	BackupKindFull         BackupKind = "full"
+	BackupKindDifferential BackupKind = "differential"
+	BackupKindIncremental  BackupKind = "incremental"
+	BackupKindDelta        BackupKind = "delta"
+	BackupKindLogical      BackupKind = "logical"
+)
+
+type BackupStatus string
+
+const (
+	BackupStatusUnknown       BackupStatus = "unknown"
+	BackupStatusAvailable     BackupStatus = "available"
+	BackupStatusWaitingForWAL BackupStatus = "waiting_for_wal"
+	BackupStatusRunning       BackupStatus = "running"
+	BackupStatusFailed        BackupStatus = "failed"
+	BackupStatusInvalid       BackupStatus = "invalid"
+)
+
+type WALRange struct {
+	StartSegment string `json:"start_segment,omitempty"`
+	EndSegment   string `json:"end_segment,omitempty"`
+	StartLSN     string `json:"start_lsn,omitempty"`
+	EndLSN       string `json:"end_lsn,omitempty"`
+	Timeline     string `json:"timeline,omitempty"`
+}
+
+type Backup struct {
+	ID                string            `json:"id"`
+	Provider          ProviderType      `json:"provider"`
+	ProviderID        string            `json:"provider_id"`
+	ClusterName       string            `json:"cluster_name,omitempty"`
+	ParentID          string            `json:"parent_id,omitempty"`
+	Kind              BackupKind        `json:"kind"`
+	Status            BackupStatus      `json:"status"`
+	StartedAt         *time.Time        `json:"started_at,omitempty"`
+	FinishedAt        *time.Time        `json:"finished_at,omitempty"`
+	LastModifiedAt    *time.Time        `json:"last_modified_at,omitempty"`
+	WALRange          WALRange          `json:"wal_range,omitempty"`
+	PostgreSQLVersion string            `json:"postgresql_version,omitempty"`
+	DataDirectory     string            `json:"data_directory,omitempty"`
+	Hostname          string            `json:"hostname,omitempty"`
+	Permanent         bool              `json:"permanent,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
+}
+
+func ProviderScopedID(provider ProviderType, providerID string) string {
+	if providerID == "" {
+		return string(provider)
+	}
+	return string(provider) + ":" + providerID
+}
+
+type BackupCatalog struct {
+	Provider ProviderType     `json:"provider"`
+	Backups  []Backup         `json:"backups"`
+	Evidence []EvidenceRecord `json:"evidence,omitempty"`
+}
+
+type RecoveryTarget struct {
+	Type      RecoveryTargetType `json:"type"`
+	Value     string             `json:"value,omitempty"`
+	Timeline  string             `json:"timeline,omitempty"`
+	Inclusive *bool              `json:"inclusive,omitempty"`
+}
+
+type TargetSpec struct {
+	Type    RestoreTargetType `json:"type"`
+	WorkDir string            `json:"work_dir,omitempty"`
+	Labels  map[string]string `json:"labels,omitempty"`
+}
+
+type RuntimeConfig struct {
+	DataDirectory  string            `json:"data_directory,omitempty"`
+	Port           int               `json:"port,omitempty"`
+	Environment    map[string]string `json:"environment,omitempty"`
+	PostgresBinary string            `json:"postgres_binary,omitempty"`
+}
+
+type RunningPostgres struct {
+	ConnString        string `json:"conn_string,omitempty"`
+	DataDirectory     string `json:"data_directory,omitempty"`
+	PostgreSQLVersion string `json:"postgresql_version,omitempty"`
+	Host              string `json:"host,omitempty"`
+	Port              int    `json:"port,omitempty"`
+}
+
+type CommandSpec struct {
+	Tool       ToolType          `json:"tool,omitempty"`
+	Path       string            `json:"path,omitempty"`
+	Args       []string          `json:"args,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	WorkDir    string            `json:"work_dir,omitempty"`
+	Timeout    string            `json:"timeout,omitempty"`
+	Redactions []string          `json:"-"`
+}
+
+type FileSpec struct {
+	Path    string `json:"path"`
+	Content string `json:"-"`
+	Mode    string `json:"mode,omitempty"`
+	Append  bool   `json:"append,omitempty"`
+}
+
+type RestoreStep struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Command     *CommandSpec      `json:"command,omitempty"`
+	Files       []FileSpec        `json:"files,omitempty"`
+	Inputs      map[string]string `json:"inputs,omitempty"`
+	Outputs     map[string]string `json:"outputs,omitempty"`
+}
+
+type RestorePlan struct {
+	Provider       ProviderType     `json:"provider"`
+	BackupID       string           `json:"backup_id"`
+	Target         TargetSpec       `json:"target"`
+	RecoveryTarget RecoveryTarget   `json:"recovery_target"`
+	Steps          []RestoreStep    `json:"steps"`
+	Runtime        RuntimeConfig    `json:"runtime,omitempty"`
+	Evidence       []EvidenceRecord `json:"evidence,omitempty"`
+}
+
+type CheckStatus string
+
+const (
+	CheckStatusUnknown CheckStatus = "unknown"
+	CheckStatusPassed  CheckStatus = "passed"
+	CheckStatusFailed  CheckStatus = "failed"
+	CheckStatusWarning CheckStatus = "warning"
+	CheckStatusSkipped CheckStatus = "skipped"
+)
+
+type Check struct {
+	Name        string            `json:"name"`
+	Probe       ProbeType         `json:"probe,omitempty"`
+	Status      CheckStatus       `json:"status"`
+	Message     string            `json:"message,omitempty"`
+	EvidenceIDs []string          `json:"evidence_ids,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
+}
+
+type CheckReport struct {
+	Checks   []Check          `json:"checks"`
+	Evidence []EvidenceRecord `json:"evidence,omitempty"`
+}
+
+type DrillStatus string
+
+const (
+	DrillStatusUnknown DrillStatus = "unknown"
+	DrillStatusPassed  DrillStatus = "passed"
+	DrillStatusFailed  DrillStatus = "failed"
+	DrillStatusAborted DrillStatus = "aborted"
+)
+
+type DrillResult struct {
+	ID             string           `json:"id"`
+	Provider       ProviderType     `json:"provider"`
+	Backup         Backup           `json:"backup"`
+	Target         TargetSpec       `json:"target"`
+	RecoveryTarget RecoveryTarget   `json:"recovery_target"`
+	StartedAt      time.Time        `json:"started_at"`
+	FinishedAt     time.Time        `json:"finished_at"`
+	Status         DrillStatus      `json:"status"`
+	Checks         []Check          `json:"checks,omitempty"`
+	Evidence       []EvidenceRecord `json:"evidence,omitempty"`
+}
+
+type EvidenceKind string
+
+const (
+	EvidenceCommand EvidenceKind = "command"
+	EvidenceCheck   EvidenceKind = "check"
+	EvidenceFile    EvidenceKind = "file"
+	EvidencePlan    EvidenceKind = "plan"
+	EvidenceRuntime EvidenceKind = "runtime"
+)
+
+type EvidenceRecord struct {
+	ID          string            `json:"id"`
+	Kind        EvidenceKind      `json:"kind"`
+	Source      string            `json:"source"`
+	CollectedAt time.Time         `json:"collected_at"`
+	Command     *CommandEvidence  `json:"command,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
+}
+
+type CommandEvidence struct {
+	Path           string            `json:"path"`
+	Args           []string          `json:"args,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	WorkDir        string            `json:"work_dir,omitempty"`
+	StartedAt      time.Time         `json:"started_at"`
+	FinishedAt     time.Time         `json:"finished_at"`
+	DurationMillis int64             `json:"duration_millis"`
+	ExitStatus     ExitStatus        `json:"exit_status"`
+	Stdout         string            `json:"stdout,omitempty"`
+	Stderr         string            `json:"stderr,omitempty"`
+}
+
+type ExitStatus struct {
+	Started  bool   `json:"started"`
+	Exited   bool   `json:"exited"`
+	Success  bool   `json:"success"`
+	ExitCode int    `json:"exit_code"`
+	TimedOut bool   `json:"timed_out,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+func (s ExitStatus) Summary() string {
+	if !s.Started {
+		if s.Error != "" {
+			return "not started: " + s.Error
+		}
+		return "not started"
+	}
+	if s.TimedOut {
+		return "timed out"
+	}
+	if s.Success {
+		return "success"
+	}
+	if s.Exited {
+		return "exit code " + strconv.Itoa(s.ExitCode)
+	}
+	if s.Error != "" {
+		return s.Error
+	}
+	return "failed"
 }

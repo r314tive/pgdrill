@@ -1,0 +1,34 @@
+{
+  "main": [
+    {
+      "backup_id": "20240502T030405",
+      "backup_name": "nightly-main",
+      "status": "DONE",
+      "backup_type": "full",
+      "begin_time": "2024-05-02T03:04:05Z",
+      "end_time": "2024-05-02T03:22:10Z",
+      "begin_wal": "0000000100000000000000A1",
+      "end_wal": "0000000100000000000000A2",
+      "begin_xlog": "0/A1000028",
+      "end_xlog": "0/A2FFFFFF",
+      "postgres_version": 160002,
+      "pgdata": "/var/lib/postgresql/16/main",
+      "system_identifier": "7384719283749182734",
+      "keep": "nokeep"
+    },
+    {
+      "backup_id": "20240503T030405",
+      "status": "WAITING_FOR_WALS",
+      "parent_backup_id": "20240502T030405",
+      "begin_time": "2024-05-03T03:04:05Z",
+      "end_time": "2024-05-03T03:11:45Z",
+      "begin_wal": "0000000100000000000000B1",
+      "end_wal": "0000000100000000000000B2",
+      "begin_lsn": "0/B1000028",
+      "end_lsn": "0/B2FFFFFF",
+      "postgres_version": "160002",
+      "pgdata": "/var/lib/postgresql/16/main",
+      "keep": "full"
+    }
+  ]
+}

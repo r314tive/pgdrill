@@ -3,6 +3,8 @@ cluster:
 
 provider:
   type: wal-g
+  wal_verify:
+    enabled: false
   env:
     WALG_FILE_PREFIX: /backups/postgresql/production-main
 
@@ -10,16 +12,24 @@ target:
   type: local
   work_dir: /var/tmp/pgdrill/production-main
 
+restore:
+  verify_backup:
+    enabled: false
+
 recovery:
   target: latest
 
 probes:
   - type: pg_isready
+    timeout: 10s
   - type: sql
-    name: server_version
-    query: "select version()"
-  - type: amcheck
-    mode: heap
+    name: select_1
+    query: "select 1"
+    timeout: 10s
+  - type: pg_dump
+    mode: schema
+    timeout: 30s
 
 report:
   format: json
+  path: ./pgdrill-report.json

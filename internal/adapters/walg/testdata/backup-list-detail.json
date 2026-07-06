@@ -1,0 +1,31 @@
+[
+  {
+    "name": "base_00000001000000000000007F",
+    "last_modified": "2025-10-29T10:16:01Z",
+    "wal_segment_backup_start": "00000001000000000000007F",
+    "start_time": "2025-10-29T10:00:00Z",
+    "finish_time": "2025-10-29T10:15:23Z",
+    "hostname": "db-prod-01",
+    "data_dir": "/var/lib/postgresql/16/main",
+    "pg_version": 160005,
+    "start_lsn": 34359738488,
+    "finish_lsn": 34360721408,
+    "is_permanent": false,
+    "user_data": {
+      "env": "production"
+    }
+  },
+  {
+    "name": "base_00000001000000000000007F_D_000000010000000000000080",
+    "last_modified": "2025-10-29T11:08:11Z",
+    "wal_segment_backup_start": "000000010000000000000080",
+    "start_time": "2025-10-29T11:00:00Z",
+    "finish_time": "2025-10-29T11:08:05Z",
+    "hostname": "db-prod-01",
+    "data_dir": "/var/lib/postgresql/16/main",
+    "postgres_version": "160005",
+    "start_lsn": "0/80000028",
+    "finish_lsn": "0/80F00000",
+    "is_permanent": true
+  }
+]
