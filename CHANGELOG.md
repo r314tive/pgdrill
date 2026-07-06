@@ -14,6 +14,8 @@ called out explicitly even while the major version is `0`.
   --output=json` with fixture-driven tests and `pgdrill catalog list` support.
 - Optional pgBackRest provider validation through `pgbackrest check` with
   explicit skipped status when disabled.
+- Initial pgBackRest local restore planning for `pgbackrest restore` with
+  canonical PITR target flag mapping and `pgdrill run` coverage.
 
 ## [0.1.0-alpha.1] - 2026-07-06
 

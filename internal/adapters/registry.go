@@ -53,6 +53,7 @@ func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig)
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
 			Check:        pgBackRestCheckConfig(cfg.PGBackRest),
+			VerifyBackup: verifyBackup,
 		}, nil), nil
 	default:
 		return nil, fmt.Errorf("provider %q is not implemented", cfg.Type)

@@ -118,10 +118,22 @@ Implemented provider validation:
   configuration and may force PostgreSQL WAL/archive activity on the checked
   host
 
+Implemented restore planning:
+
+- local target `pgbackrest restore --set=<backup-label>
+  --pg1-path=<target-data-dir>` command step
+- stanza validation from adapter config and catalog-derived provider IDs
+- PITR flags mapped from the canonical recovery target: `--type=time`,
+  `--type=lsn`, `--type=xid`, `--type=name`, `--type=immediate`,
+  `--target=<value>`, `--target-timeline=<timeline>`,
+  `--target-exclusive`, and `--target-action=promote`
+- optional `pg_verifybackup` restore check when `restore.verify_backup.enabled`
+  is true and the restored data directory contains a PostgreSQL backup
+  manifest
+
 Planned commands:
 
 - `pgbackrest verify`
-- `pgbackrest restore`
 
 Initial value:
 

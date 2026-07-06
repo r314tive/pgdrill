@@ -135,7 +135,7 @@ func TestCatalogListCommandJSONPgBackRest(t *testing.T) {
 	configPath := filepath.Join(dir, "pgdrill.yaml")
 
 	writeExecutable(t, pgBackRestPath, `#!/bin/sh
-if [ "$1" != "--config" ] || [ "$2" != "/etc/pgbackrest.conf" ] || [ "$3" != "--stanza" ] || [ "$4" != "main" ] || [ "$5" != "--repo" ] || [ "$6" != "1" ] || [ "$7" != "info" ] || [ "$8" != "--output=json" ]; then
+if [ "$1" != "--config=/etc/pgbackrest.conf" ] || [ "$2" != "--stanza=main" ] || [ "$3" != "--repo=1" ] || [ "$4" != "info" ] || [ "$5" != "--output=json" ]; then
   echo "unexpected args: $*" >&2
   exit 64
 fi
@@ -558,6 +558,149 @@ report:
 	}
 	if !hasCheckNamed(result.Checks, "barman-verify-backup", model.CheckStatusPassed) {
 		t.Fatalf("expected passed barman verify-backup, got %#v", result.Checks)
+	}
+	if !hasCheck(result.Checks, model.ProbePGIsReady, model.CheckStatusPassed) {
+		t.Fatalf("expected passed pg_isready check, got %#v", result.Checks)
+	}
+}
+
+func TestRunCommandExecutesPgBackRestLocalDrill(t *testing.T) {
+	dir := t.TempDir()
+	pgBackRestPath := filepath.Join(dir, "pgbackrest")
+	postgresPath := filepath.Join(dir, "postgres")
+	pgIsReadyPath := filepath.Join(dir, "pg_isready")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	reportPath := filepath.Join(dir, "report.json")
+	workDir := filepath.Join(dir, "restore")
+
+	writeExecutable(t, pgBackRestPath, `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config=/etc/pgbackrest.conf|--stanza=main|--repo=1)
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+case "$1" in
+  info)
+    if [ "$2" != "--output=json" ]; then
+      echo "unexpected pgbackrest info args: $*" >&2
+      exit 64
+    fi
+    cat <<'JSON'
+[
+  {
+    "name": "main",
+    "status": {"code": 0, "message": "ok"},
+    "db": [{"id": 1, "system-id": 73924987654321, "version": "16"}],
+    "backup": [
+      {
+        "label": "20240502-030405F",
+        "type": "full",
+        "error": false,
+        "database": {"id": 1, "repo-key": 1},
+        "archive": {"start": "0000000100000000000000A1", "stop": "0000000100000000000000A2"},
+        "lsn": {"start": "0/A1000028", "stop": "0/A2000028"},
+        "timestamp": {"start": 1714619045, "stop": 1714619645}
+      }
+    ]
+  }
+]
+JSON
+    ;;
+  check)
+    exit 0
+    ;;
+  restore)
+    dest=""
+    set=""
+    saw_type=0
+    saw_target=0
+    saw_action=0
+    for arg in "$@"; do
+      case "$arg" in
+        --set=*) set="${arg#--set=}" ;;
+        --pg1-path=*) dest="${arg#--pg1-path=}" ;;
+        --type=time) saw_type=1 ;;
+        --target=2026-07-06\ 01:02:03) saw_target=1 ;;
+        --target-action=promote) saw_action=1 ;;
+      esac
+    done
+    if [ "$set" != "20240502-030405F" ] || [ -z "$dest" ] || [ "$saw_type" != "1" ] || [ "$saw_target" != "1" ] || [ "$saw_action" != "1" ]; then
+      echo "unexpected pgbackrest restore args: $*" >&2
+      exit 64
+    fi
+    mkdir -p "$dest"
+    ;;
+  *)
+    echo "unexpected pgbackrest args: $*" >&2
+    exit 64
+    ;;
+esac
+`)
+	writeExecutable(t, postgresPath, `#!/bin/sh
+trap 'exit 0' TERM
+while true; do sleep 1; done
+`)
+	writeExecutable(t, pgIsReadyPath, `#!/bin/sh
+exit 0
+`)
+	writeFile(t, configPath, `
+cluster:
+  name: test-main
+provider:
+  type: pgbackrest
+  binary: `+pgBackRestPath+`
+  config_path: /etc/pgbackrest.conf
+  stanza: main
+  repo: "1"
+  pgbackrest_check:
+    enabled: true
+target:
+  type: local
+  work_dir: `+workDir+`
+  postgres_binary: `+postgresPath+`
+  postgres_port: 15435
+  startup_timeout: 50ms
+  shutdown_timeout: 2s
+recovery:
+  target: timestamp
+  value: "2026-07-06 01:02:03"
+  timeline: latest
+probes:
+  - type: pg_isready
+    binary: `+pgIsReadyPath+`
+    timeout: 1s
+report:
+  format: json
+  path: `+reportPath+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "-f", configPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	if result.Status != model.DrillStatusPassed {
+		t.Fatalf("expected passed report, got %#v", result)
+	}
+	if result.Provider != model.ProviderPGBackRest {
+		t.Fatalf("unexpected provider %q", result.Provider)
+	}
+	if result.Backup.ID != "pgbackrest:main/20240502-030405F" {
+		t.Fatalf("unexpected backup %q", result.Backup.ID)
+	}
+	if !hasCheckNamed(result.Checks, "pgbackrest-check", model.CheckStatusPassed) {
+		t.Fatalf("expected passed pgbackrest check, got %#v", result.Checks)
 	}
 	if !hasCheck(result.Checks, model.ProbePGIsReady, model.CheckStatusPassed) {
 		t.Fatalf("expected passed pg_isready check, got %#v", result.Checks)

@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
 
 const defaultBinary = "pgbackrest"
@@ -25,6 +27,7 @@ type Config struct {
 	Timeout      time.Duration
 	RedactValues []string
 	Check        CheckConfig
+	VerifyBackup pgverifybackup.Config
 }
 
 type CheckConfig struct {
@@ -131,8 +134,70 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, _ 
 	}, nil
 }
 
-func (a *Adapter) PlanRestore(context.Context, model.Backup, model.RecoveryTarget, model.TargetSpec) (model.RestorePlan, error) {
-	return model.RestorePlan{}, fmt.Errorf("pgbackrest restore planning is not implemented yet")
+func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error) {
+	if backup.Provider != "" && backup.Provider != model.ProviderPGBackRest {
+		return model.RestorePlan{}, fmt.Errorf("pgbackrest cannot restore backup from provider %q", backup.Provider)
+	}
+	if spec.Type != model.RestoreTargetLocal {
+		return model.RestorePlan{}, fmt.Errorf("pgbackrest restore planning currently supports only local targets")
+	}
+	if spec.WorkDir == "" {
+		return model.RestorePlan{}, fmt.Errorf("target work_dir is required")
+	}
+
+	label, stanza, err := a.backupLabel(backup)
+	if err != nil {
+		return model.RestorePlan{}, err
+	}
+
+	dataDir := filepath.Join(spec.WorkDir, "data")
+	restoreArgs, err := a.restoreArgs(target, label, stanza, dataDir)
+	if err != nil {
+		return model.RestorePlan{}, err
+	}
+
+	steps := []model.RestoreStep{{
+		Name:        "pgbackrest-restore",
+		Description: "Restore the selected pgBackRest backup into the local target data directory.",
+		Command: &model.CommandSpec{
+			Tool:       model.ToolPGBackRest,
+			Path:       a.binary(),
+			Args:       restoreArgs,
+			Env:        copyStringMap(a.cfg.Env),
+			WorkDir:    a.cfg.WorkDir,
+			Timeout:    durationString(a.cfg.Timeout),
+			Redactions: append([]string{}, a.cfg.RedactValues...),
+		},
+		Inputs: map[string]string{
+			"backup_id":          backup.ID,
+			"provider_backup_id": backup.ProviderID,
+			"backup_label":       label,
+			"stanza":             stanza,
+		},
+		Outputs: map[string]string{
+			"data_directory": dataDir,
+		},
+	}}
+	verifyStep, err := a.cfg.VerifyBackup.Step(dataDir)
+	if err != nil {
+		return model.RestorePlan{}, err
+	}
+	if verifyStep != nil {
+		steps = append(steps, *verifyStep)
+	}
+
+	return model.RestorePlan{
+		Provider:       model.ProviderPGBackRest,
+		BackupID:       backup.ID,
+		Target:         spec,
+		RecoveryTarget: target,
+		Runtime: model.RuntimeConfig{
+			DataDirectory: dataDir,
+			Environment:   copyStringMap(a.cfg.Env),
+		},
+		Steps:    steps,
+		Evidence: []model.EvidenceRecord{planEvidence("restore-plan")},
+	}, nil
 }
 
 func (a *Adapter) binary() string {
@@ -143,13 +208,13 @@ func (a *Adapter) binary() string {
 }
 
 func (a *Adapter) infoArgs() []string {
-	args := a.globalArgs()
+	args := a.globalArgs(a.cfg.Stanza)
 	args = append(args, "info", "--output=json")
 	return args
 }
 
 func (a *Adapter) checkArgs() []string {
-	args := a.globalArgs()
+	args := a.globalArgs(a.cfg.Stanza)
 	args = append(args, "check")
 	if a.cfg.Check.NoArchiveCheck {
 		args = append(args, "--no-archive-check")
@@ -174,18 +239,118 @@ func (a *Adapter) checkRedactions() []string {
 	return append(append([]string{}, a.cfg.RedactValues...), a.cfg.Check.RedactValues...)
 }
 
-func (a *Adapter) globalArgs() []string {
+func (a *Adapter) globalArgs(stanza string) []string {
 	args := []string{}
 	if a.cfg.ConfigPath != "" {
-		args = append(args, "--config", a.cfg.ConfigPath)
+		args = append(args, "--config="+a.cfg.ConfigPath)
 	}
-	if a.cfg.Stanza != "" {
-		args = append(args, "--stanza", a.cfg.Stanza)
+	if stanza != "" {
+		args = append(args, "--stanza="+stanza)
 	}
 	if a.cfg.Repo != "" {
-		args = append(args, "--repo", a.cfg.Repo)
+		args = append(args, "--repo="+a.cfg.Repo)
 	}
 	return args
+}
+
+func (a *Adapter) restoreArgs(target model.RecoveryTarget, label string, stanza string, dataDir string) ([]string, error) {
+	args := a.globalArgs(stanza)
+	args = append(args, "restore", "--set="+label, "--pg1-path="+dataDir)
+
+	targetArgs, err := pgBackRestRecoveryArgs(target)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, targetArgs...)
+	return args, nil
+}
+
+func pgBackRestRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
+	args := []string{}
+	targeted := false
+	switch target.Type {
+	case "", model.RecoveryTargetLatest:
+	case model.RecoveryTargetImmediate:
+		args = append(args, "--type=immediate")
+		targeted = true
+	case model.RecoveryTargetTimestamp:
+		if target.Value == "" {
+			return nil, fmt.Errorf("timestamp recovery target requires value")
+		}
+		args = append(args, "--type=time", "--target="+target.Value)
+		targeted = true
+	case model.RecoveryTargetLSN:
+		if target.Value == "" {
+			return nil, fmt.Errorf("lsn recovery target requires value")
+		}
+		args = append(args, "--type=lsn", "--target="+target.Value)
+		targeted = true
+	case model.RecoveryTargetXID:
+		if target.Value == "" {
+			return nil, fmt.Errorf("xid recovery target requires value")
+		}
+		args = append(args, "--type=xid", "--target="+target.Value)
+		targeted = true
+	case model.RecoveryTargetRestorePoint:
+		if target.Value == "" {
+			return nil, fmt.Errorf("restore point recovery target requires value")
+		}
+		args = append(args, "--type=name", "--target="+target.Value)
+		targeted = true
+	default:
+		return nil, fmt.Errorf("unsupported recovery target %q", target.Type)
+	}
+	if target.Timeline != "" {
+		args = append(args, "--target-timeline="+target.Timeline)
+	}
+	if targeted && target.Inclusive != nil && !*target.Inclusive {
+		args = append(args, "--target-exclusive")
+	}
+	if targeted {
+		args = append(args, "--target-action=promote")
+	}
+	return args, nil
+}
+
+func (a *Adapter) backupLabel(backup model.Backup) (label string, stanza string, err error) {
+	if backup.ProviderID == "" {
+		return "", "", fmt.Errorf("pgbackrest backup provider_id is required")
+	}
+
+	label = backup.ProviderID
+	stanza = backup.ClusterName
+	if before, after, ok := strings.Cut(backup.ProviderID, "/"); ok {
+		if after == "" {
+			return "", "", fmt.Errorf("pgbackrest backup provider_id %q is missing backup label", backup.ProviderID)
+		}
+		if before != "" {
+			if stanza != "" && stanza != before {
+				return "", "", fmt.Errorf("pgbackrest backup cluster %q does not match provider_id stanza %q", stanza, before)
+			}
+			stanza = before
+		}
+		label = after
+	}
+	if label == "" {
+		return "", "", fmt.Errorf("pgbackrest backup provider_id is missing backup label")
+	}
+	if a.cfg.Stanza != "" {
+		if stanza != "" && stanza != a.cfg.Stanza {
+			return "", "", fmt.Errorf("pgbackrest backup belongs to stanza %q, adapter is configured for %q", stanza, a.cfg.Stanza)
+		}
+		stanza = a.cfg.Stanza
+	}
+	if stanza == "" {
+		return "", "", fmt.Errorf("pgbackrest stanza is required")
+	}
+	return label, stanza, nil
+}
+
+func durationString(value time.Duration) string {
+	if value == 0 {
+		return ""
+	}
+	return value.String()
 }
 
 func durationSeconds(duration time.Duration) string {
@@ -375,6 +540,19 @@ func commandEvidence(operation string, evidence model.CommandEvidence) model.Evi
 	}
 }
 
+func planEvidence(operation string) model.EvidenceRecord {
+	now := time.Now().UTC()
+	return model.EvidenceRecord{
+		ID:          string(model.ProviderPGBackRest) + ":" + operation + ":" + now.Format(time.RFC3339Nano),
+		Kind:        model.EvidencePlan,
+		Source:      string(model.ProviderPGBackRest),
+		CollectedAt: now,
+		Attributes: map[string]string{
+			"operation": operation,
+		},
+	}
+}
+
 func nestedString(object map[string]any, keys ...string) string {
 	value := nestedValue(object, keys...)
 	return numberString(value)
@@ -511,4 +689,15 @@ func metadataOrNil(metadata map[string]string) map[string]string {
 		return nil
 	}
 	return metadata
+}
+
+func copyStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
 }

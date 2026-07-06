@@ -10,6 +10,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
 
 func TestParseInfo(t *testing.T) {
@@ -106,7 +107,7 @@ func TestAdapterDiscoverBackupsRunsPgBackRestInfo(t *testing.T) {
 	if got, want := runner.invocation.Path, "/usr/local/bin/pgbackrest"; got != want {
 		t.Fatalf("unexpected command path: got %q want %q", got, want)
 	}
-	wantArgs := []string{"--config", "/etc/pgbackrest.conf", "--stanza", "main", "--repo", "1", "info", "--output=json"}
+	wantArgs := []string{"--config=/etc/pgbackrest.conf", "--stanza=main", "--repo=1", "info", "--output=json"}
 	if !reflect.DeepEqual(runner.invocation.Args, wantArgs) {
 		t.Fatalf("unexpected args:\ngot  %#v\nwant %#v", runner.invocation.Args, wantArgs)
 	}
@@ -193,7 +194,7 @@ func TestValidateCatalogRunsPgBackRestCheck(t *testing.T) {
 	if len(report.Evidence) != 1 {
 		t.Fatalf("expected command evidence, got %#v", report.Evidence)
 	}
-	wantArgs := []string{"--config", "/etc/pgbackrest.conf", "--stanza", "main", "--repo", "1", "check", "--no-archive-check", "--no-archive-mode-check", "--archive-timeout=30"}
+	wantArgs := []string{"--config=/etc/pgbackrest.conf", "--stanza=main", "--repo=1", "check", "--no-archive-check", "--no-archive-mode-check", "--archive-timeout=30"}
 	if !reflect.DeepEqual(runner.invocation.Args, wantArgs) {
 		t.Fatalf("unexpected check args:\ngot  %#v\nwant %#v", runner.invocation.Args, wantArgs)
 	}
@@ -235,11 +236,213 @@ func TestValidateCatalogReportsPgBackRestCheckFailure(t *testing.T) {
 	}
 }
 
-func TestPlanRestoreNotImplemented(t *testing.T) {
-	_, err := New(Config{}, nil).PlanRestore(context.Background(), model.Backup{}, model.RecoveryTarget{}, model.TargetSpec{})
-	if err == nil || !strings.Contains(err.Error(), "not implemented") {
-		t.Fatalf("expected not implemented error, got %v", err)
+func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
+	inclusive := false
+	adapter := New(Config{
+		Binary:     "/usr/local/bin/pgbackrest",
+		ConfigPath: "/etc/pgbackrest.conf",
+		Stanza:     "main",
+		Repo:       "1",
+		WorkDir:    "/var/lib/pgbackrest",
+		Timeout:    5 * time.Minute,
+		Env: map[string]string{
+			"PGBACKREST_REPO1_PATH": "/repo",
+		},
+		RedactValues: []string{"secret"},
+	}, nil)
+
+	plan, err := adapter.PlanRestore(context.Background(), model.Backup{
+		ID:          "pgbackrest:main/20240502-030405F",
+		Provider:    model.ProviderPGBackRest,
+		ProviderID:  "main/20240502-030405F",
+		ClusterName: "main",
+	}, model.RecoveryTarget{
+		Type:      model.RecoveryTargetTimestamp,
+		Value:     "2026-07-06 01:02:03",
+		Timeline:  "latest",
+		Inclusive: &inclusive,
+	}, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill/main",
+	})
+	if err != nil {
+		t.Fatalf("plan restore: %v", err)
 	}
+
+	if plan.Provider != model.ProviderPGBackRest {
+		t.Fatalf("unexpected provider %q", plan.Provider)
+	}
+	if plan.BackupID != "pgbackrest:main/20240502-030405F" {
+		t.Fatalf("unexpected backup id %q", plan.BackupID)
+	}
+	if plan.Runtime.DataDirectory != "/tmp/pgdrill/main/data" {
+		t.Fatalf("unexpected data directory %q", plan.Runtime.DataDirectory)
+	}
+	if plan.Runtime.Environment["PGBACKREST_REPO1_PATH"] != "/repo" {
+		t.Fatalf("unexpected runtime env %#v", plan.Runtime.Environment)
+	}
+	if len(plan.Steps) != 1 {
+		t.Fatalf("expected one restore step, got %#v", plan.Steps)
+	}
+
+	step := plan.Steps[0]
+	if step.Name != "pgbackrest-restore" {
+		t.Fatalf("unexpected step name %q", step.Name)
+	}
+	if step.Command == nil {
+		t.Fatal("expected command step")
+	}
+	wantArgs := []string{
+		"--config=/etc/pgbackrest.conf",
+		"--stanza=main",
+		"--repo=1",
+		"restore",
+		"--set=20240502-030405F",
+		"--pg1-path=/tmp/pgdrill/main/data",
+		"--type=time",
+		"--target=2026-07-06 01:02:03",
+		"--target-timeline=latest",
+		"--target-exclusive",
+		"--target-action=promote",
+	}
+	if !reflect.DeepEqual(step.Command.Args, wantArgs) {
+		t.Fatalf("unexpected restore args:\ngot  %#v\nwant %#v", step.Command.Args, wantArgs)
+	}
+	if step.Command.Path != "/usr/local/bin/pgbackrest" {
+		t.Fatalf("unexpected command path %q", step.Command.Path)
+	}
+	if step.Command.Timeout != "5m0s" {
+		t.Fatalf("unexpected timeout %q", step.Command.Timeout)
+	}
+	if step.Command.Env["PGBACKREST_REPO1_PATH"] != "/repo" {
+		t.Fatalf("unexpected command env %#v", step.Command.Env)
+	}
+	if got, want := step.Command.Redactions, []string{"secret"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected redactions: got %#v want %#v", got, want)
+	}
+	if len(plan.Evidence) != 1 || plan.Evidence[0].Kind != model.EvidencePlan {
+		t.Fatalf("expected plan evidence, got %#v", plan.Evidence)
+	}
+}
+
+func TestPlanRestoreUsesBackupStanzaWhenConfigStanzaEmpty(t *testing.T) {
+	plan, err := New(Config{Repo: "1"}, nil).PlanRestore(context.Background(), model.Backup{
+		ID:         "pgbackrest:main/20240502-030405F",
+		Provider:   model.ProviderPGBackRest,
+		ProviderID: "main/20240502-030405F",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill/main",
+	})
+	if err != nil {
+		t.Fatalf("plan restore: %v", err)
+	}
+	wantArgs := []string{
+		"--stanza=main",
+		"--repo=1",
+		"restore",
+		"--set=20240502-030405F",
+		"--pg1-path=/tmp/pgdrill/main/data",
+	}
+	if !reflect.DeepEqual(plan.Steps[0].Command.Args, wantArgs) {
+		t.Fatalf("unexpected restore args:\ngot  %#v\nwant %#v", plan.Steps[0].Command.Args, wantArgs)
+	}
+}
+
+func TestPlanRestoreIncludesPgVerifyBackupWhenEnabled(t *testing.T) {
+	adapter := New(Config{
+		Stanza: "main",
+		VerifyBackup: pgverifybackup.Config{
+			Enabled: true,
+			Binary:  "/usr/local/bin/pg_verifybackup",
+			Timeout: time.Minute,
+			Format:  "json",
+		},
+	}, nil)
+
+	plan, err := adapter.PlanRestore(context.Background(), model.Backup{
+		ID:         "pgbackrest:main/20240502-030405F",
+		Provider:   model.ProviderPGBackRest,
+		ProviderID: "main/20240502-030405F",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill/main",
+	})
+	if err != nil {
+		t.Fatalf("plan restore: %v", err)
+	}
+	if len(plan.Steps) != 2 {
+		t.Fatalf("expected restore and verify steps, got %#v", plan.Steps)
+	}
+	verifyStep := plan.Steps[1]
+	if verifyStep.Name != "pg-verifybackup" {
+		t.Fatalf("unexpected verify step %q", verifyStep.Name)
+	}
+	if verifyStep.Command == nil {
+		t.Fatal("expected verify command step")
+	}
+	if verifyStep.Command.Path != "/usr/local/bin/pg_verifybackup" {
+		t.Fatalf("unexpected verify path %q", verifyStep.Command.Path)
+	}
+	wantArgs := []string{"--format=json", "/tmp/pgdrill/main/data"}
+	if !reflect.DeepEqual(verifyStep.Command.Args, wantArgs) {
+		t.Fatalf("unexpected verify args:\ngot  %#v\nwant %#v", verifyStep.Command.Args, wantArgs)
+	}
+}
+
+func TestPlanRestoreRequiresMatchingStanza(t *testing.T) {
+	_, err := New(Config{Stanza: "main"}, nil).PlanRestore(context.Background(), model.Backup{
+		ID:         "pgbackrest:other/20240502-030405F",
+		Provider:   model.ProviderPGBackRest,
+		ProviderID: "other/20240502-030405F",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill/main",
+	})
+	if err == nil || !strings.Contains(err.Error(), "configured for") {
+		t.Fatalf("expected stanza validation error, got %v", err)
+	}
+}
+
+func TestPlanRestoreDoesNotUseExclusiveWithoutPITRTarget(t *testing.T) {
+	inclusive := false
+	plan, err := New(Config{Stanza: "main"}, nil).PlanRestore(context.Background(), model.Backup{
+		ID:         "pgbackrest:main/20240502-030405F",
+		Provider:   model.ProviderPGBackRest,
+		ProviderID: "main/20240502-030405F",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLatest, Inclusive: &inclusive}, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill/main",
+	})
+	if err != nil {
+		t.Fatalf("plan restore: %v", err)
+	}
+	if contains(plan.Steps[0].Command.Args, "--target-exclusive") {
+		t.Fatalf("did not expect --target-exclusive for latest restore args %#v", plan.Steps[0].Command.Args)
+	}
+}
+
+func TestPlanRestoreRequiresRecoveryTargetValue(t *testing.T) {
+	_, err := New(Config{Stanza: "main"}, nil).PlanRestore(context.Background(), model.Backup{
+		ID:         "pgbackrest:main/20240502-030405F",
+		Provider:   model.ProviderPGBackRest,
+		ProviderID: "main/20240502-030405F",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLSN}, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill/main",
+	})
+	if err == nil || !strings.Contains(err.Error(), "lsn recovery target requires value") {
+		t.Fatalf("expected recovery target validation error, got %v", err)
+	}
+}
+
+func contains(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeRunner struct {
