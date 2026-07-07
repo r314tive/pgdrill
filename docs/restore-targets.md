@@ -61,6 +61,25 @@ The first CLI surface renders this manifest without applying it:
 pgdrill target manifest -f pgdrill-cnpg.yaml
 ```
 
+### CNPG Lifecycle Controller
+
+The next implementation layer is the CNPG lifecycle controller. It is still
+backend-neutral: a Kubernetes client is injected behind a Go interface, and the
+controller owns the ordered drill lifecycle.
+
+Implemented lifecycle contract:
+
+- render the verified CNPG `Cluster` manifest and record manifest evidence
+- apply the temporary verify cluster
+- wait for the instance pod to become Ready
+- capture diagnostics on failure before cleanup when configured
+- delete the verify cluster and optional PVCs with cleanup evidence
+- capture diagnostics on successful destroy when configured
+
+The concrete Kubernetes API client is intentionally separate from this
+controller. This keeps `kubectl` as a future compatibility backend rather than
+the core control plane.
+
 Example target config shape:
 
 ```yaml

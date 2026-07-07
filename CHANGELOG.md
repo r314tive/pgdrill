@@ -8,6 +8,12 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- CNPG lifecycle controller boundary for applying verify-cluster manifests,
+  waiting for readiness, capturing evidence, and cleanup through a Kubernetes
+  client interface.
+
 ## [0.1.0-alpha.3] - 2026-07-07
 
 ### Added

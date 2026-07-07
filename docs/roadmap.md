@@ -70,6 +70,8 @@ Status: started.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
+- CNPG lifecycle controller boundary with apply, wait, capture, and cleanup
+  semantics.
 - Temporary CNPG cluster restore target.
 - Source image reuse for verify clusters.
 - Full-recovery fail-fast handling.
