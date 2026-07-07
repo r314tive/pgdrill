@@ -8,6 +8,8 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-07-07
+
 ### Added
 
 - Initial pgBackRest catalog discovery adapter for `pgbackrest info
