@@ -39,6 +39,7 @@ func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig)
 			WorkDir:      cfg.WorkDir,
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
+			Manifest:     barmanManifestConfig(cfg.BarmanManifest),
 			BarmanVerify: barmanVerifyConfig(cfg.BarmanVerify),
 			VerifyBackup: verifyBackup,
 		}, nil), nil
@@ -75,6 +76,14 @@ func walVerifyConfig(cfg config.WALVerifyConfig) walg.WALVerifyConfig {
 
 func barmanVerifyConfig(cfg config.BarmanVerifyConfig) barman.BarmanVerifyConfig {
 	return barman.BarmanVerifyConfig{
+		Enabled:      cfg.Enabled,
+		Timeout:      cfg.Timeout.Duration,
+		RedactValues: append([]string{}, cfg.RedactValues...),
+	}
+}
+
+func barmanManifestConfig(cfg config.BarmanManifestConfig) barman.ManifestConfig {
+	return barman.ManifestConfig{
 		Enabled:      cfg.Enabled,
 		Timeout:      cfg.Timeout.Duration,
 		RedactValues: append([]string{}, cfg.RedactValues...),

@@ -194,6 +194,11 @@ provider:
     timeout: 2m
     redact_values:
       - barman-secret
+  barman_generate_manifest:
+    enabled: true
+    timeout: 90s
+    redact_values:
+      - barman-generate-secret
 target:
   type: local
 `), "yaml")
@@ -209,6 +214,15 @@ target:
 	}
 	if got, want := cfg.Provider.BarmanVerify.RedactValues, []string{"barman-secret"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("unexpected barman_verify_backup redactions %#v", got)
+	}
+	if !cfg.Provider.BarmanManifest.Enabled {
+		t.Fatal("expected barman_generate_manifest to be enabled")
+	}
+	if cfg.Provider.BarmanManifest.Timeout.Duration != 90*time.Second {
+		t.Fatalf("unexpected barman_generate_manifest timeout %s", cfg.Provider.BarmanManifest.Timeout.Duration)
+	}
+	if got, want := cfg.Provider.BarmanManifest.RedactValues, []string{"barman-generate-secret"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("unexpected barman_generate_manifest redactions %#v", got)
 	}
 }
 

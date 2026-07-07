@@ -15,10 +15,11 @@ Pre-alpha. The repository has the first canonical model, core interfaces,
 command runner, strict configuration loading, initial catalog discovery adapters
 for WAL-G, Barman, and pgBackRest, provider-side checks for Barman and optional
 WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
-`verify-backup`, optional pgBackRest `check` and `verify`, pgBackRest local
-restore planning, JSON drill report persistence, local PostgreSQL startup for
-restore targets, optional `pg_verifybackup` restore checks, `pg_isready`, SQL,
-`pg_amcheck`, and `pg_dump` probes, built-in probe presets, strict
+`generate-manifest` and `verify-backup`, optional pgBackRest `check` and
+`verify`, pgBackRest local restore planning, JSON drill report persistence,
+local PostgreSQL startup for restore targets, optional `pg_verifybackup`
+restore checks, `pg_isready`, SQL, `pg_amcheck`, and `pg_dump` probes, built-in
+probe presets, strict
 `pg_verifybackup` profile support, Prometheus metrics export from JSON reports,
 and first useful CLI surfaces for catalog, report, and drill execution.
 

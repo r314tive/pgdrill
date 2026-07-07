@@ -24,8 +24,15 @@ type Config struct {
 	WorkDir      string
 	Timeout      time.Duration
 	RedactValues []string
+	Manifest     ManifestConfig
 	BarmanVerify BarmanVerifyConfig
 	VerifyBackup pgverifybackup.Config
+}
+
+type ManifestConfig struct {
+	Enabled      bool
+	Timeout      time.Duration
+	RedactValues []string
 }
 
 type BarmanVerifyConfig struct {
@@ -110,6 +117,21 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 	check = enrichShowBackupCheck(check, result.Raw.Stdout, a.cfg.Server)
 	report.Checks = append(report.Checks, check)
 	report.Evidence = append(report.Evidence, evidence)
+
+	if a.cfg.Manifest.Enabled {
+		check, evidence, _ = a.runValidationCommandWith(ctx, "barman-generate-manifest", a.generateManifestArgs(backupID), a.manifestTimeout(), a.manifestRedactions())
+		report.Checks = append(report.Checks, check)
+		report.Evidence = append(report.Evidence, evidence)
+	} else {
+		report.Checks = append(report.Checks, model.Check{
+			Name:    "barman-generate-manifest",
+			Status:  model.CheckStatusSkipped,
+			Message: "Barman generate-manifest is not enabled; backup_manifest generation was not run.",
+			Attributes: map[string]string{
+				"operation": "barman-generate-manifest",
+			},
+		})
+	}
 
 	if a.cfg.BarmanVerify.Enabled {
 		check, evidence, _ = a.runValidationCommandWith(ctx, "barman-verify-backup", a.verifyBackupArgs(backupID), a.barmanVerifyTimeout(), a.barmanVerifyRedactions())
@@ -226,6 +248,12 @@ func (a *Adapter) showBackupArgs(backupID string) []string {
 	return args
 }
 
+func (a *Adapter) generateManifestArgs(backupID string) []string {
+	args := a.globalArgs()
+	args = append(args, "generate-manifest", a.cfg.Server, backupID)
+	return args
+}
+
 func (a *Adapter) verifyBackupArgs(backupID string) []string {
 	args := a.globalArgs()
 	args = append(args, "verify-backup", a.cfg.Server, backupID)
@@ -296,6 +324,17 @@ func (a *Adapter) barmanVerifyTimeout() time.Duration {
 
 func (a *Adapter) barmanVerifyRedactions() []string {
 	return append(append([]string{}, a.cfg.RedactValues...), a.cfg.BarmanVerify.RedactValues...)
+}
+
+func (a *Adapter) manifestTimeout() time.Duration {
+	if a.cfg.Manifest.Timeout > 0 {
+		return a.cfg.Manifest.Timeout
+	}
+	return a.cfg.Timeout
+}
+
+func (a *Adapter) manifestRedactions() []string {
+	return append(append([]string{}, a.cfg.RedactValues...), a.cfg.Manifest.RedactValues...)
 }
 
 func enrichShowBackupCheck(check model.Check, data []byte, defaultServer string) model.Check {

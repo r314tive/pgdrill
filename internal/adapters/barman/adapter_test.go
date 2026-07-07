@@ -162,8 +162,8 @@ func TestValidateCatalogRunsBarmanChecks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate catalog: %v", err)
 	}
-	if len(report.Checks) != 4 {
-		t.Fatalf("expected four checks, got %#v", report.Checks)
+	if len(report.Checks) != 5 {
+		t.Fatalf("expected five checks, got %#v", report.Checks)
 	}
 	if report.Checks[0].Name != "barman-check" || report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("unexpected barman check %#v", report.Checks[0])
@@ -174,8 +174,11 @@ func TestValidateCatalogRunsBarmanChecks(t *testing.T) {
 	if report.Checks[2].Name != "barman-show-backup" || report.Checks[2].Status != model.CheckStatusPassed {
 		t.Fatalf("unexpected show-backup check %#v", report.Checks[2])
 	}
-	if report.Checks[3].Name != "barman-verify-backup" || report.Checks[3].Status != model.CheckStatusPassed {
-		t.Fatalf("unexpected verify-backup check %#v", report.Checks[3])
+	if report.Checks[3].Name != "barman-generate-manifest" || report.Checks[3].Status != model.CheckStatusSkipped {
+		t.Fatalf("unexpected generate-manifest check %#v", report.Checks[3])
+	}
+	if report.Checks[4].Name != "barman-verify-backup" || report.Checks[4].Status != model.CheckStatusPassed {
+		t.Fatalf("unexpected verify-backup check %#v", report.Checks[4])
 	}
 	for key, want := range map[string]string{
 		"backup_id":         "20240502T030405",
@@ -232,6 +235,82 @@ func TestValidateCatalogRunsBarmanChecks(t *testing.T) {
 	}
 }
 
+func TestValidateCatalogRunsBarmanGenerateManifest(t *testing.T) {
+	runner := &fakeRunner{
+		results: []command.Result{
+			successResult([]byte("server main: OK\n")),
+			successResult([]byte("backup 20240502T030405: OK\n")),
+			successResult([]byte(`{"backup_id":"20240502T030405","server_name":"main","status":"DONE"}`)),
+			successResult([]byte("backup manifest generated\n")),
+			successResult([]byte("backup manifest verified\n")),
+		},
+	}
+	report, err := New(Config{
+		Binary:       "/usr/local/bin/barman",
+		ConfigPath:   "/etc/barman.conf",
+		Server:       "main",
+		Timeout:      time.Minute,
+		RedactValues: []string{"secret"},
+		Manifest: ManifestConfig{
+			Enabled:      true,
+			Timeout:      90 * time.Second,
+			RedactValues: []string{"generate-secret"},
+		},
+		BarmanVerify: BarmanVerifyConfig{
+			Enabled:      true,
+			Timeout:      2 * time.Minute,
+			RedactValues: []string{"verify-secret"},
+		},
+	}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{
+		ID:         "barman:main/20240502T030405",
+		Provider:   model.ProviderBarman,
+		ProviderID: "main/20240502T030405",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLatest})
+	if err != nil {
+		t.Fatalf("validate catalog: %v", err)
+	}
+	if len(report.Checks) != 5 {
+		t.Fatalf("expected five checks, got %#v", report.Checks)
+	}
+	if report.Checks[3].Name != "barman-generate-manifest" || report.Checks[3].Status != model.CheckStatusPassed {
+		t.Fatalf("unexpected generate-manifest check %#v", report.Checks[3])
+	}
+	if report.Checks[4].Name != "barman-verify-backup" || report.Checks[4].Status != model.CheckStatusPassed {
+		t.Fatalf("unexpected verify-backup check %#v", report.Checks[4])
+	}
+	if len(report.Evidence) != 5 {
+		t.Fatalf("expected command evidence for all checks, got %#v", report.Evidence)
+	}
+	wantInvocations := [][]string{
+		{"--config", "/etc/barman.conf", "check", "main"},
+		{"--config", "/etc/barman.conf", "check-backup", "main", "20240502T030405"},
+		{"--config", "/etc/barman.conf", "--format", "json", "show-backup", "main", "20240502T030405"},
+		{"--config", "/etc/barman.conf", "generate-manifest", "main", "20240502T030405"},
+		{"--config", "/etc/barman.conf", "verify-backup", "main", "20240502T030405"},
+	}
+	if len(runner.invocations) != len(wantInvocations) {
+		t.Fatalf("unexpected invocation count %d", len(runner.invocations))
+	}
+	for i, wantArgs := range wantInvocations {
+		inv := runner.invocations[i]
+		if !reflect.DeepEqual(inv.Args, wantArgs) {
+			t.Fatalf("unexpected invocation %d args: got %#v want %#v", i, inv.Args, wantArgs)
+		}
+	}
+	if runner.invocations[3].Timeout != 90*time.Second {
+		t.Fatalf("unexpected generate-manifest timeout %s", runner.invocations[3].Timeout)
+	}
+	if got, want := runner.invocations[3].RedactValues, []string{"secret", "generate-secret"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected generate-manifest redactions: got %#v want %#v", got, want)
+	}
+	if runner.invocations[4].Timeout != 2*time.Minute {
+		t.Fatalf("unexpected verify-backup timeout %s", runner.invocations[4].Timeout)
+	}
+	if got, want := runner.invocations[4].RedactValues, []string{"secret", "verify-secret"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected verify-backup redactions: got %#v want %#v", got, want)
+	}
+}
+
 func TestValidateCatalogReportsBarmanCheckFailure(t *testing.T) {
 	runner := &fakeRunner{
 		results: []command.Result{
@@ -248,8 +327,8 @@ func TestValidateCatalogReportsBarmanCheckFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate catalog: %v", err)
 	}
-	if len(report.Checks) != 4 {
-		t.Fatalf("expected four checks, got %#v", report.Checks)
+	if len(report.Checks) != 5 {
+		t.Fatalf("expected five checks, got %#v", report.Checks)
 	}
 	if report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("expected barman check to pass, got %#v", report.Checks[0])
@@ -263,8 +342,11 @@ func TestValidateCatalogReportsBarmanCheckFailure(t *testing.T) {
 	if report.Checks[2].Status != model.CheckStatusPassed {
 		t.Fatalf("expected show-backup to still run, got %#v", report.Checks[2])
 	}
-	if report.Checks[3].Name != "barman-verify-backup" || report.Checks[3].Status != model.CheckStatusSkipped {
-		t.Fatalf("expected skipped verify-backup check, got %#v", report.Checks[3])
+	if report.Checks[3].Name != "barman-generate-manifest" || report.Checks[3].Status != model.CheckStatusSkipped {
+		t.Fatalf("expected skipped generate-manifest check, got %#v", report.Checks[3])
+	}
+	if report.Checks[4].Name != "barman-verify-backup" || report.Checks[4].Status != model.CheckStatusSkipped {
+		t.Fatalf("expected skipped verify-backup check, got %#v", report.Checks[4])
 	}
 	if len(report.Evidence) != 3 {
 		t.Fatalf("expected evidence for failed command, got %#v", report.Evidence)
@@ -287,8 +369,8 @@ func TestValidateCatalogWarnsOnInvalidShowBackupJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate catalog: %v", err)
 	}
-	if len(report.Checks) != 4 {
-		t.Fatalf("expected four checks, got %#v", report.Checks)
+	if len(report.Checks) != 5 {
+		t.Fatalf("expected five checks, got %#v", report.Checks)
 	}
 	if report.Checks[2].Status != model.CheckStatusWarning {
 		t.Fatalf("expected show-backup warning, got %#v", report.Checks[2])
@@ -296,8 +378,8 @@ func TestValidateCatalogWarnsOnInvalidShowBackupJSON(t *testing.T) {
 	if !strings.Contains(report.Checks[2].Message, "parse barman show-backup json") {
 		t.Fatalf("unexpected warning message %#v", report.Checks[2])
 	}
-	if report.Checks[3].Status != model.CheckStatusSkipped {
-		t.Fatalf("expected skipped verify-backup check, got %#v", report.Checks[3])
+	if report.Checks[3].Status != model.CheckStatusSkipped || report.Checks[4].Status != model.CheckStatusSkipped {
+		t.Fatalf("expected skipped manifest and verify-backup checks, got %#v", report.Checks)
 	}
 }
 

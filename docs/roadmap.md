@@ -38,6 +38,7 @@ Status: in progress.
 - Barman local restore planning for `barman restore`.
 - Barman provider checks: `check` and `check-backup`.
 - Barman selected-backup evidence: `show-backup`.
+- Optional Barman manifest generation: `generate-manifest`.
 - Optional Barman manifest check: `verify-backup`.
 - pgBackRest catalog discovery: `info --output=json`.
 - Optional pgBackRest provider validation: `check`.
@@ -72,8 +73,8 @@ pgdrill catalog list -f pgdrill.yaml
 
 ## Phase 4: More Providers And Probes
 
-- Barman manifest generation workflows for backups that do not already have a
-  manifest.
+- Richer Barman manifest handling if real repositories expose more cases than
+  `generate-manifest`.
 - Additional `pg_verifybackup` profiles, if real drills prove they are useful.
 
 ## Phase 5: UI / TUI

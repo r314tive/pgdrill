@@ -36,6 +36,7 @@ type ProviderConfig struct {
 	Repo             string                 `json:"repo,omitempty" yaml:"repo,omitempty"`
 	WALVerify        WALVerifyConfig        `json:"wal_verify,omitempty" yaml:"wal_verify,omitempty"`
 	BarmanVerify     BarmanVerifyConfig     `json:"barman_verify_backup,omitempty" yaml:"barman_verify_backup,omitempty"`
+	BarmanManifest   BarmanManifestConfig   `json:"barman_generate_manifest,omitempty" yaml:"barman_generate_manifest,omitempty"`
 	PGBackRest       PGBackRestConfig       `json:"pgbackrest_check,omitempty" yaml:"pgbackrest_check,omitempty"`
 	PGBackRestVerify PGBackRestVerifyConfig `json:"pgbackrest_verify,omitempty" yaml:"pgbackrest_verify,omitempty"`
 	Env              map[string]string      `json:"env,omitempty" yaml:"env,omitempty"`
@@ -55,6 +56,12 @@ type WALVerifyConfig struct {
 }
 
 type BarmanVerifyConfig struct {
+	Enabled      bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Timeout      Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	RedactValues []string `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
+}
+
+type BarmanManifestConfig struct {
 	Enabled      bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 	Timeout      Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	RedactValues []string `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`

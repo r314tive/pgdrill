@@ -80,12 +80,14 @@ Implemented provider validation:
   evidence and normalized attributes
 - optional `barman verify-backup <server> <backup-id>` for manifest-level
   provider verification when `provider.barman_verify_backup.enabled` is true
+- optional `barman generate-manifest <server> <backup-id>` before
+  `verify-backup` when `provider.barman_generate_manifest.enabled` is true
 - command evidence and structured exit status for all provider checks
 
 Planned commands:
 
-- richer Barman manifest generation workflows where existing backups do not
-  already have a manifest
+- richer Barman manifest handling if real repositories expose more cases than
+  `generate-manifest`
 
 Initial value:
 

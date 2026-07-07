@@ -480,6 +480,12 @@ JSON
       exit 64
     fi
     ;;
+  generate-manifest)
+    if [ "$2" != "main" ] || [ "$3" != "20240502T030405" ]; then
+      echo "unexpected barman generate-manifest args: $*" >&2
+      exit 64
+    fi
+    ;;
   restore)
     dest=""
     for arg in "$@"; do dest="$arg"; done
@@ -507,6 +513,8 @@ provider:
   config_path: /etc/barman.conf
   server: main
   barman_verify_backup:
+    enabled: true
+  barman_generate_manifest:
     enabled: true
 target:
   type: local
@@ -555,6 +563,9 @@ report:
 	}
 	if !hasCheckNamed(result.Checks, "barman-show-backup", model.CheckStatusPassed) {
 		t.Fatalf("expected passed barman show-backup, got %#v", result.Checks)
+	}
+	if !hasCheckNamed(result.Checks, "barman-generate-manifest", model.CheckStatusPassed) {
+		t.Fatalf("expected passed barman generate-manifest, got %#v", result.Checks)
 	}
 	if !hasCheckNamed(result.Checks, "barman-verify-backup", model.CheckStatusPassed) {
 		t.Fatalf("expected passed barman verify-backup, got %#v", result.Checks)
