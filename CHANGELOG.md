@@ -18,6 +18,8 @@ called out explicitly even while the major version is `0`.
   canonical PITR target flag mapping and `pgdrill run` coverage.
 - `pgdrill report metrics` command for Prometheus text export from JSON drill
   reports.
+- Optional pgBackRest repository verification through `pgbackrest verify
+  --set=<backup-label>`.
 
 ## [0.1.0-alpha.1] - 2026-07-06
 

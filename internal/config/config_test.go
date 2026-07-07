@@ -193,6 +193,13 @@ provider:
     archive_timeout: 30s
     redact_values:
       - pgbackrest-secret
+  pgbackrest_verify:
+    enabled: true
+    timeout: 3m
+    output: text
+    verbose: true
+    redact_values:
+      - pgbackrest-verify-secret
 target:
   type: local
 `), "yaml")
@@ -229,6 +236,18 @@ target:
 	}
 	if got, want := cfg.Provider.PGBackRest.RedactValues, []string{"pgbackrest-secret"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("unexpected pgbackrest_check redactions %#v", got)
+	}
+	if !cfg.Provider.PGBackRestVerify.Enabled {
+		t.Fatal("expected pgbackrest_verify to be enabled")
+	}
+	if cfg.Provider.PGBackRestVerify.Timeout.Duration != 3*time.Minute {
+		t.Fatalf("unexpected pgbackrest_verify timeout %s", cfg.Provider.PGBackRestVerify.Timeout.Duration)
+	}
+	if cfg.Provider.PGBackRestVerify.Output != "text" || !cfg.Provider.PGBackRestVerify.Verbose {
+		t.Fatalf("unexpected pgbackrest_verify config %#v", cfg.Provider.PGBackRestVerify)
+	}
+	if got, want := cfg.Provider.PGBackRestVerify.RedactValues, []string{"pgbackrest-verify-secret"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("unexpected pgbackrest_verify redactions %#v", got)
 	}
 }
 

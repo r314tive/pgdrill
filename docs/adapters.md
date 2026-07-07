@@ -117,6 +117,12 @@ Implemented provider validation:
 - disabled by default because `pgbackrest check` validates archive
   configuration and may force PostgreSQL WAL/archive activity on the checked
   host
+- optional `pgbackrest verify --set=<backup-label> --output=text` when
+  `provider.pgbackrest_verify.enabled` is true
+- optional verify flags for `output`, `verbose`, `timeout`, and
+  `redact_values`
+- disabled by default because `pgbackrest verify` reads repository backup and
+  archive files and may be expensive on large backup sets
 
 Implemented restore planning:
 
@@ -130,10 +136,6 @@ Implemented restore planning:
 - optional `pg_verifybackup` restore check when `restore.verify_backup.enabled`
   is true and the restored data directory contains a PostgreSQL backup
   manifest
-
-Planned commands:
-
-- `pgbackrest verify`
 
 Initial value:
 

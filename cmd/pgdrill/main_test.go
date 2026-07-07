@@ -615,6 +615,20 @@ JSON
   check)
     exit 0
     ;;
+  verify)
+    set=""
+    saw_output=0
+    for arg in "$@"; do
+      case "$arg" in
+        --set=*) set="${arg#--set=}" ;;
+        --output=text) saw_output=1 ;;
+      esac
+    done
+    if [ "$set" != "20240502-030405F" ] || [ "$saw_output" != "1" ]; then
+      echo "unexpected pgbackrest verify args: $*" >&2
+      exit 64
+    fi
+    ;;
   restore)
     dest=""
     set=""
@@ -660,6 +674,8 @@ provider:
   repo: "1"
   pgbackrest_check:
     enabled: true
+  pgbackrest_verify:
+    enabled: true
 target:
   type: local
   work_dir: `+workDir+`
@@ -701,6 +717,9 @@ report:
 	}
 	if !hasCheckNamed(result.Checks, "pgbackrest-check", model.CheckStatusPassed) {
 		t.Fatalf("expected passed pgbackrest check, got %#v", result.Checks)
+	}
+	if !hasCheckNamed(result.Checks, "pgbackrest-verify", model.CheckStatusPassed) {
+		t.Fatalf("expected passed pgbackrest verify, got %#v", result.Checks)
 	}
 	if !hasCheck(result.Checks, model.ProbePGIsReady, model.CheckStatusPassed) {
 		t.Fatalf("expected passed pg_isready check, got %#v", result.Checks)

@@ -27,6 +27,7 @@ type Config struct {
 	Timeout      time.Duration
 	RedactValues []string
 	Check        CheckConfig
+	Verify       VerifyConfig
 	VerifyBackup pgverifybackup.Config
 }
 
@@ -37,6 +38,14 @@ type CheckConfig struct {
 	NoArchiveModeCheck bool
 	ArchiveTimeout     time.Duration
 	RedactValues       []string
+}
+
+type VerifyConfig struct {
+	Enabled      bool
+	Timeout      time.Duration
+	Output       string
+	Verbose      bool
+	RedactValues []string
 }
 
 type Adapter struct {
@@ -89,49 +98,47 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 	return catalog, nil
 }
 
-func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, _ model.Backup, _ model.RecoveryTarget) (model.CheckReport, error) {
-	if !a.cfg.Check.Enabled {
-		return model.CheckReport{
-			Checks: []model.Check{{
-				Name:    "pgbackrest-check",
-				Status:  model.CheckStatusSkipped,
-				Message: "pgBackRest check is not enabled; archive configuration validation was not run.",
-				Attributes: map[string]string{
-					"operation": "pgbackrest-check",
-				},
-			}},
-		}, nil
+func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, backup model.Backup, _ model.RecoveryTarget) (model.CheckReport, error) {
+	report := model.CheckReport{}
+	if a.cfg.Check.Enabled {
+		check, evidence, _ := a.runValidationCommandWith(ctx, "pgbackrest-check", "check", a.checkArgs(), a.checkTimeout(), a.checkRedactions())
+		report.Checks = append(report.Checks, check)
+		report.Evidence = append(report.Evidence, evidence)
+	} else {
+		report.Checks = append(report.Checks, model.Check{
+			Name:    "pgbackrest-check",
+			Status:  model.CheckStatusSkipped,
+			Message: "pgBackRest check is not enabled; archive configuration validation was not run.",
+			Attributes: map[string]string{
+				"operation": "pgbackrest-check",
+			},
+		})
 	}
 
-	result, err := a.runner.Run(ctx, command.Invocation{
-		Path:         a.binary(),
-		Args:         a.checkArgs(),
-		Env:          a.cfg.Env,
-		WorkDir:      a.cfg.WorkDir,
-		Timeout:      a.checkTimeout(),
-		RedactValues: a.checkRedactions(),
-	})
-	evidence := commandEvidence("check", result.Evidence)
-	check := model.Check{
-		Name:        "pgbackrest-check",
-		Status:      model.CheckStatusPassed,
-		EvidenceIDs: []string{evidence.ID},
-		Attributes: map[string]string{
-			"operation": "pgbackrest-check",
-		},
+	if a.cfg.Verify.Enabled {
+		label, stanza, err := a.backupLabel(backup)
+		if err != nil {
+			return report, err
+		}
+		args, err := a.verifyArgs(label, stanza)
+		if err != nil {
+			return report, err
+		}
+		check, evidence, _ := a.runValidationCommandWith(ctx, "pgbackrest-verify", "verify", args, a.verifyTimeout(), a.verifyRedactions())
+		report.Checks = append(report.Checks, check)
+		report.Evidence = append(report.Evidence, evidence)
+	} else {
+		report.Checks = append(report.Checks, model.Check{
+			Name:    "pgbackrest-verify",
+			Status:  model.CheckStatusSkipped,
+			Message: "pgBackRest verify is not enabled; repository-level backup verification was not run.",
+			Attributes: map[string]string{
+				"operation": "pgbackrest-verify",
+			},
+		})
 	}
-	if err != nil {
-		check.Status = model.CheckStatusFailed
-		check.Message = fmt.Sprintf("run pgbackrest check: %v", err)
-	}
-	if !result.Evidence.ExitStatus.Success {
-		check.Status = model.CheckStatusFailed
-		check.Message = fmt.Sprintf("pgbackrest check failed: %s", result.Evidence.ExitStatus.Summary())
-	}
-	return model.CheckReport{
-		Checks:   []model.Check{check},
-		Evidence: []model.EvidenceRecord{evidence},
-	}, nil
+
+	return report, nil
 }
 
 func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error) {
@@ -228,6 +235,25 @@ func (a *Adapter) checkArgs() []string {
 	return args
 }
 
+func (a *Adapter) verifyArgs(label string, stanza string) ([]string, error) {
+	output := strings.TrimSpace(a.cfg.Verify.Output)
+	if output == "" {
+		output = "text"
+	}
+	switch output {
+	case "none", "text":
+	default:
+		return nil, fmt.Errorf("unsupported pgbackrest verify output %q", output)
+	}
+
+	args := a.globalArgs(stanza)
+	args = append(args, "verify", "--set="+label, "--output="+output)
+	if a.cfg.Verify.Verbose {
+		args = append(args, "--verbose")
+	}
+	return args, nil
+}
+
 func (a *Adapter) checkTimeout() time.Duration {
 	if a.cfg.Check.Timeout > 0 {
 		return a.cfg.Check.Timeout
@@ -237,6 +263,47 @@ func (a *Adapter) checkTimeout() time.Duration {
 
 func (a *Adapter) checkRedactions() []string {
 	return append(append([]string{}, a.cfg.RedactValues...), a.cfg.Check.RedactValues...)
+}
+
+func (a *Adapter) verifyTimeout() time.Duration {
+	if a.cfg.Verify.Timeout > 0 {
+		return a.cfg.Verify.Timeout
+	}
+	return a.cfg.Timeout
+}
+
+func (a *Adapter) verifyRedactions() []string {
+	return append(append([]string{}, a.cfg.RedactValues...), a.cfg.Verify.RedactValues...)
+}
+
+func (a *Adapter) runValidationCommandWith(ctx context.Context, name string, operation string, args []string, timeout time.Duration, redactions []string) (model.Check, model.EvidenceRecord, command.Result) {
+	result, err := a.runner.Run(ctx, command.Invocation{
+		Path:         a.binary(),
+		Args:         args,
+		Env:          a.cfg.Env,
+		WorkDir:      a.cfg.WorkDir,
+		Timeout:      timeout,
+		RedactValues: redactions,
+	})
+	evidence := commandEvidence(operation, result.Evidence)
+	check := model.Check{
+		Name:        name,
+		Status:      model.CheckStatusPassed,
+		EvidenceIDs: []string{evidence.ID},
+		Attributes: map[string]string{
+			"operation": name,
+		},
+	}
+	if err != nil {
+		check.Status = model.CheckStatusFailed
+		check.Message = fmt.Sprintf("run %s: %v", name, err)
+		return check, evidence, result
+	}
+	if !result.Evidence.ExitStatus.Success {
+		check.Status = model.CheckStatusFailed
+		check.Message = fmt.Sprintf("%s failed: %s", name, result.Evidence.ExitStatus.Summary())
+	}
+	return check, evidence, result
 }
 
 func (a *Adapter) globalArgs(stanza string) []string {
@@ -313,6 +380,9 @@ func pgBackRestRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
 }
 
 func (a *Adapter) backupLabel(backup model.Backup) (label string, stanza string, err error) {
+	if backup.Provider != "" && backup.Provider != model.ProviderPGBackRest {
+		return "", "", fmt.Errorf("pgbackrest backup belongs to provider %q", backup.Provider)
+	}
 	if backup.ProviderID == "" {
 		return "", "", fmt.Errorf("pgbackrest backup provider_id is required")
 	}

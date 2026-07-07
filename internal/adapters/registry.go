@@ -53,6 +53,7 @@ func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig)
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
 			Check:        pgBackRestCheckConfig(cfg.PGBackRest),
+			Verify:       pgBackRestVerifyConfig(cfg.PGBackRestVerify),
 			VerifyBackup: verifyBackup,
 		}, nil), nil
 	default:
@@ -88,6 +89,16 @@ func pgBackRestCheckConfig(cfg config.PGBackRestConfig) pgbackrest.CheckConfig {
 		NoArchiveModeCheck: cfg.NoArchiveModeCheck,
 		ArchiveTimeout:     cfg.ArchiveTimeout.Duration,
 		RedactValues:       append([]string{}, cfg.RedactValues...),
+	}
+}
+
+func pgBackRestVerifyConfig(cfg config.PGBackRestVerifyConfig) pgbackrest.VerifyConfig {
+	return pgbackrest.VerifyConfig{
+		Enabled:      cfg.Enabled,
+		Timeout:      cfg.Timeout.Duration,
+		Output:       cfg.Output,
+		Verbose:      cfg.Verbose,
+		RedactValues: append([]string{}, cfg.RedactValues...),
 	}
 }
 

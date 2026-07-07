@@ -39,6 +39,7 @@ Status: in progress.
 - Optional Barman manifest check: `verify-backup`.
 - pgBackRest catalog discovery: `info --output=json`.
 - Optional pgBackRest provider validation: `check`.
+- Optional pgBackRest repository verification: `verify`.
 - pgBackRest local restore planning for `pgbackrest restore`.
 
 ## Phase 2: First Real Drill
@@ -71,7 +72,6 @@ pgdrill catalog list -f pgdrill.yaml
 
 - Barman manifest generation workflows for backups that do not already have a
   manifest.
-- pgBackRest repository verification: `verify`.
 - Richer `pg_verifybackup` profiles and probe presets.
 
 ## Phase 5: UI / TUI

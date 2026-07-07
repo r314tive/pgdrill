@@ -148,19 +148,24 @@ func TestAdapterDiscoverBackupsReturnsStructuredCommandFailure(t *testing.T) {
 	}
 }
 
-func TestValidateCatalogSkipsPgBackRestCheckUntilEnabled(t *testing.T) {
+func TestValidateCatalogSkipsPgBackRestChecksUntilEnabled(t *testing.T) {
 	report, err := New(Config{}, &fakeRunner{}).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{}, model.RecoveryTarget{})
 	if err != nil {
 		t.Fatalf("validate catalog: %v", err)
 	}
-	if len(report.Checks) != 1 {
-		t.Fatalf("expected one skipped check, got %#v", report.Checks)
+	if len(report.Checks) != 2 {
+		t.Fatalf("expected two skipped checks, got %#v", report.Checks)
 	}
-	if report.Checks[0].Status != model.CheckStatusSkipped {
-		t.Fatalf("expected skipped check, got %#v", report.Checks[0])
+	for _, check := range report.Checks {
+		if check.Status != model.CheckStatusSkipped {
+			t.Fatalf("expected skipped check, got %#v", check)
+		}
 	}
 	if report.Checks[0].Name != "pgbackrest-check" {
 		t.Fatalf("unexpected skipped check name %q", report.Checks[0].Name)
+	}
+	if report.Checks[1].Name != "pgbackrest-verify" {
+		t.Fatalf("unexpected skipped verify name %q", report.Checks[1].Name)
 	}
 }
 
@@ -185,11 +190,14 @@ func TestValidateCatalogRunsPgBackRestCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate catalog: %v", err)
 	}
-	if len(report.Checks) != 1 {
-		t.Fatalf("expected one check, got %#v", report.Checks)
+	if len(report.Checks) != 2 {
+		t.Fatalf("expected check and skipped verify, got %#v", report.Checks)
 	}
 	if report.Checks[0].Name != "pgbackrest-check" || report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("unexpected check %#v", report.Checks[0])
+	}
+	if report.Checks[1].Name != "pgbackrest-verify" || report.Checks[1].Status != model.CheckStatusSkipped {
+		t.Fatalf("unexpected verify check %#v", report.Checks[1])
 	}
 	if len(report.Evidence) != 1 {
 		t.Fatalf("expected command evidence, got %#v", report.Evidence)
@@ -225,14 +233,114 @@ func TestValidateCatalogReportsPgBackRestCheckFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate catalog: %v", err)
 	}
-	if len(report.Checks) != 1 {
-		t.Fatalf("expected one check, got %#v", report.Checks)
+	if len(report.Checks) != 2 {
+		t.Fatalf("expected failed check and skipped verify, got %#v", report.Checks)
 	}
 	if report.Checks[0].Status != model.CheckStatusFailed {
 		t.Fatalf("expected failed check, got %#v", report.Checks[0])
 	}
 	if !strings.Contains(report.Checks[0].Message, "exit code 28") {
 		t.Fatalf("expected structured exit status, got %#v", report.Checks[0])
+	}
+	if report.Checks[1].Name != "pgbackrest-verify" || report.Checks[1].Status != model.CheckStatusSkipped {
+		t.Fatalf("unexpected verify check %#v", report.Checks[1])
+	}
+}
+
+func TestValidateCatalogRunsPgBackRestVerify(t *testing.T) {
+	runner := &fakeRunner{result: successResult([]byte("verify ok\n"))}
+	report, err := New(Config{
+		Binary:       "/usr/local/bin/pgbackrest",
+		ConfigPath:   "/etc/pgbackrest.conf",
+		Stanza:       "main",
+		Repo:         "1",
+		Timeout:      time.Minute,
+		RedactValues: []string{"secret"},
+		Verify: VerifyConfig{
+			Enabled:      true,
+			Timeout:      2 * time.Minute,
+			Output:       "text",
+			Verbose:      true,
+			RedactValues: []string{"verify-secret"},
+		},
+	}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{
+		ID:         "pgbackrest:main/20240502-030405F",
+		Provider:   model.ProviderPGBackRest,
+		ProviderID: "main/20240502-030405F",
+	}, model.RecoveryTarget{})
+	if err != nil {
+		t.Fatalf("validate catalog: %v", err)
+	}
+	if len(report.Checks) != 2 {
+		t.Fatalf("expected skipped check and verify, got %#v", report.Checks)
+	}
+	if report.Checks[0].Name != "pgbackrest-check" || report.Checks[0].Status != model.CheckStatusSkipped {
+		t.Fatalf("unexpected check %#v", report.Checks[0])
+	}
+	if report.Checks[1].Name != "pgbackrest-verify" || report.Checks[1].Status != model.CheckStatusPassed {
+		t.Fatalf("unexpected verify %#v", report.Checks[1])
+	}
+	if len(report.Evidence) != 1 {
+		t.Fatalf("expected verify evidence, got %#v", report.Evidence)
+	}
+	wantArgs := []string{"--config=/etc/pgbackrest.conf", "--stanza=main", "--repo=1", "verify", "--set=20240502-030405F", "--output=text", "--verbose"}
+	if !reflect.DeepEqual(runner.invocation.Args, wantArgs) {
+		t.Fatalf("unexpected verify args:\ngot  %#v\nwant %#v", runner.invocation.Args, wantArgs)
+	}
+	if runner.invocation.Timeout != 2*time.Minute {
+		t.Fatalf("unexpected verify timeout %s", runner.invocation.Timeout)
+	}
+	if got, want := runner.invocation.RedactValues, []string{"secret", "verify-secret"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected verify redactions: got %#v want %#v", got, want)
+	}
+}
+
+func TestValidateCatalogReportsPgBackRestVerifyFailure(t *testing.T) {
+	runner := &fakeRunner{result: command.Result{
+		Raw: command.RawEvidence{Stderr: []byte("checksum mismatch")},
+		Evidence: model.CommandEvidence{
+			Path:   "pgbackrest",
+			Args:   []string{"verify"},
+			Stderr: "checksum mismatch",
+			ExitStatus: model.ExitStatus{
+				Started:  true,
+				Exited:   true,
+				ExitCode: 29,
+			},
+			FinishedAt: time.Date(2024, 5, 3, 4, 0, 0, 0, time.UTC),
+		},
+	}}
+	report, err := New(Config{
+		Stanza: "main",
+		Verify: VerifyConfig{
+			Enabled: true,
+		},
+	}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{
+		ID:         "pgbackrest:main/20240502-030405F",
+		Provider:   model.ProviderPGBackRest,
+		ProviderID: "main/20240502-030405F",
+	}, model.RecoveryTarget{})
+	if err != nil {
+		t.Fatalf("validate catalog: %v", err)
+	}
+	if len(report.Checks) != 2 {
+		t.Fatalf("expected skipped check and failed verify, got %#v", report.Checks)
+	}
+	if report.Checks[1].Status != model.CheckStatusFailed {
+		t.Fatalf("expected failed verify, got %#v", report.Checks[1])
+	}
+	if !strings.Contains(report.Checks[1].Message, "exit code 29") {
+		t.Fatalf("expected structured exit status, got %#v", report.Checks[1])
+	}
+}
+
+func TestValidateCatalogVerifyRequiresPgBackRestBackup(t *testing.T) {
+	_, err := New(Config{Verify: VerifyConfig{Enabled: true}}, &fakeRunner{}).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{
+		Provider:   model.ProviderWALG,
+		ProviderID: "base_00000001000000000000007F",
+	}, model.RecoveryTarget{})
+	if err == nil || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("expected provider validation error, got %v", err)
 	}
 }
 
