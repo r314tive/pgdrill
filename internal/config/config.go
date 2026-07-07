@@ -88,6 +88,8 @@ type TargetConfig struct {
 	Type            model.RestoreTargetType `json:"type" yaml:"type"`
 	WorkDir         string                  `json:"work_dir,omitempty" yaml:"work_dir,omitempty"`
 	Labels          map[string]string       `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Kubernetes      KubernetesTargetConfig  `json:"kubernetes,omitempty" yaml:"kubernetes,omitempty"`
+	CNPG            CNPGTargetConfig        `json:"cnpg,omitempty" yaml:"cnpg,omitempty"`
 	Env             map[string]string       `json:"env,omitempty" yaml:"env,omitempty"`
 	PostgresBinary  string                  `json:"postgres_binary,omitempty" yaml:"postgres_binary,omitempty"`
 	PostgresPort    int                     `json:"postgres_port,omitempty" yaml:"postgres_port,omitempty"`
@@ -95,6 +97,34 @@ type TargetConfig struct {
 	ShutdownTimeout Duration                `json:"shutdown_timeout,omitempty" yaml:"shutdown_timeout,omitempty"`
 	RemoveWorkDir   bool                    `json:"remove_work_dir,omitempty" yaml:"remove_work_dir,omitempty"`
 	RedactValues    []string                `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
+}
+
+type KubernetesTargetConfig struct {
+	Namespace       string   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Kubeconfig      string   `json:"kubeconfig,omitempty" yaml:"kubeconfig,omitempty"`
+	Context         string   `json:"context,omitempty" yaml:"context,omitempty"`
+	WaitTimeout     Duration `json:"wait_timeout,omitempty" yaml:"wait_timeout,omitempty"`
+	PollInterval    Duration `json:"poll_interval,omitempty" yaml:"poll_interval,omitempty"`
+	CleanupPVC      bool     `json:"cleanup_pvc,omitempty" yaml:"cleanup_pvc,omitempty"`
+	CleanupOnFail   bool     `json:"cleanup_on_fail,omitempty" yaml:"cleanup_on_fail,omitempty"`
+	CaptureLogs     bool     `json:"capture_logs,omitempty" yaml:"capture_logs,omitempty"`
+	EventsTail      int      `json:"events_tail,omitempty" yaml:"events_tail,omitempty"`
+	PostgresLogTail int      `json:"postgres_log_tail,omitempty" yaml:"postgres_log_tail,omitempty"`
+}
+
+type CNPGTargetConfig struct {
+	SourceCluster     string `json:"source_cluster,omitempty" yaml:"source_cluster,omitempty"`
+	VerifyClusterName string `json:"verify_cluster_name,omitempty" yaml:"verify_cluster_name,omitempty"`
+	BackupName        string `json:"backup_name,omitempty" yaml:"backup_name,omitempty"`
+	ImageName         string `json:"image_name,omitempty" yaml:"image_name,omitempty"`
+	StorageSize       string `json:"storage_size,omitempty" yaml:"storage_size,omitempty"`
+	StorageClass      string `json:"storage_class,omitempty" yaml:"storage_class,omitempty"`
+	CPURequest        string `json:"cpu_request,omitempty" yaml:"cpu_request,omitempty"`
+	MemoryRequest     string `json:"memory_request,omitempty" yaml:"memory_request,omitempty"`
+	CPULimit          string `json:"cpu_limit,omitempty" yaml:"cpu_limit,omitempty"`
+	MemoryLimit       string `json:"memory_limit,omitempty" yaml:"memory_limit,omitempty"`
+	NodeLabelKey      string `json:"node_label_key,omitempty" yaml:"node_label_key,omitempty"`
+	NodeLabelValue    string `json:"node_label_value,omitempty" yaml:"node_label_value,omitempty"`
 }
 
 type RecoveryConfig struct {

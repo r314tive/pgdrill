@@ -184,6 +184,84 @@ probes:
 	}
 }
 
+func TestLoadKubernetesCNPGTargetConfig(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+provider:
+  type: wal-g
+target:
+  type: kubernetes
+  labels:
+    env: d003
+  kubernetes:
+    namespace: d003-db
+    kubeconfig: /home/pgdrill/.kube/config
+    context: d003
+    wait_timeout: 20m
+    poll_interval: 5s
+    cleanup_pvc: true
+    cleanup_on_fail: true
+    capture_logs: true
+    events_tail: 200
+    postgres_log_tail: 5000
+  cnpg:
+    source_cluster: altbox
+    verify_cluster_name: verify-altbox-manual
+    backup_name: altbox-backup-20260707
+    image_name: ghcr.io/cloudnative-pg/postgresql:16
+    storage_size: 20Gi
+    storage_class: fast
+    cpu_request: 500m
+    memory_request: 1Gi
+    cpu_limit: "2"
+    memory_limit: 4Gi
+    node_label_key: node-role.kubernetes.io/database
+    node_label_value: "true"
+`), "yaml")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Target.Type != model.RestoreTargetKubernetes {
+		t.Fatalf("unexpected target type %q", cfg.Target.Type)
+	}
+	if cfg.Target.Labels["env"] != "d003" {
+		t.Fatalf("unexpected target labels %#v", cfg.Target.Labels)
+	}
+	if cfg.Target.Kubernetes.Namespace != "d003-db" || cfg.Target.Kubernetes.Context != "d003" {
+		t.Fatalf("unexpected kubernetes config %#v", cfg.Target.Kubernetes)
+	}
+	if cfg.Target.Kubernetes.WaitTimeout.Duration != 20*time.Minute {
+		t.Fatalf("unexpected wait timeout %s", cfg.Target.Kubernetes.WaitTimeout.Duration)
+	}
+	if cfg.Target.Kubernetes.PollInterval.Duration != 5*time.Second {
+		t.Fatalf("unexpected poll interval %s", cfg.Target.Kubernetes.PollInterval.Duration)
+	}
+	if !cfg.Target.Kubernetes.CleanupPVC || !cfg.Target.Kubernetes.CleanupOnFail || !cfg.Target.Kubernetes.CaptureLogs {
+		t.Fatalf("unexpected kubernetes booleans %#v", cfg.Target.Kubernetes)
+	}
+	if cfg.Target.Kubernetes.EventsTail != 200 || cfg.Target.Kubernetes.PostgresLogTail != 5000 {
+		t.Fatalf("unexpected log tail config %#v", cfg.Target.Kubernetes)
+	}
+	if cfg.Target.CNPG.SourceCluster != "altbox" || cfg.Target.CNPG.BackupName != "altbox-backup-20260707" {
+		t.Fatalf("unexpected cnpg config %#v", cfg.Target.CNPG)
+	}
+	if cfg.Target.CNPG.VerifyClusterName != "verify-altbox-manual" {
+		t.Fatalf("unexpected verify cluster name %q", cfg.Target.CNPG.VerifyClusterName)
+	}
+	if cfg.Target.CNPG.StorageSize != "20Gi" || cfg.Target.CNPG.StorageClass != "fast" {
+		t.Fatalf("unexpected cnpg storage config %#v", cfg.Target.CNPG)
+	}
+	if cfg.Target.CNPG.CPURequest != "500m" || cfg.Target.CNPG.MemoryRequest != "1Gi" {
+		t.Fatalf("unexpected cnpg requests %#v", cfg.Target.CNPG)
+	}
+	if cfg.Target.CNPG.CPULimit != "2" || cfg.Target.CNPG.MemoryLimit != "4Gi" {
+		t.Fatalf("unexpected cnpg limits %#v", cfg.Target.CNPG)
+	}
+	if cfg.Target.CNPG.NodeLabelKey != "node-role.kubernetes.io/database" || cfg.Target.CNPG.NodeLabelValue != "true" {
+		t.Fatalf("unexpected cnpg node selector %#v", cfg.Target.CNPG)
+	}
+}
+
 func TestLoadBarmanProviderVerifyBackupConfig(t *testing.T) {
 	cfg, err := Load(strings.NewReader(`
 provider:

@@ -21,7 +21,9 @@ local PostgreSQL startup for restore targets, optional `pg_verifybackup`
 restore checks, `pg_isready`, SQL, `pg_amcheck`, and `pg_dump` probes, built-in
 probe presets, strict
 `pg_verifybackup` profile support, Prometheus metrics export from JSON reports,
-and first useful CLI surfaces for catalog, report, and drill execution.
+first useful CLI surfaces for catalog, report, and drill execution, and initial
+CNPG verify-cluster manifest primitives for the future Kubernetes restore
+target.
 
 ## Goals
 

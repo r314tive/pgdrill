@@ -13,6 +13,9 @@ called out explicitly even while the major version is `0`.
 - Strict `pg_verifybackup` restore-check profile for JSON output and
   fail-fast verification.
 - Optional Barman `generate-manifest` provider step before `verify-backup`.
+- CNPG verify-cluster manifest primitives with deterministic resource names,
+  strict target config parsing, resource sizing, node affinity, and recovery
+  backup references.
 
 ## [0.1.0-alpha.2] - 2026-07-07
 

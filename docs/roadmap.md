@@ -49,9 +49,11 @@ Status: in progress.
 
 Target: WAL-G to local restore target.
 
-- Wire JSON evidence sink into `pgdrill run`.
-- More probe ergonomics.
+Status: usable for local-target smoke drills.
+
+- JSON evidence sink wired into `pgdrill run`.
 - JSON evidence report written to disk.
+- More probe ergonomics.
 
 The CLI should become usable here:
 
@@ -64,6 +66,9 @@ pgdrill catalog list -f pgdrill.yaml
 
 ## Phase 3: Kubernetes / CNPG Target
 
+Status: started.
+
+- CNPG verify-cluster name generation and manifest primitives.
 - Temporary CNPG cluster restore target.
 - Source image reuse for verify clusters.
 - Full-recovery fail-fast handling.

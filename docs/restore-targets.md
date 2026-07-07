@@ -33,6 +33,48 @@ The Go target should prefer the Kubernetes API. A `kubectl` compatibility layer
 can be useful for early prototypes or constrained environments, but it should
 not become the control plane.
 
+### CNPG Manifest Primitives
+
+The first CNPG implementation step is a typed manifest builder, not a shell
+controller. It builds the temporary `Cluster` resource that a future Kubernetes
+target executor can apply, watch, inspect, and delete through the Kubernetes
+API.
+
+Implemented primitives:
+
+- deterministic verify-cluster names: `verify-<source-prefix>-<hash8>`,
+  bounded to the CNPG-friendly 50-character limit
+- strict config parsing for `target.kubernetes` and `target.cnpg`
+- source image, backup name, storage size/class, resource requests/limits, and
+  optional node affinity in the generated CNPG `Cluster`
+- stable pgdrill labels for ownership, drill ID, and source cluster
+- derived instance pod and full-recovery job names for future evidence
+  collection
+
+The manifest builder expects the caller to provide the selected CNPG `Backup`
+resource name and PostgreSQL image. The executor should discover those from the
+source cluster and selected backup before rendering the manifest.
+
+Example target config shape:
+
+```yaml
+target:
+  type: kubernetes
+  kubernetes:
+    namespace: d003-db
+    wait_timeout: 20m
+    poll_interval: 5s
+    cleanup_pvc: true
+    cleanup_on_fail: true
+  cnpg:
+    source_cluster: altbox
+    backup_name: altbox-backup-20260707
+    image_name: ghcr.io/cloudnative-pg/postgresql:16
+    storage_size: 20Gi
+    cpu_request: 500m
+    memory_request: 1Gi
+```
+
 ## Probe Mapping
 
 Useful CNPG target probes:
