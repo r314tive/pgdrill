@@ -291,6 +291,79 @@ target:
 	}
 }
 
+func TestTargetManifestCommandDiscoversCNPGInputs(t *testing.T) {
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+
+	writeExecutable(t, kubectlPath, `#!/bin/sh
+case "$*" in
+  *"get backups.postgresql.cnpg.io -o json"*)
+    cat <<'JSON'
+{
+  "items": [
+    {
+      "metadata": {"name": "altbox-old", "creationTimestamp": "2026-07-06T01:00:00Z"},
+      "spec": {"cluster": {"name": "altbox"}},
+      "status": {"phase": "completed"}
+    },
+    {
+      "metadata": {"name": "altbox-new", "creationTimestamp": "2026-07-07T01:00:00Z"},
+      "spec": {"cluster": {"name": "altbox"}},
+      "status": {"phase": "completed"}
+    }
+  ]
+}
+JSON
+    ;;
+  *"get cluster.postgresql.cnpg.io altbox -o json"*)
+    cat <<'JSON'
+{"spec":{"imageName":"ghcr.io/cloudnative-pg/postgresql:16.4"}}
+JSON
+    ;;
+  *)
+    echo "unexpected kubectl args: $*" >&2
+    exit 64
+    ;;
+esac
+`)
+	writeFile(t, configPath, `
+cluster:
+  name: altbox
+provider:
+  type: wal-g
+target:
+  type: kubernetes
+  kubernetes:
+    namespace: d003-db
+    kubectl_binary: `+kubectlPath+`
+  cnpg:
+    source_cluster: altbox
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"target", "manifest", "-f", configPath, "-discover", "-drill-id", "drill-1"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+
+	var manifest map[string]any
+	if err := yaml.Unmarshal(stdout.Bytes(), &manifest); err != nil {
+		t.Fatalf("parse manifest yaml: %v\n%s", err, stdout.String())
+	}
+
+	spec := requireMap(t, manifest["spec"])
+	bootstrap := requireMap(t, spec["bootstrap"])
+	recovery := requireMap(t, bootstrap["recovery"])
+	backup := requireMap(t, recovery["backup"])
+	if backup["name"] != "altbox-new" {
+		t.Fatalf("unexpected discovered backup %#v", backup)
+	}
+	if spec["imageName"] != "ghcr.io/cloudnative-pg/postgresql:16.4" {
+		t.Fatalf("unexpected discovered image %#v", spec["imageName"])
+	}
+}
+
 func TestRunCommandExecutesWALLocalDrill(t *testing.T) {
 	dir := t.TempDir()
 	walgPath := filepath.Join(dir, "wal-g")

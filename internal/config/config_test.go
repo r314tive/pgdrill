@@ -196,6 +196,8 @@ target:
     namespace: d003-db
     kubeconfig: /home/pgdrill/.kube/config
     context: d003
+    kubectl_binary: /usr/local/bin/kubectl
+    command_timeout: 2m
     wait_timeout: 20m
     poll_interval: 5s
     cleanup_pvc: true
@@ -229,6 +231,12 @@ target:
 	}
 	if cfg.Target.Kubernetes.Namespace != "d003-db" || cfg.Target.Kubernetes.Context != "d003" {
 		t.Fatalf("unexpected kubernetes config %#v", cfg.Target.Kubernetes)
+	}
+	if cfg.Target.Kubernetes.KubectlBinary != "/usr/local/bin/kubectl" {
+		t.Fatalf("unexpected kubectl binary %q", cfg.Target.Kubernetes.KubectlBinary)
+	}
+	if cfg.Target.Kubernetes.CommandTimeout.Duration != 2*time.Minute {
+		t.Fatalf("unexpected command timeout %s", cfg.Target.Kubernetes.CommandTimeout.Duration)
 	}
 	if cfg.Target.Kubernetes.WaitTimeout.Duration != 20*time.Minute {
 		t.Fatalf("unexpected wait timeout %s", cfg.Target.Kubernetes.WaitTimeout.Duration)

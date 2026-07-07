@@ -76,6 +76,7 @@ go run ./cmd/pgdrill explain
 go run ./cmd/pgdrill catalog list -f examples/pgdrill.yaml
 go run ./cmd/pgdrill run -f examples/pgdrill.yaml
 go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml
+go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml -discover
 go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```

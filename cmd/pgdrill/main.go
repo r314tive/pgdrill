@@ -345,9 +345,11 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 	var configPath string
 	var configPathLong string
 	var drillID string
+	var discover bool
 	fs.StringVar(&configPath, "f", "", "configuration file")
 	fs.StringVar(&configPathLong, "config", "", "configuration file")
 	fs.StringVar(&drillID, "drill-id", "", "drill id used for generated labels and names")
+	fs.BoolVar(&discover, "discover", false, "discover missing CNPG backup_name and image_name through kubectl")
 	if ok, code := parseFlags(fs, args); !ok {
 		return code
 	}
@@ -373,20 +375,28 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	cnpgTarget := cfg.Target.CNPG
+	if discover {
+		if err := discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget); err != nil {
+			fmt.Fprintf(stderr, "discover target manifest inputs: %v\n", err)
+			return 1
+		}
+	}
+
 	spec, err := cnpg.BuildVerifyClusterSpec(cnpg.Config{
 		Namespace:         cfg.Target.Kubernetes.Namespace,
-		SourceCluster:     cfg.Target.CNPG.SourceCluster,
-		VerifyClusterName: cfg.Target.CNPG.VerifyClusterName,
-		BackupName:        cfg.Target.CNPG.BackupName,
-		ImageName:         cfg.Target.CNPG.ImageName,
-		StorageSize:       cfg.Target.CNPG.StorageSize,
-		StorageClass:      cfg.Target.CNPG.StorageClass,
-		CPURequest:        cfg.Target.CNPG.CPURequest,
-		MemoryRequest:     cfg.Target.CNPG.MemoryRequest,
-		CPULimit:          cfg.Target.CNPG.CPULimit,
-		MemoryLimit:       cfg.Target.CNPG.MemoryLimit,
-		NodeLabelKey:      cfg.Target.CNPG.NodeLabelKey,
-		NodeLabelValue:    cfg.Target.CNPG.NodeLabelValue,
+		SourceCluster:     cnpgTarget.SourceCluster,
+		VerifyClusterName: cnpgTarget.VerifyClusterName,
+		BackupName:        cnpgTarget.BackupName,
+		ImageName:         cnpgTarget.ImageName,
+		StorageSize:       cnpgTarget.StorageSize,
+		StorageClass:      cnpgTarget.StorageClass,
+		CPURequest:        cnpgTarget.CPURequest,
+		MemoryRequest:     cnpgTarget.MemoryRequest,
+		CPULimit:          cnpgTarget.CPULimit,
+		MemoryLimit:       cnpgTarget.MemoryLimit,
+		NodeLabelKey:      cnpgTarget.NodeLabelKey,
+		NodeLabelValue:    cnpgTarget.NodeLabelValue,
 		Labels:            cfg.Target.Labels,
 	}, drillID)
 	if err != nil {
@@ -404,6 +414,41 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func discoverCNPGManifestInputs(ctx context.Context, cfg config.Config, target *config.CNPGTargetConfig) error {
+	if strings.TrimSpace(target.SourceCluster) == "" {
+		return fmt.Errorf("target.cnpg.source_cluster is required for discovery")
+	}
+
+	client := cnpg.NewKubectlClient(cnpg.KubectlConfig{
+		Binary:       cfg.Target.Kubernetes.KubectlBinary,
+		Namespace:    cfg.Target.Kubernetes.Namespace,
+		Kubeconfig:   cfg.Target.Kubernetes.Kubeconfig,
+		Context:      cfg.Target.Kubernetes.Context,
+		Timeout:      cfg.Target.Kubernetes.CommandTimeout.Duration,
+		RedactValues: cfg.Target.RedactValues,
+	}, nil)
+	discoverySpec := cnpg.VerifyClusterSpec{
+		Namespace:     cfg.Target.Kubernetes.Namespace,
+		SourceCluster: target.SourceCluster,
+	}
+
+	if strings.TrimSpace(target.BackupName) == "" {
+		backupName, _, err := client.LatestCompletedBackup(ctx, discoverySpec)
+		if err != nil {
+			return fmt.Errorf("discover latest completed CNPG Backup: %w", err)
+		}
+		target.BackupName = backupName
+	}
+	if strings.TrimSpace(target.ImageName) == "" {
+		imageName, _, err := client.SourceClusterImage(ctx, discoverySpec)
+		if err != nil {
+			return fmt.Errorf("discover CNPG source image: %w", err)
+		}
+		target.ImageName = imageName
+	}
+	return nil
 }
 
 func runVersion(args []string, stdout, stderr io.Writer) int {

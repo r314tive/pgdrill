@@ -74,6 +74,7 @@ Status: started.
   semantics.
 - `kubectl` compatibility client behind the CNPG lifecycle interface.
 - CNPG `kubectl` discovery for latest completed `Backup` and source image.
+- Read-only CNPG manifest discovery through `pgdrill target manifest -discover`.
 - Temporary CNPG cluster restore target.
 - Source image reuse for verify clusters.
 - Full-recovery fail-fast handling.

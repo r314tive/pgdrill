@@ -103,6 +103,8 @@ type KubernetesTargetConfig struct {
 	Namespace       string   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Kubeconfig      string   `json:"kubeconfig,omitempty" yaml:"kubeconfig,omitempty"`
 	Context         string   `json:"context,omitempty" yaml:"context,omitempty"`
+	KubectlBinary   string   `json:"kubectl_binary,omitempty" yaml:"kubectl_binary,omitempty"`
+	CommandTimeout  Duration `json:"command_timeout,omitempty" yaml:"command_timeout,omitempty"`
 	WaitTimeout     Duration `json:"wait_timeout,omitempty" yaml:"wait_timeout,omitempty"`
 	PollInterval    Duration `json:"poll_interval,omitempty" yaml:"poll_interval,omitempty"`
 	CleanupPVC      bool     `json:"cleanup_pvc,omitempty" yaml:"cleanup_pvc,omitempty"`

@@ -17,6 +17,8 @@ called out explicitly even while the major version is `0`.
   command execution with structured command evidence.
 - CNPG `kubectl` discovery helpers for latest completed `Backup` selection and
   source cluster image lookup.
+- `pgdrill target manifest -discover` for read-only CNPG manifest rendering
+  with discovered backup name and source image.
 
 ## [0.1.0-alpha.3] - 2026-07-07
 

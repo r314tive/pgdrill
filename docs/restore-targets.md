@@ -61,6 +61,13 @@ The first CLI surface renders this manifest without applying it:
 pgdrill target manifest -f pgdrill-cnpg.yaml
 ```
 
+If `target.cnpg.backup_name` or `target.cnpg.image_name` are omitted, the CLI
+can discover them read-only through the `kubectl` compatibility client:
+
+```sh
+pgdrill target manifest -f pgdrill-cnpg.yaml -discover
+```
+
 ### CNPG Lifecycle Controller
 
 The next implementation layer is the CNPG lifecycle controller. It is still
@@ -101,6 +108,8 @@ target:
   type: kubernetes
   kubernetes:
     namespace: d003-db
+    kubectl_binary: kubectl
+    command_timeout: 2m
     wait_timeout: 20m
     poll_interval: 5s
     cleanup_pvc: true
