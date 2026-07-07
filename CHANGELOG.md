@@ -16,6 +16,8 @@ called out explicitly even while the major version is `0`.
   explicit skipped status when disabled.
 - Initial pgBackRest local restore planning for `pgbackrest restore` with
   canonical PITR target flag mapping and `pgdrill run` coverage.
+- `pgdrill report metrics` command for Prometheus text export from JSON drill
+  reports.
 
 ## [0.1.0-alpha.1] - 2026-07-06
 

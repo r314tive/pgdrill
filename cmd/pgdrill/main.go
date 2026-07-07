@@ -137,6 +137,8 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "show":
 		return runReportShow(args[1:], stdout, stderr)
+	case "metrics":
+		return runReportMetrics(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printReportUsage(stdout)
 		return 0
@@ -177,6 +179,39 @@ func runReportShow(args []string, stdout, stderr io.Writer) int {
 	case "json":
 		if err := report.WriteJSON(stdout, result); err != nil {
 			fmt.Fprintf(stderr, "write report output: %v\n", err)
+			return 1
+		}
+		return 0
+	default:
+		fmt.Fprintf(stderr, "%v\n", errors.New("unsupported format: "+format))
+		return 2
+	}
+}
+
+func runReportMetrics(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("report metrics", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	var format string
+	fs.StringVar(&format, "format", "prometheus", "output format: prometheus")
+	if ok, code := parseFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "report metrics requires exactly one report path")
+		return 2
+	}
+
+	result, err := report.ReadJSONFile(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "read report: %v\n", err)
+		return 1
+	}
+
+	switch strings.ToLower(format) {
+	case "prometheus", "prom":
+		if err := report.WritePrometheus(stdout, result); err != nil {
+			fmt.Fprintf(stderr, "write report metrics: %v\n", err)
 			return 1
 		}
 		return 0
@@ -377,6 +412,7 @@ func printReportUsage(w io.Writer) {
 
 Commands:
   show             Print a drill report summary.
+  metrics          Export drill report metrics.
   help             Show this help.
 
 `)

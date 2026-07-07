@@ -18,8 +18,8 @@ WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
 `verify-backup`, optional pgBackRest `check`, pgBackRest local restore planning,
 JSON drill report persistence, local PostgreSQL startup for restore targets,
 optional `pg_verifybackup` restore checks, `pg_isready`, SQL, `pg_amcheck`, and
-`pg_dump` probes, and first useful CLI surfaces for catalog, report, and drill
-execution.
+`pg_dump` probes, Prometheus metrics export from JSON reports, and first useful
+CLI surfaces for catalog, report, and drill execution.
 
 ## Goals
 
@@ -72,6 +72,7 @@ go run ./cmd/pgdrill explain
 go run ./cmd/pgdrill catalog list -f examples/pgdrill.yaml
 go run ./cmd/pgdrill run -f examples/pgdrill.yaml
 go run ./cmd/pgdrill report show path/to/report.json
+go run ./cmd/pgdrill report metrics path/to/report.json
 ```
 
 See [docs/roadmap.md](docs/roadmap.md) for the current implementation sequence

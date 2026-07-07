@@ -796,6 +796,44 @@ func TestReportShowCommandJSON(t *testing.T) {
 	}
 }
 
+func TestReportMetricsCommandPrometheus(t *testing.T) {
+	reportPath := filepath.Join(t.TempDir(), "drill.json")
+	writeDrillReport(t, reportPath, model.DrillResult{
+		ID:       "drill-metrics",
+		Provider: model.ProviderPGBackRest,
+		Target: model.TargetSpec{
+			Type: model.RestoreTargetLocal,
+		},
+		RecoveryTarget: model.RecoveryTarget{
+			Type: model.RecoveryTargetTimestamp,
+		},
+		StartedAt:  mustTime(t, "2026-07-06T01:02:03Z"),
+		FinishedAt: mustTime(t, "2026-07-06T01:04:03Z"),
+		Status:     model.DrillStatusPassed,
+		Checks: []model.Check{
+			{Name: "pgbackrest-check", Status: model.CheckStatusPassed},
+		},
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"report", "metrics", reportPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"# TYPE pgdrill_drill_status gauge",
+		`pgdrill_drill_status{provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 1`,
+		`pgdrill_drill_duration_seconds{provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 120`,
+		`pgdrill_checks_total{provider="pgbackrest",check="pgbackrest-check",probe="unknown",status="passed"} 1`,
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected metrics output to contain %q, got:\n%s", expected, output)
+		}
+	}
+}
+
 func TestReportShowRequiresPath(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 

@@ -20,6 +20,7 @@ Status: in progress.
 - First CLI catalog surface: `pgdrill catalog list`.
 - JSON report file sink.
 - First CLI report surface: `pgdrill report show`.
+- Prometheus metrics export from JSON reports: `pgdrill report metrics`.
 - Local restore target workdir preparation, command-step execution, and guarded
   cleanup.
 - Local restore target PostgreSQL startup/shutdown lifecycle.
@@ -53,6 +54,7 @@ The CLI should become usable here:
 ```sh
 pgdrill run -f pgdrill.yaml
 pgdrill report show path/to/report.json
+pgdrill report metrics path/to/report.json
 pgdrill catalog list -f pgdrill.yaml
 ```
 
@@ -71,7 +73,6 @@ pgdrill catalog list -f pgdrill.yaml
   manifest.
 - pgBackRest repository verification: `verify`.
 - Richer `pg_verifybackup` profiles and probe presets.
-- Metrics export.
 
 ## Phase 5: UI / TUI
 
