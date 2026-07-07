@@ -2,6 +2,7 @@ package probes
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
@@ -10,6 +11,12 @@ import (
 	"github.com/r314tive/pgdrill/internal/probes/pgdump"
 	"github.com/r314tive/pgdrill/internal/probes/pgisready"
 	"github.com/r314tive/pgdrill/internal/probes/sql"
+)
+
+const (
+	PresetReadiness  = "readiness"
+	PresetSmoke      = "smoke"
+	PresetStructural = "structural"
 )
 
 func NewProbe(cfg config.ProbeConfig) (core.Probe, error) {
@@ -53,8 +60,13 @@ func NewProbe(cfg config.ProbeConfig) (core.Probe, error) {
 }
 
 func NewProbes(cfgs []config.ProbeConfig) ([]core.Probe, error) {
-	result := make([]core.Probe, 0, len(cfgs))
-	for i, cfg := range cfgs {
+	expanded, err := ExpandConfigs(cfgs)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]core.Probe, 0, len(expanded))
+	for i, cfg := range expanded {
 		probe, err := NewProbe(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("probe %d: %w", i, err)
@@ -62,4 +74,94 @@ func NewProbes(cfgs []config.ProbeConfig) ([]core.Probe, error) {
 		result = append(result, probe)
 	}
 	return result, nil
+}
+
+func ExpandConfigs(cfgs []config.ProbeConfig) ([]config.ProbeConfig, error) {
+	expanded := make([]config.ProbeConfig, 0, len(cfgs))
+	for i, cfg := range cfgs {
+		if strings.TrimSpace(cfg.Preset) == "" {
+			expanded = append(expanded, cfg)
+			continue
+		}
+		preset, err := expandPreset(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("probe %d preset %q: %w", i, cfg.Preset, err)
+		}
+		expanded = append(expanded, preset...)
+	}
+	return expanded, nil
+}
+
+func expandPreset(cfg config.ProbeConfig) ([]config.ProbeConfig, error) {
+	if err := validatePresetConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	switch strings.ToLower(strings.TrimSpace(cfg.Preset)) {
+	case PresetReadiness:
+		return []config.ProbeConfig{
+			presetProbe(cfg, model.ProbePGIsReady, "pg_isready"),
+		}, nil
+	case PresetSmoke:
+		return []config.ProbeConfig{
+			presetProbe(cfg, model.ProbePGIsReady, "pg_isready"),
+			presetSQLProbe(cfg, "select_1", "select 1"),
+		}, nil
+	case PresetStructural:
+		return []config.ProbeConfig{
+			presetProbe(cfg, model.ProbePGIsReady, "pg_isready"),
+			presetProbe(cfg, model.ProbeAMCheck, "pg_amcheck"),
+			presetPGDumpProbe(cfg, "pg_dump_schema"),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown probe preset")
+	}
+}
+
+func validatePresetConfig(cfg config.ProbeConfig) error {
+	if cfg.Type != "" {
+		return fmt.Errorf("preset cannot be combined with type")
+	}
+	if cfg.Binary != "" {
+		return fmt.Errorf("preset cannot be combined with binary")
+	}
+	if cfg.Query != "" {
+		return fmt.Errorf("preset cannot be combined with query")
+	}
+	if cfg.Mode != "" {
+		return fmt.Errorf("preset cannot be combined with mode")
+	}
+	if len(cfg.Args) > 0 {
+		return fmt.Errorf("preset cannot be combined with args")
+	}
+	return nil
+}
+
+func presetProbe(cfg config.ProbeConfig, probeType model.ProbeType, name string) config.ProbeConfig {
+	return config.ProbeConfig{
+		Type:         probeType,
+		Name:         presetProbeName(cfg.Name, name),
+		Timeout:      cfg.Timeout,
+		RedactValues: append([]string{}, cfg.RedactValues...),
+	}
+}
+
+func presetSQLProbe(cfg config.ProbeConfig, name string, query string) config.ProbeConfig {
+	probe := presetProbe(cfg, model.ProbeSQL, name)
+	probe.Query = query
+	return probe
+}
+
+func presetPGDumpProbe(cfg config.ProbeConfig, name string) config.ProbeConfig {
+	probe := presetProbe(cfg, model.ProbePGDump, name)
+	probe.Mode = "schema"
+	return probe
+}
+
+func presetProbeName(prefix string, name string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return name
+	}
+	return prefix + "_" + name
 }

@@ -28,6 +28,7 @@ Status: in progress.
 - SQL probe through `psql`.
 - `pg_amcheck` probe.
 - `pg_dump` schema probe.
+- Built-in probe presets: `readiness`, `smoke`, and `structural`.
 - Optional `pg_verifybackup` restore-artifact check.
 - Optional WAL-G `wal-verify` provider check.
 - First CLI drill surface: `pgdrill run`.
@@ -47,7 +48,7 @@ Status: in progress.
 Target: WAL-G to local restore target.
 
 - Wire JSON evidence sink into `pgdrill run`.
-- More probe ergonomics and built-in probe presets.
+- More probe ergonomics.
 - JSON evidence report written to disk.
 
 The CLI should become usable here:
@@ -72,7 +73,7 @@ pgdrill catalog list -f pgdrill.yaml
 
 - Barman manifest generation workflows for backups that do not already have a
   manifest.
-- Richer `pg_verifybackup` profiles and probe presets.
+- Richer `pg_verifybackup` profiles.
 
 ## Phase 5: UI / TUI
 

@@ -20,6 +20,7 @@ called out explicitly even while the major version is `0`.
   reports.
 - Optional pgBackRest repository verification through `pgbackrest verify
   --set=<backup-label>`.
+- Built-in probe presets: `readiness`, `smoke`, and `structural`.
 
 ## [0.1.0-alpha.1] - 2026-07-06
 

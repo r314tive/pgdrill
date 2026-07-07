@@ -117,6 +117,7 @@ type VerifyBackupConfig struct {
 }
 
 type ProbeConfig struct {
+	Preset       string            `json:"preset,omitempty" yaml:"preset,omitempty"`
 	Type         model.ProbeType   `json:"type" yaml:"type"`
 	Name         string            `json:"name,omitempty" yaml:"name,omitempty"`
 	Binary       string            `json:"binary,omitempty" yaml:"binary,omitempty"`

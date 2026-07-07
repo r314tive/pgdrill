@@ -149,6 +149,37 @@ target:
 	}
 }
 
+func TestLoadProbePresetConfig(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+provider:
+  type: wal-g
+target:
+  type: local
+probes:
+  - preset: smoke
+    name: quick
+    timeout: 2s
+    redact_values:
+      - probe-secret
+`), "yaml")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if len(cfg.Probes) != 1 {
+		t.Fatalf("unexpected probes %#v", cfg.Probes)
+	}
+	if cfg.Probes[0].Preset != "smoke" || cfg.Probes[0].Name != "quick" {
+		t.Fatalf("unexpected probe preset %#v", cfg.Probes[0])
+	}
+	if cfg.Probes[0].Timeout.Duration != 2*time.Second {
+		t.Fatalf("unexpected probe preset timeout %s", cfg.Probes[0].Timeout.Duration)
+	}
+	if got, want := cfg.Probes[0].RedactValues, []string{"probe-secret"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("unexpected probe preset redactions %#v", got)
+	}
+}
+
 func TestLoadBarmanProviderVerifyBackupConfig(t *testing.T) {
 	cfg, err := Load(strings.NewReader(`
 provider:

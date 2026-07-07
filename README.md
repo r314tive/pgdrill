@@ -18,9 +18,9 @@ WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
 `verify-backup`, optional pgBackRest `check` and `verify`, pgBackRest local
 restore planning, JSON drill report persistence, local PostgreSQL startup for
 restore targets, optional `pg_verifybackup` restore checks, `pg_isready`, SQL,
-`pg_amcheck`, and `pg_dump` probes, Prometheus metrics export from JSON
-reports, and first useful CLI surfaces for catalog, report, and drill
-execution.
+`pg_amcheck`, and `pg_dump` probes, built-in probe presets, Prometheus metrics
+export from JSON reports, and first useful CLI surfaces for catalog, report,
+and drill execution.
 
 ## Goals
 
@@ -77,7 +77,8 @@ go run ./cmd/pgdrill report metrics path/to/report.json
 ```
 
 See [docs/roadmap.md](docs/roadmap.md) for the current implementation sequence
-and CLI/UI direction.
+and CLI/UI direction. Probe configuration is documented in
+[docs/probes.md](docs/probes.md).
 
 Release discipline is described in [docs/release.md](docs/release.md), and
 user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).
