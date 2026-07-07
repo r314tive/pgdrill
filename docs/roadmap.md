@@ -73,6 +73,7 @@ Status: started.
 - CNPG lifecycle controller boundary with apply, wait, capture, and cleanup
   semantics.
 - `kubectl` compatibility client behind the CNPG lifecycle interface.
+- CNPG `kubectl` discovery for latest completed `Backup` and source image.
 - Temporary CNPG cluster restore target.
 - Source image reuse for verify clusters.
 - Full-recovery fail-fast handling.

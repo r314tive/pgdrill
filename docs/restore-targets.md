@@ -86,6 +86,14 @@ stdin for `apply -f -`, records structured command evidence, and keeps log
 capture best-effort so missing debug artifacts do not mask the original restore
 failure.
 
+The same compatibility client can discover CNPG inputs by parsing Kubernetes
+JSON output in Go:
+
+- select the newest `Backup` with `status.phase=completed` for the configured
+  source cluster
+- read `Cluster.spec.imageName` from the source cluster so verify clusters
+  reuse the same PostgreSQL image
+
 Example target config shape:
 
 ```yaml

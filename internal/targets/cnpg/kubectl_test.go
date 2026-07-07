@@ -139,9 +139,80 @@ func TestKubectlClientDeletePVCsUsesClusterLabel(t *testing.T) {
 	}
 }
 
+func TestKubectlClientLatestCompletedBackupSelectsNewest(t *testing.T) {
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"backups.postgresql.cnpg.io": `{
+  "items": [
+    {
+      "metadata": {"name": "altbox-old", "creationTimestamp": "2026-07-06T01:00:00Z"},
+      "spec": {"cluster": {"name": "altbox"}},
+      "status": {"phase": "completed"}
+    },
+    {
+      "metadata": {"name": "altbox-running", "creationTimestamp": "2026-07-07T01:00:00Z"},
+      "spec": {"cluster": {"name": "altbox"}},
+      "status": {"phase": "running"}
+    },
+    {
+      "metadata": {"name": "other-new", "creationTimestamp": "2026-07-08T01:00:00Z"},
+      "spec": {"cluster": {"name": "other"}},
+      "status": {"phase": "completed"}
+    },
+    {
+      "metadata": {"name": "altbox-new", "creationTimestamp": "2026-07-07T02:00:00Z"},
+      "spec": {"cluster": {"name": "altbox"}},
+      "status": {"phase": "completed"}
+    }
+  ]
+}`,
+		},
+	}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+
+	backupName, evidence, err := client.LatestCompletedBackup(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("latest completed backup: %v", err)
+	}
+
+	if backupName != "altbox-new" {
+		t.Fatalf("unexpected backup name %q", backupName)
+	}
+	if !hasOperation(evidence, "kubectl-discover-cnpg-backups") {
+		t.Fatalf("missing discovery evidence %#v", evidence)
+	}
+	if got := runner.invocations[0].Args; !reflect.DeepEqual(got, []string{"-n", "d003-db", "get", "backups.postgresql.cnpg.io", "-o", "json"}) {
+		t.Fatalf("unexpected args %#v", got)
+	}
+}
+
+func TestKubectlClientSourceClusterImage(t *testing.T) {
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"cluster.postgresql.cnpg.io": `{"spec":{"imageName":"ghcr.io/cloudnative-pg/postgresql:16.4"}}`,
+		},
+	}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+
+	image, evidence, err := client.SourceClusterImage(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("source cluster image: %v", err)
+	}
+
+	if image != "ghcr.io/cloudnative-pg/postgresql:16.4" {
+		t.Fatalf("unexpected image %q", image)
+	}
+	if !hasOperation(evidence, "kubectl-discover-cnpg-source-image") {
+		t.Fatalf("missing image discovery evidence %#v", evidence)
+	}
+}
+
 type fakeCommandRunner struct {
 	invocations         []command.Invocation
 	failWhenArgsContain string
+	stdoutByArgContains map[string]string
 }
 
 func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (command.Result, error) {
@@ -154,8 +225,21 @@ func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (comm
 		exitCode = 1
 	}
 
+	stdout := "ok\n"
+	for marker, value := range r.stdoutByArgContains {
+		if strings.Contains(strings.Join(inv.Args, " "), marker) {
+			stdout = value
+			break
+		}
+	}
+
 	now := time.Date(2026, 7, 7, 8, 40, 0, 0, time.UTC).Add(time.Duration(len(r.invocations)) * time.Second)
 	return command.Result{
+		Raw: command.RawEvidence{
+			Path:   inv.Path,
+			Args:   append([]string{}, inv.Args...),
+			Stdout: []byte(stdout),
+		},
 		Evidence: model.CommandEvidence{
 			Path:       inv.Path,
 			Args:       append([]string{}, inv.Args...),
@@ -167,7 +251,7 @@ func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (comm
 				Success:  success,
 				ExitCode: exitCode,
 			},
-			Stdout: "ok\n",
+			Stdout: stdout,
 		},
 	}, nil
 }

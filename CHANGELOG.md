@@ -15,6 +15,8 @@ called out explicitly even while the major version is `0`.
   client interface.
 - `kubectl` compatibility client for the CNPG lifecycle interface, using direct
   command execution with structured command evidence.
+- CNPG `kubectl` discovery helpers for latest completed `Backup` selection and
+  source cluster image lookup.
 
 ## [0.1.0-alpha.3] - 2026-07-07
 
