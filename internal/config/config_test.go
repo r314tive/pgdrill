@@ -39,6 +39,7 @@ target:
 restore:
   verify_backup:
     enabled: true
+    profile: strict
     binary: /usr/lib/postgresql/16/bin/pg_verifybackup
     timeout: 20s
     exit_on_error: true
@@ -105,6 +106,9 @@ report:
 	}
 	if !cfg.Restore.VerifyBackup.Enabled {
 		t.Fatal("expected verify_backup to be enabled")
+	}
+	if cfg.Restore.VerifyBackup.Profile != "strict" {
+		t.Fatalf("unexpected verify_backup profile %q", cfg.Restore.VerifyBackup.Profile)
 	}
 	if cfg.Restore.VerifyBackup.Binary != "/usr/lib/postgresql/16/bin/pg_verifybackup" {
 		t.Fatalf("unexpected verify_backup binary %q", cfg.Restore.VerifyBackup.Binary)

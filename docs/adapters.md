@@ -136,6 +136,8 @@ Implemented restore planning:
 - optional `pg_verifybackup` restore check when `restore.verify_backup.enabled`
   is true and the restored data directory contains a PostgreSQL backup
   manifest
+- `restore.verify_backup.profile: strict` enables JSON output and
+  `--exit-on-error`
 
 Initial value:
 

@@ -2,6 +2,7 @@ package pgverifybackup
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
@@ -11,6 +12,7 @@ const defaultBinary = "pg_verifybackup"
 
 type Config struct {
 	Enabled       bool
+	Profile       string
 	Binary        string
 	Timeout       time.Duration
 	Format        string
@@ -27,6 +29,11 @@ type Config struct {
 func (c Config) Step(dataDir string) (*model.RestoreStep, error) {
 	if !c.Enabled {
 		return nil, nil
+	}
+	var err error
+	c, err = c.applyProfile()
+	if err != nil {
+		return nil, err
 	}
 	if dataDir == "" {
 		return nil, fmt.Errorf("pg_verifybackup data directory is required")
@@ -82,6 +89,21 @@ func (c Config) binary() string {
 		return c.Binary
 	}
 	return defaultBinary
+}
+
+func (c Config) applyProfile() (Config, error) {
+	switch strings.ToLower(strings.TrimSpace(c.Profile)) {
+	case "", "custom":
+		return c, nil
+	case "strict":
+		if c.Format == "" {
+			c.Format = "json"
+		}
+		c.ExitOnError = true
+		return c, nil
+	default:
+		return Config{}, fmt.Errorf("unsupported pg_verifybackup profile %q", c.Profile)
+	}
 }
 
 func durationString(value time.Duration) string {

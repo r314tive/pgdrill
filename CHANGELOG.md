@@ -8,6 +8,11 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- Strict `pg_verifybackup` restore-check profile for JSON output and
+  fail-fast verification.
+
 ## [0.1.0-alpha.2] - 2026-07-07
 
 ### Added

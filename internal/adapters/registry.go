@@ -105,6 +105,7 @@ func pgBackRestVerifyConfig(cfg config.PGBackRestVerifyConfig) pgbackrest.Verify
 func verifyBackupConfig(cfg config.VerifyBackupConfig, providerRedactions []string) pgverifybackup.Config {
 	return pgverifybackup.Config{
 		Enabled:       cfg.Enabled,
+		Profile:       cfg.Profile,
 		Binary:        cfg.Binary,
 		Timeout:       cfg.Timeout.Duration,
 		Format:        cfg.Format,

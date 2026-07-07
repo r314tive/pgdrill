@@ -21,6 +21,7 @@ func TestStepDisabled(t *testing.T) {
 func TestStepBuildsCommand(t *testing.T) {
 	step, err := Config{
 		Enabled:       true,
+		Profile:       "custom",
 		Binary:        "/usr/lib/postgresql/16/bin/pg_verifybackup",
 		Timeout:       2 * time.Minute,
 		Format:        "plain",
@@ -68,6 +69,45 @@ func TestStepBuildsCommand(t *testing.T) {
 	}
 	if got, want := step.Command.Redactions, []string{"secret"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected redactions: got %#v want %#v", got, want)
+	}
+}
+
+func TestStepAppliesStrictProfile(t *testing.T) {
+	step, err := Config{
+		Enabled: true,
+		Profile: "strict",
+	}.Step("/tmp/data")
+	if err != nil {
+		t.Fatalf("build step: %v", err)
+	}
+	if step == nil || step.Command == nil {
+		t.Fatalf("expected command step, got %#v", step)
+	}
+	wantArgs := []string{"--exit-on-error", "--format=json", "/tmp/data"}
+	if !reflect.DeepEqual(step.Command.Args, wantArgs) {
+		t.Fatalf("unexpected args:\ngot  %#v\nwant %#v", step.Command.Args, wantArgs)
+	}
+}
+
+func TestStepStrictProfilePreservesExplicitFormat(t *testing.T) {
+	step, err := Config{
+		Enabled: true,
+		Profile: "strict",
+		Format:  "plain",
+	}.Step("/tmp/data")
+	if err != nil {
+		t.Fatalf("build step: %v", err)
+	}
+	wantArgs := []string{"--exit-on-error", "--format=plain", "/tmp/data"}
+	if !reflect.DeepEqual(step.Command.Args, wantArgs) {
+		t.Fatalf("unexpected args:\ngot  %#v\nwant %#v", step.Command.Args, wantArgs)
+	}
+}
+
+func TestStepRejectsUnknownProfile(t *testing.T) {
+	_, err := Config{Enabled: true, Profile: "fast"}.Step("/tmp/data")
+	if err == nil {
+		t.Fatal("expected unsupported profile error")
 	}
 }
 

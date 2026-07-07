@@ -103,6 +103,7 @@ type RestoreConfig struct {
 
 type VerifyBackupConfig struct {
 	Enabled       bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Profile       string   `json:"profile,omitempty" yaml:"profile,omitempty"`
 	Binary        string   `json:"binary,omitempty" yaml:"binary,omitempty"`
 	Timeout       Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	Format        string   `json:"format,omitempty" yaml:"format,omitempty"`

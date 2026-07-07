@@ -30,6 +30,7 @@ Status: in progress.
 - `pg_dump` schema probe.
 - Built-in probe presets: `readiness`, `smoke`, and `structural`.
 - Optional `pg_verifybackup` restore-artifact check.
+- Strict `pg_verifybackup` profile.
 - Optional WAL-G `wal-verify` provider check.
 - First CLI drill surface: `pgdrill run`.
 - WAL-G local restore planning for `backup-fetch` and `wal-fetch` recovery
@@ -73,7 +74,7 @@ pgdrill catalog list -f pgdrill.yaml
 
 - Barman manifest generation workflows for backups that do not already have a
   manifest.
-- Richer `pg_verifybackup` profiles.
+- Additional `pg_verifybackup` profiles, if real drills prove they are useful.
 
 ## Phase 5: UI / TUI
 
