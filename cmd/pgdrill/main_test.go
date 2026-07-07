@@ -12,6 +12,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/report"
+	"gopkg.in/yaml.v3"
 )
 
 func TestVersionCommand(t *testing.T) {
@@ -211,6 +212,82 @@ func TestCatalogListRequiresConfig(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "requires -f or -config") {
 		t.Fatalf("expected missing config error, got: %s", got)
+	}
+}
+
+func TestTargetManifestCommandRendersCNPGManifest(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeFile(t, configPath, `
+cluster:
+  name: altbox
+provider:
+  type: wal-g
+target:
+  type: kubernetes
+  labels:
+    env: d003
+  kubernetes:
+    namespace: d003-db
+  cnpg:
+    source_cluster: altbox
+    backup_name: altbox-backup-20260707
+    image_name: ghcr.io/cloudnative-pg/postgresql:16
+    storage_size: 20Gi
+    cpu_request: 500m
+    memory_request: 1Gi
+    node_label_key: node-role.kubernetes.io/database
+    node_label_value: "true"
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"target", "manifest", "-f", configPath, "-drill-id", "drill-1"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+
+	var manifest map[string]any
+	if err := yaml.Unmarshal(stdout.Bytes(), &manifest); err != nil {
+		t.Fatalf("parse manifest yaml: %v\n%s", err, stdout.String())
+	}
+
+	metadata := requireMap(t, manifest["metadata"])
+	spec := requireMap(t, manifest["spec"])
+	labels := requireMap(t, metadata["labels"])
+	bootstrap := requireMap(t, spec["bootstrap"])
+	recovery := requireMap(t, bootstrap["recovery"])
+	backup := requireMap(t, recovery["backup"])
+	storage := requireMap(t, spec["storage"])
+	resources := requireMap(t, spec["resources"])
+	requests := requireMap(t, resources["requests"])
+
+	if manifest["apiVersion"] != "postgresql.cnpg.io/v1" || manifest["kind"] != "Cluster" {
+		t.Fatalf("unexpected manifest identity %#v", manifest)
+	}
+	if metadata["namespace"] != "d003-db" {
+		t.Fatalf("unexpected metadata %#v", metadata)
+	}
+	name, ok := metadata["name"].(string)
+	if !ok || !strings.HasPrefix(name, "verify-altbox-") {
+		t.Fatalf("unexpected generated name %#v", metadata["name"])
+	}
+	if labels["app.kubernetes.io/managed-by"] != "pgdrill" || labels["env"] != "d003" {
+		t.Fatalf("unexpected labels %#v", labels)
+	}
+	if spec["imageName"] != "ghcr.io/cloudnative-pg/postgresql:16" {
+		t.Fatalf("unexpected image name %#v", spec["imageName"])
+	}
+	if backup["name"] != "altbox-backup-20260707" {
+		t.Fatalf("unexpected recovery backup %#v", backup)
+	}
+	if storage["size"] != "20Gi" {
+		t.Fatalf("unexpected storage %#v", storage)
+	}
+	if requests["cpu"] != "500m" || requests["memory"] != "1Gi" {
+		t.Fatalf("unexpected requests %#v", requests)
+	}
+	if !strings.Contains(stdout.String(), "node-role.kubernetes.io/database") {
+		t.Fatalf("expected node affinity in manifest:\n%s", stdout.String())
 	}
 }
 
@@ -875,6 +952,15 @@ func TestReportShowRequiresPath(t *testing.T) {
 	if got := stderr.String(); !strings.Contains(got, "requires exactly one report path") {
 		t.Fatalf("expected missing path error, got: %s", got)
 	}
+}
+
+func requireMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+	result, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map, got %#v", value)
+	}
+	return result
 }
 
 func writeFile(t *testing.T, path, content string) {

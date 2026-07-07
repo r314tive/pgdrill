@@ -55,6 +55,12 @@ The manifest builder expects the caller to provide the selected CNPG `Backup`
 resource name and PostgreSQL image. The executor should discover those from the
 source cluster and selected backup before rendering the manifest.
 
+The first CLI surface renders this manifest without applying it:
+
+```sh
+pgdrill target manifest -f pgdrill-cnpg.yaml
+```
+
 Example target config shape:
 
 ```yaml

@@ -19,6 +19,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/probes"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/targets"
+	"github.com/r314tive/pgdrill/internal/targets/cnpg"
 	"github.com/r314tive/pgdrill/internal/version"
 )
 
@@ -43,6 +44,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runExplain(args[1:], stdout, stderr)
 	case "catalog":
 		return runCatalog(args[1:], stdout, stderr)
+	case "target":
+		return runTarget(args[1:], stdout, stderr)
 	case "report":
 		return runReport(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -316,6 +319,93 @@ func runCatalogList(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func runTarget(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printTargetUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "manifest":
+		return runTargetManifest(args[1:], stdout, stderr)
+	case "help", "-h", "--help":
+		printTargetUsage(stdout)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "unknown target command %q\n\n", args[0])
+		printTargetUsage(stderr)
+		return 2
+	}
+}
+
+func runTargetManifest(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("target manifest", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	var configPath string
+	var configPathLong string
+	var drillID string
+	fs.StringVar(&configPath, "f", "", "configuration file")
+	fs.StringVar(&configPathLong, "config", "", "configuration file")
+	fs.StringVar(&drillID, "drill-id", "", "drill id used for generated labels and names")
+	if ok, code := parseFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "target manifest does not accept positional arguments")
+		return 2
+	}
+	if configPath == "" {
+		configPath = configPathLong
+	}
+	if configPath == "" {
+		fmt.Fprintln(stderr, "target manifest requires -f or -config")
+		return 2
+	}
+
+	cfg, err := config.LoadFile(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load config: %v\n", err)
+		return 1
+	}
+	if cfg.Target.Type != model.RestoreTargetKubernetes {
+		fmt.Fprintf(stderr, "target manifest supports target.type %q, got %q\n", model.RestoreTargetKubernetes, cfg.Target.Type)
+		return 2
+	}
+
+	spec, err := cnpg.BuildVerifyClusterSpec(cnpg.Config{
+		Namespace:         cfg.Target.Kubernetes.Namespace,
+		SourceCluster:     cfg.Target.CNPG.SourceCluster,
+		VerifyClusterName: cfg.Target.CNPG.VerifyClusterName,
+		BackupName:        cfg.Target.CNPG.BackupName,
+		ImageName:         cfg.Target.CNPG.ImageName,
+		StorageSize:       cfg.Target.CNPG.StorageSize,
+		StorageClass:      cfg.Target.CNPG.StorageClass,
+		CPURequest:        cfg.Target.CNPG.CPURequest,
+		MemoryRequest:     cfg.Target.CNPG.MemoryRequest,
+		CPULimit:          cfg.Target.CNPG.CPULimit,
+		MemoryLimit:       cfg.Target.CNPG.MemoryLimit,
+		NodeLabelKey:      cfg.Target.CNPG.NodeLabelKey,
+		NodeLabelValue:    cfg.Target.CNPG.NodeLabelValue,
+		Labels:            cfg.Target.Labels,
+	}, drillID)
+	if err != nil {
+		fmt.Fprintf(stderr, "build target manifest: %v\n", err)
+		return 1
+	}
+
+	manifest, err := spec.ManifestYAML()
+	if err != nil {
+		fmt.Fprintf(stderr, "render target manifest: %v\n", err)
+		return 1
+	}
+	if _, err := stdout.Write(manifest); err != nil {
+		fmt.Fprintf(stderr, "write target manifest: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func runVersion(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -390,6 +480,7 @@ Commands:
   sample-config    Print a starter configuration.
   explain          Explain the project model.
   catalog          Discover and inspect backup catalogs.
+  target           Inspect restore target artifacts.
   report           Inspect drill reports.
   help             Show this help.
 
@@ -424,6 +515,17 @@ func printCatalogUsage(w io.Writer) {
 
 Commands:
   list             Discover backups through the configured provider.
+  help             Show this help.
+
+`)
+}
+
+func printTargetUsage(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  pgdrill target <command> [flags]
+
+Commands:
+  manifest         Render restore target manifests from config.
   help             Show this help.
 
 `)

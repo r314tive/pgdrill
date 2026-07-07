@@ -16,6 +16,8 @@ called out explicitly even while the major version is `0`.
 - CNPG verify-cluster manifest primitives with deterministic resource names,
   strict target config parsing, resource sizing, node affinity, and recovery
   backup references.
+- `pgdrill target manifest` command for rendering CNPG restore target manifests
+  from strict configuration.
 
 ## [0.1.0-alpha.2] - 2026-07-07
 
