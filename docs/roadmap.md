@@ -72,6 +72,7 @@ Status: started.
 - First CNPG target CLI surface: `pgdrill target manifest`.
 - CNPG lifecycle controller boundary with apply, wait, capture, and cleanup
   semantics.
+- `kubectl` compatibility client behind the CNPG lifecycle interface.
 - Temporary CNPG cluster restore target.
 - Source image reuse for verify clusters.
 - Full-recovery fail-fast handling.

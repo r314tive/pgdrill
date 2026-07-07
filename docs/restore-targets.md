@@ -80,6 +80,12 @@ The concrete Kubernetes API client is intentionally separate from this
 controller. This keeps `kubectl` as a future compatibility backend rather than
 the core control plane.
 
+The repository also includes a `kubectl` compatibility client behind the same
+interface. It executes `kubectl` directly from Go, passes manifests through
+stdin for `apply -f -`, records structured command evidence, and keeps log
+capture best-effort so missing debug artifacts do not mask the original restore
+failure.
+
 Example target config shape:
 
 ```yaml
