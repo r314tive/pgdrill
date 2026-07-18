@@ -1,0 +1,50 @@
+# Example for:
+#
+#   pgdrill target verify -f examples/cnpg-target-verify.yaml -discover -confirm-create
+#
+# The command creates a temporary CNPG Cluster from the latest completed Backup,
+# waits for the restored instance to become Ready, runs probes, writes a JSON
+# report, and cleans up the verify Cluster/PVCs.
+
+cluster:
+  name: altbox
+
+# Required by the strict top-level config model. `target verify` uses the CNPG
+# target settings below instead of provider restore planning.
+provider:
+  type: wal-g
+
+target:
+  type: kubernetes
+  labels:
+    env: d003
+  kubernetes:
+    namespace: d003-db
+    kubectl_binary: kubectl
+    command_timeout: 2m
+    wait_timeout: 20m
+    poll_interval: 5s
+    cleanup_pvc: true
+    cleanup_on_fail: true
+    capture_logs: true
+    events_tail: 200
+    postgres_log_tail: 5000
+  cnpg:
+    source_cluster: altbox
+    # backup_name and image_name can be omitted when using -discover.
+    storage_size: 20Gi
+    cpu_request: 500m
+    memory_request: 1Gi
+
+recovery:
+  target: latest
+
+probes:
+  - type: sql
+    name: select_1
+    query: "select 1"
+    timeout: 10s
+
+report:
+  format: json
+  path: ./pgdrill-cnpg-report.json

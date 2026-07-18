@@ -80,6 +80,9 @@ pgdrill version
 pgdrill explain -format json
 pgdrill sample-config
 pgdrill catalog help
+pgdrill target help
+pgdrill target manifest -h
+pgdrill target verify -h
 pgdrill report help
 pgdrill run -h
 ```

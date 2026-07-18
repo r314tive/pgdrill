@@ -113,6 +113,11 @@ PostgreSQL service, writes the standard JSON report, and destroys the verify
 cluster. It refuses to run without `-confirm-create` because it mutates
 Kubernetes resources.
 
+See [../examples/cnpg-target-verify.yaml](../examples/cnpg-target-verify.yaml)
+for a local CLI config example and
+[../examples/kubernetes/cnpg-target-verify-cronjob.yaml](../examples/kubernetes/cnpg-target-verify-cronjob.yaml)
+for a CronJob/RBAC template.
+
 Example target config shape:
 
 ```yaml

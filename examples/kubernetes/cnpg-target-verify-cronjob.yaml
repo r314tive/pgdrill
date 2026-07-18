@@ -1,0 +1,129 @@
+# Example Kubernetes resources for running pgdrill CNPG target verification.
+#
+# The image must contain:
+# - pgdrill
+# - kubectl, configured for in-cluster auth
+# - PostgreSQL client tools needed by configured probes, such as psql
+#
+# Replace namespace, image, source_cluster, resources, schedule, and probes
+# before applying.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pgdrill-cnpg-verify
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pgdrill-cnpg-verify
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters", "backups"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["create", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "delete", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pgdrill-cnpg-verify
+subjects:
+  - kind: ServiceAccount
+    name: pgdrill-cnpg-verify
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pgdrill-cnpg-verify
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgdrill-cnpg-verify-config
+data:
+  pgdrill.yaml: |
+    cluster:
+      name: altbox
+    provider:
+      type: wal-g
+    target:
+      type: kubernetes
+      labels:
+        app.kubernetes.io/name: pgdrill
+      kubernetes:
+        namespace: d003-db
+        kubectl_binary: kubectl
+        command_timeout: 2m
+        wait_timeout: 20m
+        poll_interval: 5s
+        cleanup_pvc: true
+        cleanup_on_fail: true
+        capture_logs: true
+        events_tail: 200
+        postgres_log_tail: 5000
+      cnpg:
+        source_cluster: altbox
+        storage_size: 20Gi
+        cpu_request: 500m
+        memory_request: 1Gi
+    recovery:
+      target: latest
+    probes:
+      - type: sql
+        name: select_1
+        query: "select 1"
+        timeout: 10s
+    report:
+      format: json
+      path: /var/lib/pgdrill/report.json
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pgdrill-cnpg-verify
+spec:
+  schedule: "30 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 10
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 7200
+      template:
+        spec:
+          serviceAccountName: pgdrill-cnpg-verify
+          restartPolicy: Never
+          volumes:
+            - name: config
+              configMap:
+                name: pgdrill-cnpg-verify-config
+            - name: reports
+              emptyDir: {}
+          containers:
+            - name: pgdrill
+              image: ghcr.io/r314tive/pgdrill:replace-me
+              imagePullPolicy: IfNotPresent
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/pgdrill
+                  readOnly: true
+                - name: reports
+                  mountPath: /var/lib/pgdrill
+              args:
+                - target
+                - verify
+                - -f
+                - /etc/pgdrill/pgdrill.yaml
+                - -discover
+                - -confirm-create

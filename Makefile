@@ -31,6 +31,9 @@ smoke: build
 	$(BINDIR)/$(BINARY) explain -format json >/dev/null
 	$(BINDIR)/$(BINARY) sample-config >/dev/null
 	$(BINDIR)/$(BINARY) catalog help >/dev/null
+	$(BINDIR)/$(BINARY) target help >/dev/null
+	$(BINDIR)/$(BINARY) target manifest -h >/dev/null
+	$(BINDIR)/$(BINARY) target verify -h >/dev/null
 	$(BINDIR)/$(BINARY) report help >/dev/null
 	$(BINDIR)/$(BINARY) run -h >/dev/null
 
@@ -41,6 +44,9 @@ release-snapshot: check
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) explain -format json >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) sample-config >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) catalog help >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target help >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target manifest -h >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target verify -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) report help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) run -h >/dev/null
 	@echo "snapshot: $(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY)"

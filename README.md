@@ -85,6 +85,9 @@ go run ./cmd/pgdrill report metrics path/to/report.json
 See [docs/roadmap.md](docs/roadmap.md) for the current implementation sequence
 and CLI/UI direction. Probe configuration is documented in
 [docs/probes.md](docs/probes.md).
+CNPG target verification examples are available in
+[examples/cnpg-target-verify.yaml](examples/cnpg-target-verify.yaml) and
+[examples/kubernetes/cnpg-target-verify-cronjob.yaml](examples/kubernetes/cnpg-target-verify-cronjob.yaml).
 
 Release discipline is described in [docs/release.md](docs/release.md), and
 user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).
