@@ -393,8 +393,15 @@ case "$*" in
       *) echo "manifest did not contain expected backup" >&2; exit 64 ;;
     esac
     ;;
-  *" wait --for=condition=Ready pod/verify-altbox-test-1 --timeout=2s"*)
-    echo "pod/verify-altbox-test-1 condition met"
+  *" get pods -l cnpg.io/cluster=verify-altbox-test,cnpg.io/jobRole=full-recovery -o json"*)
+    cat <<'JSON'
+{"items":[]}
+JSON
+    ;;
+  *" get pod verify-altbox-test-1 -o json"*)
+    cat <<'JSON'
+{"status":{"conditions":[{"type":"Ready","status":"True"}]}}
+JSON
     ;;
   *" get cluster.postgresql.cnpg.io verify-altbox-test -o yaml"*)
     echo "kind: Cluster"
@@ -494,7 +501,8 @@ report:
 	for _, operation := range []string{
 		"cnpg-manifest-render",
 		"kubectl-apply-cluster",
-		"kubectl-wait-instance-ready",
+		"kubectl-check-full-recovery",
+		"kubectl-check-instance-ready",
 		"kubectl-capture-postgres-log",
 		"kubectl-delete-cluster",
 		"kubectl-delete-pvcs",

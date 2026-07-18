@@ -2,6 +2,7 @@ package cnpg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -47,20 +48,83 @@ func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClu
 	if timeout == 0 {
 		timeout = DefaultWaitTimeout
 	}
-	args := c.args(spec, "wait", "--for=condition=Ready", "pod/"+spec.InstancePodName, "--timeout="+durationSeconds(timeout))
-	evidence, err := c.strictRun(ctx, "kubectl-wait-instance-ready", args, nil, timeout)
-	if err != nil {
-		return Instance{}, evidence, err
+	pollInterval := opts.PollInterval
+	if pollInterval == 0 {
+		pollInterval = DefaultPollInterval
 	}
 
-	host := serviceHost(spec)
-	return Instance{
-		PodName:    spec.InstancePodName,
-		Host:       host,
-		Port:       DefaultPostgresPort,
-		Database:   "postgres",
-		ConnString: fmt.Sprintf("postgresql://%s:%d/postgres?sslmode=disable", host, DefaultPostgresPort),
-	}, evidence, nil
+	deadline := time.Now().Add(timeout)
+	evidence := []model.EvidenceRecord{}
+	for {
+		failed, reason, recoveryEvidence, err := c.fullRecoveryFailed(ctx, spec)
+		evidence = append(evidence, recoveryEvidence...)
+		if err != nil {
+			return Instance{}, evidence, err
+		}
+		if failed {
+			return Instance{}, evidence, fmt.Errorf("CNPG full-recovery failed before instance pod became Ready: %s", reason)
+		}
+
+		ready, podEvidence, err := c.instancePodReady(ctx, spec)
+		evidence = append(evidence, podEvidence...)
+		if err != nil {
+			return Instance{}, evidence, err
+		}
+		if ready {
+			host := serviceHost(spec)
+			return Instance{
+				PodName:    spec.InstancePodName,
+				Host:       host,
+				Port:       DefaultPostgresPort,
+				Database:   "postgres",
+				ConnString: fmt.Sprintf("postgresql://%s:%d/postgres?sslmode=disable", host, DefaultPostgresPort),
+			}, evidence, nil
+		}
+
+		if time.Now().After(deadline) {
+			return Instance{}, evidence, fmt.Errorf("timeout waiting for CNPG instance pod %q to become Ready", spec.InstancePodName)
+		}
+
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return Instance{}, evidence, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *KubectlClient) fullRecoveryFailed(ctx context.Context, spec VerifyClusterSpec) (bool, string, []model.EvidenceRecord, error) {
+	args := c.args(spec, "get", "pods", "-l", "cnpg.io/cluster="+spec.Name+",cnpg.io/jobRole=full-recovery", "-o", "json")
+	evidence, result, err := c.run(ctx, "kubectl-check-full-recovery", args, nil, c.cfg.Timeout)
+	if err != nil {
+		return false, "", evidence, err
+	}
+	if !result.Evidence.ExitStatus.Success {
+		return false, "", evidence, nil
+	}
+	failed, reason, err := fullRecoveryFailed(result.Raw.Stdout)
+	if err != nil {
+		return false, "", evidence, err
+	}
+	return failed, reason, evidence, nil
+}
+
+func (c *KubectlClient) instancePodReady(ctx context.Context, spec VerifyClusterSpec) (bool, []model.EvidenceRecord, error) {
+	args := c.args(spec, "get", "pod", spec.InstancePodName, "-o", "json")
+	evidence, result, err := c.run(ctx, "kubectl-check-instance-ready", args, nil, c.cfg.Timeout)
+	if err != nil {
+		return false, evidence, err
+	}
+	if !result.Evidence.ExitStatus.Success {
+		return false, evidence, nil
+	}
+	ready, err := podReady(result.Raw.Stdout)
+	if err != nil {
+		return false, evidence, err
+	}
+	return ready, evidence, nil
 }
 
 func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterSpec, instance Instance, opts CaptureOptions) ([]model.EvidenceRecord, error) {
@@ -247,4 +311,46 @@ func tailArgs(tail int) []string {
 		return nil
 	}
 	return []string{"--tail=" + strconv.Itoa(tail)}
+}
+
+func fullRecoveryFailed(data []byte) (bool, string, error) {
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Status struct {
+				Phase string `json:"phase"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return false, "", fmt.Errorf("parse CNPG full-recovery pods: %w", err)
+	}
+	for _, item := range list.Items {
+		if item.Status.Phase == "Failed" {
+			return true, item.Metadata.Name, nil
+		}
+	}
+	return false, "", nil
+}
+
+func podReady(data []byte) (bool, error) {
+	var pod struct {
+		Status struct {
+			Conditions []struct {
+				Type   string `json:"type"`
+				Status string `json:"status"`
+			} `json:"conditions"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(data, &pod); err != nil {
+		return false, fmt.Errorf("parse CNPG instance pod: %w", err)
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == "Ready" && condition.Status == "True" {
+			return true, nil
+		}
+	}
+	return false, nil
 }

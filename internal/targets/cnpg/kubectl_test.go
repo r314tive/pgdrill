@@ -3,6 +3,7 @@ package cnpg
 import (
 	"context"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,12 @@ func TestKubectlClientApplyUsesManifestStdin(t *testing.T) {
 }
 
 func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
-	runner := &fakeCommandRunner{}
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"cnpg.io/jobRole=full-recovery": `{"items":[]}`,
+			"get pod":                       `{"status":{"conditions":[{"type":"Ready","status":"True"}]}}`,
+		},
+	}
 	client := NewKubectlClient(KubectlConfig{}, runner)
 	spec := testVerifyClusterSpec(t)
 
@@ -59,13 +65,14 @@ func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 		t.Fatalf("wait for instance: %v", err)
 	}
 
-	if len(runner.invocations) != 1 {
-		t.Fatalf("expected one invocation, got %d", len(runner.invocations))
+	if len(runner.invocations) != 2 {
+		t.Fatalf("expected two invocations, got %d", len(runner.invocations))
 	}
-	args := runner.invocations[0].Args
-	wantArgs := []string{"-n", "d003-db", "wait", "--for=condition=Ready", "pod/" + spec.InstancePodName, "--timeout=90s"}
-	if !reflect.DeepEqual(args, wantArgs) {
-		t.Fatalf("unexpected args: got %#v want %#v", args, wantArgs)
+	if got, want := runner.invocations[0].Args, []string{"-n", "d003-db", "get", "pods", "-l", "cnpg.io/cluster=" + spec.Name + ",cnpg.io/jobRole=full-recovery", "-o", "json"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected full-recovery args: got %#v want %#v", got, want)
+	}
+	if got, want := runner.invocations[1].Args, []string{"-n", "d003-db", "get", "pod", spec.InstancePodName, "-o", "json"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected instance pod args: got %#v want %#v", got, want)
 	}
 	if instance.PodName != spec.InstancePodName {
 		t.Fatalf("unexpected pod name %q", instance.PodName)
@@ -76,8 +83,30 @@ func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 	if !strings.Contains(instance.ConnString, spec.Name+"-rw.d003-db.svc:5432") {
 		t.Fatalf("unexpected conn string %q", instance.ConnString)
 	}
-	if !hasOperation(evidence, "kubectl-wait-instance-ready") {
+	if !hasOperation(evidence, "kubectl-check-full-recovery") || !hasOperation(evidence, "kubectl-check-instance-ready") {
 		t.Fatalf("missing wait evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientWaitFailsFastWhenFullRecoveryFailed(t *testing.T) {
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"cnpg.io/jobRole=full-recovery": `{"items":[{"metadata":{"name":"verify-altbox-abc12345-1-full-recovery"},"status":{"phase":"Failed"}}]}`,
+			"get pod":                       `{"status":{"conditions":[{"type":"Ready","status":"True"}]}}`,
+		},
+	}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+
+	_, evidence, err := client.WaitForInstanceReady(context.Background(), spec, WaitOptions{Timeout: 90 * time.Second})
+	if err == nil || !strings.Contains(err.Error(), "full-recovery failed") {
+		t.Fatalf("expected full-recovery failure, got %v", err)
+	}
+	if len(runner.invocations) != 1 {
+		t.Fatalf("expected fail-fast after one invocation, got %d", len(runner.invocations))
+	}
+	if !hasOperation(evidence, "kubectl-check-full-recovery") {
+		t.Fatalf("missing full-recovery evidence %#v", evidence)
 	}
 }
 
@@ -226,7 +255,8 @@ func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (comm
 	}
 
 	stdout := "ok\n"
-	for marker, value := range r.stdoutByArgContains {
+	for _, marker := range sortedKeys(r.stdoutByArgContains) {
+		value := r.stdoutByArgContains[marker]
 		if strings.Contains(strings.Join(inv.Args, " "), marker) {
 			stdout = value
 			break
@@ -254,4 +284,18 @@ func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (comm
 			Stdout: stdout,
 		},
 	}, nil
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) == len(keys[j]) {
+			return keys[i] < keys[j]
+		}
+		return len(keys[i]) > len(keys[j])
+	})
+	return keys
 }

@@ -78,6 +78,7 @@ Implemented lifecycle contract:
 
 - render the verified CNPG `Cluster` manifest and record manifest evidence
 - apply the temporary verify cluster
+- poll full-recovery pods and fail fast if any of them enters `Failed`
 - wait for the instance pod to become Ready
 - capture diagnostics on failure before cleanup when configured
 - delete the verify cluster and optional PVCs with cleanup evidence

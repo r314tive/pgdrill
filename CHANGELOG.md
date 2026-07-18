@@ -13,6 +13,8 @@ called out explicitly even while the major version is `0`.
 - Guarded `pgdrill target verify` command for CNPG restore target drills:
   create a temporary verify cluster, wait for readiness, run configured probes,
   write a JSON report, and clean up Kubernetes resources.
+- Fail-fast CNPG readiness polling that checks full-recovery pods for `Failed`
+  status before waiting further for the instance pod.
 - CNPG target verification config and CronJob/RBAC examples.
 - Release smoke coverage for `pgdrill target` help surfaces.
 
