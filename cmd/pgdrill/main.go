@@ -328,6 +328,8 @@ func runTarget(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "manifest":
 		return runTargetManifest(args[1:], stdout, stderr)
+	case "verify":
+		return runTargetVerify(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printTargetUsage(stdout)
 		return 0
@@ -383,22 +385,7 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	spec, err := cnpg.BuildVerifyClusterSpec(cnpg.Config{
-		Namespace:         cfg.Target.Kubernetes.Namespace,
-		SourceCluster:     cnpgTarget.SourceCluster,
-		VerifyClusterName: cnpgTarget.VerifyClusterName,
-		BackupName:        cnpgTarget.BackupName,
-		ImageName:         cnpgTarget.ImageName,
-		StorageSize:       cnpgTarget.StorageSize,
-		StorageClass:      cnpgTarget.StorageClass,
-		CPURequest:        cnpgTarget.CPURequest,
-		MemoryRequest:     cnpgTarget.MemoryRequest,
-		CPULimit:          cnpgTarget.CPULimit,
-		MemoryLimit:       cnpgTarget.MemoryLimit,
-		NodeLabelKey:      cnpgTarget.NodeLabelKey,
-		NodeLabelValue:    cnpgTarget.NodeLabelValue,
-		Labels:            cfg.Target.Labels,
-	}, drillID)
+	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID)
 	if err != nil {
 		fmt.Fprintf(stderr, "build target manifest: %v\n", err)
 		return 1
@@ -411,6 +398,91 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 	}
 	if _, err := stdout.Write(manifest); err != nil {
 		fmt.Fprintf(stderr, "write target manifest: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runTargetVerify(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("target verify", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	var configPath string
+	var configPathLong string
+	var drillID string
+	var discover bool
+	var confirmCreate bool
+	fs.StringVar(&configPath, "f", "", "configuration file")
+	fs.StringVar(&configPathLong, "config", "", "configuration file")
+	fs.StringVar(&drillID, "drill-id", "", "drill id used for generated labels and report id")
+	fs.BoolVar(&discover, "discover", false, "discover missing CNPG backup_name and image_name through kubectl")
+	fs.BoolVar(&confirmCreate, "confirm-create", false, "confirm that pgdrill may create and delete Kubernetes resources")
+	if ok, code := parseFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "target verify does not accept positional arguments")
+		return 2
+	}
+	if configPath == "" {
+		configPath = configPathLong
+	}
+	if configPath == "" {
+		fmt.Fprintln(stderr, "target verify requires -f or -config")
+		return 2
+	}
+	if !confirmCreate {
+		fmt.Fprintln(stderr, "target verify requires -confirm-create because it creates and deletes Kubernetes resources")
+		return 2
+	}
+
+	cfg, err := config.LoadFile(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load config: %v\n", err)
+		return 1
+	}
+	if cfg.Target.Type != model.RestoreTargetKubernetes {
+		fmt.Fprintf(stderr, "target verify supports target.type %q, got %q\n", model.RestoreTargetKubernetes, cfg.Target.Type)
+		return 2
+	}
+	if cfg.Report.Path == "" {
+		fmt.Fprintln(stderr, "target verify requires report.path in config")
+		return 2
+	}
+
+	cnpgTarget := cfg.Target.CNPG
+	if discover {
+		if err := discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget); err != nil {
+			fmt.Fprintf(stderr, "discover target verify inputs: %v\n", err)
+			return 1
+		}
+	}
+	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID)
+	if err != nil {
+		fmt.Fprintf(stderr, "build target verify spec: %v\n", err)
+		return 1
+	}
+	configuredProbes, err := probes.NewProbes(cfg.Probes)
+	if err != nil {
+		fmt.Fprintf(stderr, "create probes: %v\n", err)
+		return 1
+	}
+
+	result, runErr := executeCNPGTargetVerify(context.Background(), cfg, spec, configuredProbes, drillID)
+	if sinkErr := (report.JSONFileSink{Path: cfg.Report.Path}).Write(context.Background(), result); sinkErr != nil {
+		fmt.Fprintf(stderr, "write report: %v\n", sinkErr)
+		return 1
+	}
+	if err := writeRunSummary(stdout, result, cfg.Report.Path); err != nil {
+		fmt.Fprintf(stderr, "write target verify summary: %v\n", err)
+		return 1
+	}
+	if runErr != nil {
+		fmt.Fprintf(stderr, "target verify failed: %v\n", runErr)
+		return 1
+	}
+	if result.Status != model.DrillStatusPassed {
+		fmt.Fprintf(stderr, "target verify finished with status %s\n", result.Status)
 		return 1
 	}
 	return 0
@@ -449,6 +521,151 @@ func discoverCNPGManifestInputs(ctx context.Context, cfg config.Config, target *
 		target.ImageName = imageName
 	}
 	return nil
+}
+
+func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfig, drillID string) (cnpg.VerifyClusterSpec, error) {
+	return cnpg.BuildVerifyClusterSpec(cnpg.Config{
+		Namespace:         cfg.Target.Kubernetes.Namespace,
+		SourceCluster:     target.SourceCluster,
+		VerifyClusterName: target.VerifyClusterName,
+		BackupName:        target.BackupName,
+		ImageName:         target.ImageName,
+		StorageSize:       target.StorageSize,
+		StorageClass:      target.StorageClass,
+		CPURequest:        target.CPURequest,
+		MemoryRequest:     target.MemoryRequest,
+		CPULimit:          target.CPULimit,
+		MemoryLimit:       target.MemoryLimit,
+		NodeLabelKey:      target.NodeLabelKey,
+		NodeLabelValue:    target.NodeLabelValue,
+		Labels:            cfg.Target.Labels,
+	}, drillID)
+}
+
+func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, configuredProbes []core.Probe, drillID string) (model.DrillResult, error) {
+	startedAt := time.Now().UTC()
+	result := model.DrillResult{
+		ID:       targetVerifyID(drillID, startedAt),
+		Provider: cfg.Provider.Type,
+		Backup: model.Backup{
+			ID:          "cnpg:" + spec.BackupName,
+			Provider:    cfg.Provider.Type,
+			ProviderID:  spec.BackupName,
+			ClusterName: spec.SourceCluster,
+			Kind:        model.BackupKindUnknown,
+			Status:      model.BackupStatusAvailable,
+			Metadata: map[string]string{
+				"cnpg_backup":         spec.BackupName,
+				"cnpg_source_cluster": spec.SourceCluster,
+				"cnpg_verify_cluster": spec.Name,
+			},
+		},
+		Target: model.TargetSpec{
+			Type:   model.RestoreTargetKubernetes,
+			Labels: cfg.TargetSpec().Labels,
+		},
+		RecoveryTarget: cfg.RecoveryTarget(),
+		StartedAt:      startedAt,
+		Status:         model.DrillStatusUnknown,
+	}
+
+	client := cnpg.NewKubectlClient(cnpg.KubectlConfig{
+		Binary:       cfg.Target.Kubernetes.KubectlBinary,
+		Namespace:    cfg.Target.Kubernetes.Namespace,
+		Kubeconfig:   cfg.Target.Kubernetes.Kubeconfig,
+		Context:      cfg.Target.Kubernetes.Context,
+		Timeout:      cfg.Target.Kubernetes.CommandTimeout.Duration,
+		RedactValues: cfg.Target.RedactValues,
+	}, nil)
+	controller := cnpg.Controller{
+		Spec:   spec,
+		Client: client,
+		Options: cnpg.LifecycleOptions{
+			WaitTimeout:     cfg.Target.Kubernetes.WaitTimeout.Duration,
+			PollInterval:    cfg.Target.Kubernetes.PollInterval.Duration,
+			CleanupPVC:      cfg.Target.Kubernetes.CleanupPVC,
+			CleanupOnFail:   cfg.Target.Kubernetes.CleanupOnFail,
+			CaptureLogs:     cfg.Target.Kubernetes.CaptureLogs,
+			EventsTail:      cfg.Target.Kubernetes.EventsTail,
+			PostgresLogTail: cfg.Target.Kubernetes.PostgresLogTail,
+		},
+	}
+
+	pg, startEvidence, startErr := controller.Start(ctx)
+	result.Evidence = append(result.Evidence, startEvidence...)
+	if startErr != nil {
+		result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusFailed, startErr.Error(), spec, pg))
+		result.FinishedAt = time.Now().UTC()
+		result.Status = model.DrillStatusFailed
+		return result, startErr
+	}
+	result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusPassed, "CNPG verify cluster is Ready", spec, pg))
+
+	probeFailed := false
+	for _, probe := range configuredProbes {
+		report, err := probe.Run(ctx, pg)
+		result.Checks = append(result.Checks, report.Checks...)
+		result.Evidence = append(result.Evidence, report.Evidence...)
+		if err != nil {
+			probeFailed = true
+			result.Checks = append(result.Checks, model.Check{
+				Name:    string(probe.Type()),
+				Probe:   probe.Type(),
+				Status:  model.CheckStatusFailed,
+				Message: err.Error(),
+			})
+			continue
+		}
+		if hasFailedChecks(report.Checks) {
+			probeFailed = true
+		}
+	}
+
+	destroyEvidence, destroyErr := controller.Destroy(ctx)
+	result.Evidence = append(result.Evidence, destroyEvidence...)
+	result.FinishedAt = time.Now().UTC()
+	switch {
+	case destroyErr != nil:
+		result.Status = model.DrillStatusFailed
+		return result, fmt.Errorf("destroy cnpg verify target: %w", destroyErr)
+	case probeFailed:
+		result.Status = model.DrillStatusFailed
+		return result, fmt.Errorf("one or more probes failed")
+	default:
+		result.Status = model.DrillStatusPassed
+		return result, nil
+	}
+}
+
+func targetVerifyID(id string, startedAt time.Time) string {
+	if strings.TrimSpace(id) != "" {
+		return id
+	}
+	return "target-verify-" + startedAt.UTC().Format("20060102T150405Z")
+}
+
+func cnpgReadyCheck(status model.CheckStatus, message string, spec cnpg.VerifyClusterSpec, pg model.RunningPostgres) model.Check {
+	return model.Check{
+		Name:    "cnpg-instance-ready",
+		Status:  status,
+		Message: message,
+		Attributes: map[string]string{
+			"backup":         spec.BackupName,
+			"instance_pod":   spec.InstancePodName,
+			"postgres_host":  pg.Host,
+			"source_cluster": spec.SourceCluster,
+			"verify_cluster": spec.Name,
+		},
+	}
+}
+
+func hasFailedChecks(checks []model.Check) bool {
+	for _, check := range checks {
+		if check.Status == model.CheckStatusFailed {
+			return true
+		}
+	}
+	return false
 }
 
 func runVersion(args []string, stdout, stderr io.Writer) int {
@@ -571,6 +788,7 @@ func printTargetUsage(w io.Writer) {
 
 Commands:
   manifest         Render restore target manifests from config.
+  verify           Create a temporary restore target, run probes, and clean it up.
   help             Show this help.
 
 `)

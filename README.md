@@ -22,8 +22,8 @@ restore checks, `pg_isready`, SQL, `pg_amcheck`, and `pg_dump` probes, built-in
 probe presets, strict
 `pg_verifybackup` profile support, Prometheus metrics export from JSON reports,
 first useful CLI surfaces for catalog, report, and drill execution, and initial
-CNPG verify-cluster manifest primitives for the future Kubernetes restore
-target.
+CNPG verify-cluster manifest, discovery, lifecycle, and guarded target
+verification surfaces for the Kubernetes restore target.
 
 ## Goals
 
@@ -77,6 +77,7 @@ go run ./cmd/pgdrill catalog list -f examples/pgdrill.yaml
 go run ./cmd/pgdrill run -f examples/pgdrill.yaml
 go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml
 go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml -discover
+go run ./cmd/pgdrill target verify -f path/to/cnpg-verify-config.yaml -discover -confirm-create
 go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```

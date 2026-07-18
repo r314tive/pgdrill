@@ -75,8 +75,10 @@ Status: started.
 - `kubectl` compatibility client behind the CNPG lifecycle interface.
 - CNPG `kubectl` discovery for latest completed `Backup` and source image.
 - Read-only CNPG manifest discovery through `pgdrill target manifest -discover`.
-- Temporary CNPG cluster restore target.
+- Guarded CNPG target verification through `pgdrill target verify`.
+- Temporary CNPG cluster restore target with standard JSON reports.
 - Source image reuse for verify clusters.
+- Probe execution against the restored CNPG service.
 - Full-recovery fail-fast handling.
 - Kubernetes events, pod descriptions, logs, and PVC state as evidence.
 - Explicit cluster/PVC cleanup evidence.

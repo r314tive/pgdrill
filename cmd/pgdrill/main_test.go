@@ -364,6 +364,147 @@ target:
 	}
 }
 
+func TestTargetVerifyRequiresCreateConfirmation(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"target", "verify", "-f", "pgdrill.yaml"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "requires -confirm-create") {
+		t.Fatalf("expected confirmation error, got: %s", got)
+	}
+}
+
+func TestTargetVerifyCommandRunsCNPGLifecycleAndProbes(t *testing.T) {
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	psqlPath := filepath.Join(dir, "psql")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	reportPath := filepath.Join(dir, "cnpg-report.json")
+
+	writeExecutable(t, kubectlPath, `#!/bin/sh
+case "$*" in
+  *" apply -f -"*)
+    manifest="$(cat)"
+    case "$manifest" in
+      *"name: altbox-backup-20260707"*) exit 0 ;;
+      *) echo "manifest did not contain expected backup" >&2; exit 64 ;;
+    esac
+    ;;
+  *" wait --for=condition=Ready pod/verify-altbox-test-1 --timeout=2s"*)
+    echo "pod/verify-altbox-test-1 condition met"
+    ;;
+  *" get cluster.postgresql.cnpg.io verify-altbox-test -o yaml"*)
+    echo "kind: Cluster"
+    ;;
+  *" get pods -l cnpg.io/cluster=verify-altbox-test -o wide"*)
+    echo "verify-altbox-test-1 Running"
+    ;;
+  *" get pvc -l cnpg.io/cluster=verify-altbox-test -o wide"*)
+    echo "verify-altbox-test-1 pvc"
+    ;;
+  *" get events --sort-by=.metadata.creationTimestamp"*)
+    echo "Normal Ready"
+    ;;
+  *" logs job/verify-altbox-test-1-full-recovery --timestamps --tail=25"*)
+    echo "full recovery complete"
+    ;;
+  *" logs verify-altbox-test-1 -c postgres --timestamps --tail=25"*)
+    echo "postgres ready"
+    ;;
+  *" delete cluster.postgresql.cnpg.io verify-altbox-test --wait=true --timeout=1s"*)
+    echo "cluster deleted"
+    ;;
+  *" delete pvc -l cnpg.io/cluster=verify-altbox-test --wait=true --timeout=1s"*)
+    echo "pvc deleted"
+    ;;
+  *)
+    echo "unexpected kubectl args: $*" >&2
+    exit 64
+    ;;
+esac
+`)
+	writeExecutable(t, psqlPath, `#!/bin/sh
+case "$*" in
+  *"verify-altbox-test-rw.d003-db.svc:5432"*"select 1"*) exit 0 ;;
+  *) echo "unexpected psql args: $*" >&2; exit 64 ;;
+esac
+`)
+	writeFile(t, configPath, `
+cluster:
+  name: altbox
+provider:
+  type: wal-g
+target:
+  type: kubernetes
+  labels:
+    env: d003
+  kubernetes:
+    namespace: d003-db
+    kubectl_binary: `+kubectlPath+`
+    command_timeout: 1s
+    wait_timeout: 2s
+    cleanup_pvc: true
+    capture_logs: true
+    events_tail: 10
+    postgres_log_tail: 25
+  cnpg:
+    source_cluster: altbox
+    verify_cluster_name: verify-altbox-test
+    backup_name: altbox-backup-20260707
+    image_name: ghcr.io/cloudnative-pg/postgresql:16
+probes:
+  - type: sql
+    name: select_1
+    binary: `+psqlPath+`
+    query: "select 1"
+    timeout: 1s
+report:
+  format: json
+  path: `+reportPath+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"target", "verify", "-f", configPath, "-confirm-create", "-drill-id", "cnpg-drill-1"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if output := stdout.String(); !strings.Contains(output, "Status    passed") || !strings.Contains(output, "Report    "+reportPath) {
+		t.Fatalf("unexpected verify summary:\n%s", output)
+	}
+
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	if result.ID != "cnpg-drill-1" || result.Status != model.DrillStatusPassed {
+		t.Fatalf("unexpected result id/status %#v", result)
+	}
+	if result.Backup.ID != "cnpg:altbox-backup-20260707" {
+		t.Fatalf("unexpected backup %#v", result.Backup)
+	}
+	if !hasCheckNamed(result.Checks, "cnpg-instance-ready", model.CheckStatusPassed) {
+		t.Fatalf("expected cnpg readiness check, got %#v", result.Checks)
+	}
+	if !hasCheck(result.Checks, model.ProbeSQL, model.CheckStatusPassed) {
+		t.Fatalf("expected sql probe check, got %#v", result.Checks)
+	}
+	for _, operation := range []string{
+		"cnpg-manifest-render",
+		"kubectl-apply-cluster",
+		"kubectl-wait-instance-ready",
+		"kubectl-capture-postgres-log",
+		"kubectl-delete-cluster",
+		"kubectl-delete-pvcs",
+	} {
+		if !hasEvidenceOperation(result.Evidence, operation) {
+			t.Fatalf("expected evidence operation %q, got %#v", operation, result.Evidence)
+		}
+	}
+}
+
 func TestRunCommandExecutesWALLocalDrill(t *testing.T) {
 	dir := t.TempDir()
 	walgPath := filepath.Join(dir, "wal-g")
@@ -1087,6 +1228,15 @@ func hasCheckNamed(checks []model.Check, name string, status model.CheckStatus) 
 func hasEvidenceKind(records []model.EvidenceRecord, kind model.EvidenceKind) bool {
 	for _, record := range records {
 		if record.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEvidenceOperation(records []model.EvidenceRecord, operation string) bool {
+	for _, record := range records {
+		if record.Attributes["operation"] == operation {
 			return true
 		}
 	}

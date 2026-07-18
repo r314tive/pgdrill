@@ -8,6 +8,12 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- Guarded `pgdrill target verify` command for CNPG restore target drills:
+  create a temporary verify cluster, wait for readiness, run configured probes,
+  write a JSON report, and clean up Kubernetes resources.
+
 ## [0.1.0-alpha.4] - 2026-07-07
 
 ### Added

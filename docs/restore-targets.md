@@ -101,9 +101,23 @@ JSON output in Go:
 - read `Cluster.spec.imageName` from the source cluster so verify clusters
   reuse the same PostgreSQL image
 
+The guarded verification CLI uses the same lifecycle controller:
+
+```sh
+pgdrill target verify -f pgdrill-cnpg.yaml -discover -confirm-create
+```
+
+`target verify` creates a temporary CNPG verify cluster, waits for the instance
+pod to become Ready, runs the configured probe set against the restored
+PostgreSQL service, writes the standard JSON report, and destroys the verify
+cluster. It refuses to run without `-confirm-create` because it mutates
+Kubernetes resources.
+
 Example target config shape:
 
 ```yaml
+provider:
+  type: wal-g
 target:
   type: kubernetes
   kubernetes:
@@ -114,6 +128,7 @@ target:
     poll_interval: 5s
     cleanup_pvc: true
     cleanup_on_fail: true
+    capture_logs: true
   cnpg:
     source_cluster: altbox
     backup_name: altbox-backup-20260707
@@ -121,6 +136,13 @@ target:
     storage_size: 20Gi
     cpu_request: 500m
     memory_request: 1Gi
+probes:
+  - type: sql
+    name: select_1
+    query: "select 1"
+report:
+  format: json
+  path: ./pgdrill-cnpg-report.json
 ```
 
 ## Probe Mapping
