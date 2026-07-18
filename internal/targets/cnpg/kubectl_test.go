@@ -126,12 +126,17 @@ func TestKubectlClientCaptureEvidenceIsBestEffort(t *testing.T) {
 		t.Fatalf("capture evidence should be best effort, got %v", err)
 	}
 
-	if len(runner.invocations) != 6 {
-		t.Fatalf("expected six capture invocations, got %d", len(runner.invocations))
+	if len(runner.invocations) != 11 {
+		t.Fatalf("expected eleven capture invocations, got %d", len(runner.invocations))
 	}
 	if !hasOperation(evidence, "kubectl-capture-cluster-yaml") ||
+		!hasOperation(evidence, "kubectl-capture-instance-describe") ||
+		!hasOperation(evidence, "kubectl-capture-full-recovery-describe") ||
 		!hasOperation(evidence, "kubectl-capture-full-recovery-log") ||
+		!hasOperation(evidence, "kubectl-capture-full-recovery-bootstrap-log") ||
+		!hasOperation(evidence, "kubectl-capture-postgres-describe") ||
 		!hasOperation(evidence, "kubectl-capture-postgres-log") ||
+		!hasOperation(evidence, "kubectl-capture-postgres-bootstrap-log") ||
 		!hasOperation(evidence, "kubectl-capture-summary") {
 		t.Fatalf("missing capture evidence %#v", evidence)
 	}

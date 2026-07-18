@@ -409,17 +409,29 @@ JSON
   *" get pods -l cnpg.io/cluster=verify-altbox-test -o wide"*)
     echo "verify-altbox-test-1 Running"
     ;;
+  *" describe pod verify-altbox-test-1"*)
+    echo "pod description"
+    ;;
   *" get pvc -l cnpg.io/cluster=verify-altbox-test -o wide"*)
     echo "verify-altbox-test-1 pvc"
     ;;
   *" get events --sort-by=.metadata.creationTimestamp"*)
     echo "Normal Ready"
     ;;
+  *" describe job/verify-altbox-test-1-full-recovery"*)
+    echo "full recovery job description"
+    ;;
   *" logs job/verify-altbox-test-1-full-recovery --timestamps --tail=25"*)
     echo "full recovery complete"
     ;;
+  *" logs job/verify-altbox-test-1-full-recovery -c bootstrap-controller --timestamps --tail=25"*)
+    echo "full recovery bootstrap complete"
+    ;;
   *" logs verify-altbox-test-1 -c postgres --timestamps --tail=25"*)
     echo "postgres ready"
+    ;;
+  *" logs verify-altbox-test-1 -c bootstrap-controller --timestamps --tail=25"*)
+    echo "postgres bootstrap ready"
     ;;
   *" delete cluster.postgresql.cnpg.io verify-altbox-test --wait=true --timeout=1s"*)
     echo "cluster deleted"
@@ -503,7 +515,11 @@ report:
 		"kubectl-apply-cluster",
 		"kubectl-check-full-recovery",
 		"kubectl-check-instance-ready",
+		"kubectl-capture-instance-describe",
+		"kubectl-capture-full-recovery-describe",
+		"kubectl-capture-full-recovery-bootstrap-log",
 		"kubectl-capture-postgres-log",
+		"kubectl-capture-postgres-bootstrap-log",
 		"kubectl-delete-cluster",
 		"kubectl-delete-pvcs",
 	} {

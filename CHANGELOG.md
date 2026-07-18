@@ -15,6 +15,8 @@ called out explicitly even while the major version is `0`.
   write a JSON report, and clean up Kubernetes resources.
 - Fail-fast CNPG readiness polling that checks full-recovery pods for `Failed`
   status before waiting further for the instance pod.
+- Richer CNPG evidence capture for pod descriptions and bootstrap-controller
+  logs in addition to cluster YAML, pod/PVC lists, events, and PostgreSQL logs.
 - CNPG target verification config and CronJob/RBAC examples.
 - Release smoke coverage for `pgdrill target` help surfaces.
 

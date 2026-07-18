@@ -128,10 +128,12 @@ func (c *KubectlClient) instancePodReady(ctx context.Context, spec VerifyCluster
 }
 
 func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterSpec, instance Instance, opts CaptureOptions) ([]model.EvidenceRecord, error) {
-	commands := []struct {
+	type captureCommand struct {
 		operation string
 		args      []string
-	}{
+	}
+
+	commands := []captureCommand{
 		{
 			operation: "kubectl-capture-cluster-yaml",
 			args:      c.args(spec, "get", "cluster.postgresql.cnpg.io", spec.Name, "-o", "yaml"),
@@ -139,6 +141,10 @@ func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterS
 		{
 			operation: "kubectl-capture-pods",
 			args:      c.args(spec, "get", "pods", "-l", "cnpg.io/cluster="+spec.Name, "-o", "wide"),
+		},
+		{
+			operation: "kubectl-capture-instance-describe",
+			args:      c.args(spec, "describe", "pod", spec.InstancePodName),
 		},
 		{
 			operation: "kubectl-capture-pvcs",
@@ -149,18 +155,33 @@ func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterS
 			args:      c.args(spec, "get", "events", "--sort-by=.metadata.creationTimestamp"),
 		},
 		{
+			operation: "kubectl-capture-full-recovery-describe",
+			args:      c.args(spec, "describe", "job/"+spec.FullRecoveryJob),
+		},
+		{
 			operation: "kubectl-capture-full-recovery-log",
 			args:      c.args(spec, append([]string{"logs", "job/" + spec.FullRecoveryJob, "--timestamps"}, tailArgs(opts.PostgresLogTail)...)...),
 		},
+		{
+			operation: "kubectl-capture-full-recovery-bootstrap-log",
+			args:      c.args(spec, append([]string{"logs", "job/" + spec.FullRecoveryJob, "-c", "bootstrap-controller", "--timestamps"}, tailArgs(opts.PostgresLogTail)...)...),
+		},
 	}
 	if instance.PodName != "" {
-		commands = append(commands, struct {
-			operation string
-			args      []string
-		}{
-			operation: "kubectl-capture-postgres-log",
-			args:      c.args(spec, append([]string{"logs", instance.PodName, "-c", "postgres", "--timestamps"}, tailArgs(opts.PostgresLogTail)...)...),
-		})
+		commands = append(commands,
+			captureCommand{
+				operation: "kubectl-capture-postgres-describe",
+				args:      c.args(spec, "describe", "pod", instance.PodName),
+			},
+			captureCommand{
+				operation: "kubectl-capture-postgres-log",
+				args:      c.args(spec, append([]string{"logs", instance.PodName, "-c", "postgres", "--timestamps"}, tailArgs(opts.PostgresLogTail)...)...),
+			},
+			captureCommand{
+				operation: "kubectl-capture-postgres-bootstrap-log",
+				args:      c.args(spec, append([]string{"logs", instance.PodName, "-c", "bootstrap-controller", "--timestamps"}, tailArgs(opts.PostgresLogTail)...)...),
+			},
+		)
 	}
 
 	var evidence []model.EvidenceRecord

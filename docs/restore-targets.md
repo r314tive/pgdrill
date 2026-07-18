@@ -80,7 +80,9 @@ Implemented lifecycle contract:
 - apply the temporary verify cluster
 - poll full-recovery pods and fail fast if any of them enters `Failed`
 - wait for the instance pod to become Ready
-- capture diagnostics on failure before cleanup when configured
+- capture diagnostics on failure before cleanup when configured: cluster YAML,
+  pod/PVC state, events, pod descriptions, full-recovery logs,
+  bootstrap-controller logs, and postgres logs
 - delete the verify cluster and optional PVCs with cleanup evidence
 - capture diagnostics on successful destroy when configured
 
