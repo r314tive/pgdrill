@@ -93,7 +93,8 @@ still required before calling it production-ready.
 
 ## Phase 4: More Providers And Probes
 
-Status: in progress.
+Status: initial four-provider surface implemented; field validation and targeted
+depth remain in progress.
 
 - pg_probackup catalog discovery through `show --format=json`.
 - Optional pg_probackup selected-backup and recovery-target validation.
@@ -104,7 +105,9 @@ Status: in progress.
 
 ## Phase 5: UI / TUI
 
-Do not build a full UI before Phase 2 produces stable report JSON.
+Status: deliberately deferred. The report now has a versioned schema, but real
+drill history and operator workflows must establish the storage and comparison
+requirements before a new surface is justified.
 
 Recommended order:
 
@@ -116,6 +119,21 @@ Recommended order:
 
 The UI should consume the same JSON evidence reports as the CLI. It should not
 be a separate control plane.
+
+## Release Readiness
+
+Status: locally implemented; remote CI and tag publication remain unverified
+until the workflows run on GitHub.
+
+- Non-mutating format, module, vet, and test gate.
+- Minimum and pinned release Go toolchain checks.
+- Race detector, CLI smoke, and workflow lint release gate.
+- Deterministic Linux/macOS archives with embedded version metadata and SHA256
+  checksums.
+- Changelog-derived release notes and annotated-tag validation.
+- Read-only build job separated from the write-enabled publication job.
+- Dependabot, contribution, security, compatibility, issue, and pull request
+  policies.
 
 ## Plugin Protocol
 

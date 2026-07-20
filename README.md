@@ -66,10 +66,35 @@ Additional providers can be added behind the same internal provider contract.
 - Claiming that a restored database is semantically correct without explicit
   probes that prove the required invariants.
 
+## Installation
+
+The pre-alpha release pipeline targets Linux and macOS on amd64 and arm64.
+Published archives and SHA256 checksums will appear under
+[GitHub Releases](https://github.com/r314tive/pgdrill/releases); until the first
+automated release is published, build from source.
+
+To build from source, install the Go version from `.go-version` and run:
+
+```sh
+make build
+./bin/pgdrill version
+```
+
+`pgdrill` orchestrates external PostgreSQL tools; the binaries required by the
+selected provider, target, and probes must also be installed in the execution
+environment. See [docs/compatibility.md](docs/compatibility.md) for the current
+validation boundary.
+
 ## Development
 
 ```sh
 make check
+```
+
+Release-affecting changes should also pass:
+
+```sh
+make -s release-check VERSION=v0.0.0-dev
 ```
 
 ```sh
@@ -97,7 +122,9 @@ A local pg_probackup drill example is available in
 Release discipline is described in [docs/release.md](docs/release.md), and
 the versioned JSON report contract is documented in
 [docs/report-format.md](docs/report-format.md). User-visible changes are tracked
-in [CHANGELOG.md](CHANGELOG.md).
+in [CHANGELOG.md](CHANGELOG.md). Contribution and security reporting guidance
+is available in [CONTRIBUTING.md](CONTRIBUTING.md) and
+[SECURITY.md](SECURITY.md).
 
 ## License
 

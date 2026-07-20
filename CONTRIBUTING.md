@@ -1,0 +1,47 @@
+# Contributing
+
+`pgdrill` welcomes focused changes that improve recovery evidence without
+turning the project into another backup implementation.
+
+## Development Setup
+
+Install the Go release listed in `.go-version`, then run:
+
+```sh
+make check
+```
+
+`make check` does not rewrite files. Use `make format` before committing when
+formatting is required. Release-process changes should also pass:
+
+```sh
+make -s release-check VERSION=v0.0.0-dev
+```
+
+## Engineering Rules
+
+- Keep the control plane in Go. Shell is a compatibility boundary for external
+  tools and operator environments.
+- Normalize provider output into `internal/model`; do not leak native JSON
+  shapes into the core engine.
+- Execute commands through `internal/command` so timeout, redaction, raw adapter
+  output, and structured exit evidence remain consistent.
+- Add sanitized fixtures for every provider output shape that changes parsing.
+- Preserve provider-scoped backup IDs and explicit cleanup evidence.
+- Treat report JSON as a versioned consumer contract. Follow
+  `docs/report-format.md` for compatibility changes.
+- Never commit repository credentials, connection secrets, or unredacted
+  production evidence.
+
+## Pull Requests
+
+Keep commits cohesive and include:
+
+- focused tests for behavior changes
+- documentation for user-visible behavior
+- an `Unreleased` changelog entry when the change affects users, operators, the
+  CLI, configuration, reports, release artifacts, or compatibility
+- an explicit note when live provider or Kubernetes validation was not possible
+
+For substantial interface or canonical-model changes, open an issue first so
+the compatibility cost can be discussed before implementation.

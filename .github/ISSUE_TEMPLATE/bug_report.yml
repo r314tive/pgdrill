@@ -1,0 +1,55 @@
+name: Bug report
+description: Report reproducible pgdrill behavior with redacted evidence.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, production backup data, or unredacted command output.
+  - type: input
+    id: version
+    attributes:
+      label: pgdrill version
+      description: Output of `pgdrill version`, or the exact commit.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS/architecture, PostgreSQL version, and Kubernetes/CNPG version when relevant.
+    validations:
+      required: true
+  - type: input
+    id: provider_target
+    attributes:
+      label: Provider and target
+      description: For example, WAL-G to local or CNPG target verification.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal redacted configuration and exact command sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and evidence
+      description: Include structured status and relevant redacted report excerpts.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, connection secrets, and production-sensitive data.
+          required: true

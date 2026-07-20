@@ -1,0 +1,105 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Verify tag and build artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache-dependency-path: go.sum
+      - name: Validate annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$(git rev-parse HEAD)"
+      - name: Resolve reproducible build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'PGDRILL_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          printf 'PGDRILL_DATE=%s\n' "$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+      - name: Run release-grade checks
+        run: >-
+          make -s release-check
+          VERSION="$GITHUB_REF_NAME"
+          COMMIT="$PGDRILL_COMMIT"
+          RELEASE_DATE="$PGDRILL_DATE"
+      - name: Extract changelog release notes
+        run: make -s release-notes VERSION="$GITHUB_REF_NAME"
+      - name: Verify checksums and native archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          (
+            cd dist
+            sha256sum -c "pgdrill_${version}_checksums.txt"
+          )
+          mkdir -p dist/verify
+          tar -xzf "dist/pgdrill_${version}_linux_amd64.tar.gz" -C dist/verify
+          "dist/verify/pgdrill_${version}_linux_amd64/pgdrill" version |
+            grep -F "pgdrill $GITHUB_REF_NAME ($PGDRILL_COMMIT,"
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pgdrill-${{ github.ref_name }}
+          path: |
+            dist/*.tar.gz
+            dist/*_checksums.txt
+            dist/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: pgdrill-${{ github.ref_name }}
+          path: dist
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets=(dist/*.tar.gz dist/*_checksums.txt)
+          release_flags=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            --verify-tag \
+            --fail-on-no-commits \
+            --title "pgdrill $GITHUB_REF_NAME" \
+            --notes-file dist/RELEASE_NOTES.md \
+            "${release_flags[@]}"

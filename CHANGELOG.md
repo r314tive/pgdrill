@@ -10,6 +10,14 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Deterministic Linux and macOS release archives for amd64 and arm64, embedded
+  version metadata, SHA256 checksums, and changelog-derived release notes.
+- Read-only release build and guarded tag publication workflows with annotated
+  tag, changelog, checksum, and native-binary verification.
+- Minimum and release Go toolchain CI gates, pinned workflow linting, immutable
+  GitHub Action references, and Dependabot configuration.
+- Public contribution, security reporting, compatibility, issue, and pull
+  request guidance.
 - Versioned JSON drill reports with the `pgdrill.report/v1alpha1` schema,
   legacy unversioned-report normalization, unsupported-schema rejection, and a
   schema label in Prometheus output.
@@ -28,6 +36,10 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- Raised the minimum supported Go toolchain to 1.25 and pinned release builds
+  to Go 1.26.5.
+- Made `make check` non-mutating and added `gofmt` and `go mod tidy -diff`
+  enforcement.
 - CNPG target-only commands now validate target configuration independently of
   backup providers and no longer require or report a synthetic provider.
 
