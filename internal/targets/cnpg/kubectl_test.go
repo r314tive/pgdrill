@@ -113,13 +113,16 @@ func TestKubectlClientWaitFailsFastWhenFullRecoveryFailed(t *testing.T) {
 func TestKubectlClientCaptureEvidenceIsBestEffort(t *testing.T) {
 	runner := &fakeCommandRunner{
 		failWhenArgsContain: "logs",
+		stdoutByArgContains: map[string]string{
+			"get events": "event one\nevent two\nevent three\n",
+		},
 	}
 	client := NewKubectlClient(KubectlConfig{}, runner)
 	spec := testVerifyClusterSpec(t)
 
 	evidence, err := client.CaptureEvidence(context.Background(), spec, Instance{PodName: spec.InstancePodName}, CaptureOptions{
 		Reason:          "start-failed",
-		EventsTail:      200,
+		EventsTail:      2,
 		PostgresLogTail: 5000,
 	})
 	if err != nil {
@@ -147,6 +150,9 @@ func TestKubectlClientCaptureEvidenceIsBestEffort(t *testing.T) {
 	}
 	if !strings.Contains(summary.Attributes["capture_error"], "kubectl-capture-full-recovery-log") {
 		t.Fatalf("expected capture error in summary, got %#v", summary.Attributes)
+	}
+	if got := commandStdoutForOperation(evidence, "kubectl-capture-events"); got != "event two\nevent three\n" {
+		t.Fatalf("expected tailed event evidence, got %q", got)
 	}
 }
 
@@ -243,6 +249,31 @@ func TestKubectlClientSourceClusterImage(t *testing.T) {
 	}
 }
 
+func TestKubectlClientSourceClusterImageFallsBackToPostgresPod(t *testing.T) {
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"cluster.postgresql.cnpg.io": `{"spec":{}}`,
+			"get pods":                   `{"items":[{"spec":{"containers":[{"name":"manager","image":"manager:v1"},{"name":"postgres","image":"ghcr.io/cloudnative-pg/postgresql:16.5"}]}}]}`,
+		},
+	}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+
+	image, evidence, err := client.SourceClusterImage(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("source cluster image fallback: %v", err)
+	}
+	if image != "ghcr.io/cloudnative-pg/postgresql:16.5" {
+		t.Fatalf("unexpected fallback image %q", image)
+	}
+	if len(runner.invocations) != 2 {
+		t.Fatalf("expected cluster and pod discovery, got %d invocations", len(runner.invocations))
+	}
+	if !hasOperation(evidence, "kubectl-discover-cnpg-source-image") || !hasOperation(evidence, "kubectl-discover-cnpg-source-pod-image") {
+		t.Fatalf("missing fallback discovery evidence %#v", evidence)
+	}
+}
+
 type fakeCommandRunner struct {
 	invocations         []command.Invocation
 	failWhenArgsContain string
@@ -303,4 +334,13 @@ func sortedKeys(values map[string]string) []string {
 		return len(keys[i]) > len(keys[j])
 	})
 	return keys
+}
+
+func commandStdoutForOperation(records []model.EvidenceRecord, operation string) string {
+	for _, record := range records {
+		if record.Attributes["operation"] == operation && record.Command != nil {
+			return record.Command.Stdout
+		}
+	}
+	return ""
 }

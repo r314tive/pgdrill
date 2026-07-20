@@ -264,7 +264,10 @@ const (
 	DrillStatusAborted DrillStatus = "aborted"
 )
 
+const CurrentReportSchemaVersion = "pgdrill.report/v1alpha1"
+
 type DrillResult struct {
+	SchemaVersion  string           `json:"schema_version"`
 	ID             string           `json:"id"`
 	Provider       ProviderType     `json:"provider"`
 	Backup         Backup           `json:"backup"`

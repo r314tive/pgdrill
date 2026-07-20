@@ -42,6 +42,7 @@ func TestWritePrometheus(t *testing.T) {
 	output := buf.String()
 
 	for _, expected := range []string{
+		`pgdrill_report_info{schema_version="pgdrill.report/v1alpha1"} 1`,
 		"# HELP pgdrill_drill_status Last drill status as a one-hot gauge.",
 		`pgdrill_drill_status{provider="wal-g",target_type="local",recovery_target="latest",status="passed"} 1`,
 		`pgdrill_drill_status{provider="wal-g",target_type="local",recovery_target="latest",status="failed"} 0`,
@@ -74,5 +75,16 @@ func TestWritePrometheusNormalizesMissingValues(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected prometheus output to contain %q, got:\n%s", expected, output)
 		}
+	}
+}
+
+func TestWritePrometheusRejectsUnsupportedSchema(t *testing.T) {
+	var buf bytes.Buffer
+	err := WritePrometheus(&buf, model.DrillResult{SchemaVersion: "pgdrill.report/v999"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported report schema_version") {
+		t.Fatalf("expected unsupported schema error, got %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("expected no partial metrics output, got %q", buf.String())
 	}
 }

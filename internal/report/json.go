@@ -87,14 +87,39 @@ func ReadJSON(reader io.Reader) (model.DrillResult, error) {
 	if err := decoder.Decode(&result); err != nil {
 		return model.DrillResult{}, fmt.Errorf("parse report json: %w", err)
 	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return model.DrillResult{}, fmt.Errorf("parse report json: multiple JSON values")
+		}
+		return model.DrillResult{}, fmt.Errorf("parse report json trailing data: %w", err)
+	}
+	if err := normalizeSchemaVersion(&result); err != nil {
+		return model.DrillResult{}, err
+	}
 	return result, nil
 }
 
 func WriteJSON(writer io.Writer, result model.DrillResult) error {
+	if err := normalizeSchemaVersion(&result); err != nil {
+		return err
+	}
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(result); err != nil {
 		return fmt.Errorf("encode report json: %w", err)
 	}
 	return nil
+}
+
+func normalizeSchemaVersion(result *model.DrillResult) error {
+	switch result.SchemaVersion {
+	case "":
+		result.SchemaVersion = model.CurrentReportSchemaVersion
+		return nil
+	case model.CurrentReportSchemaVersion:
+		return nil
+	default:
+		return fmt.Errorf("unsupported report schema_version %q", result.SchemaVersion)
+	}
 }

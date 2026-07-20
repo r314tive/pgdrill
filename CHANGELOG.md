@@ -10,6 +10,14 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Versioned JSON drill reports with the `pgdrill.report/v1alpha1` schema,
+  legacy unversioned-report normalization, unsupported-schema rejection, and a
+  schema label in Prometheus output.
+- CNPG discovery evidence in successful and failed target verification reports,
+  including a source image fallback to the `postgres` container of a
+  source-cluster pod.
+- Effective `target.kubernetes.events_tail` enforcement for captured Kubernetes
+  event evidence.
 - Initial `pg_probackup` catalog discovery adapter for
   `pg_probackup show -B <backup-dir> --format=json` with fixture-driven tests.
 - Optional selected-backup validation through `pg_probackup validate`, including
@@ -17,6 +25,11 @@ called out explicitly even while the major version is `0`.
   options.
 - Initial `pg_probackup` local restore planning for `pg_probackup restore` with
   provider instance checks and canonical PITR target mapping.
+
+### Changed
+
+- CNPG target-only commands now validate target configuration independently of
+  backup providers and no longer require or report a synthetic provider.
 
 ## [0.1.0-alpha.5] - 2026-07-20
 

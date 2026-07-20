@@ -129,8 +129,9 @@ func (c *KubectlClient) instancePodReady(ctx context.Context, spec VerifyCluster
 
 func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterSpec, instance Instance, opts CaptureOptions) ([]model.EvidenceRecord, error) {
 	type captureCommand struct {
-		operation string
-		args      []string
+		operation  string
+		args       []string
+		stdoutTail int
 	}
 
 	commands := []captureCommand{
@@ -151,8 +152,9 @@ func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterS
 			args:      c.args(spec, "get", "pvc", "-l", "cnpg.io/cluster="+spec.Name, "-o", "wide"),
 		},
 		{
-			operation: "kubectl-capture-events",
-			args:      c.args(spec, "get", "events", "--sort-by=.metadata.creationTimestamp"),
+			operation:  "kubectl-capture-events",
+			args:       c.args(spec, "get", "events", "--sort-by=.metadata.creationTimestamp"),
+			stdoutTail: opts.EventsTail,
 		},
 		{
 			operation: "kubectl-capture-full-recovery-describe",
@@ -188,6 +190,7 @@ func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterS
 	var joined error
 	for _, cmd := range commands {
 		commandEvidence, err := c.bestEffortRun(ctx, cmd.operation, cmd.args)
+		trimCommandEvidenceStdout(commandEvidence, cmd.stdoutTail)
 		evidence = append(evidence, commandEvidence...)
 		joined = errors.Join(joined, err)
 	}
@@ -332,6 +335,33 @@ func tailArgs(tail int) []string {
 		return nil
 	}
 	return []string{"--tail=" + strconv.Itoa(tail)}
+}
+
+func trimCommandEvidenceStdout(evidence []model.EvidenceRecord, maxLines int) {
+	if maxLines <= 0 {
+		return
+	}
+	for i := range evidence {
+		if evidence[i].Command != nil {
+			evidence[i].Command.Stdout = tailLines(evidence[i].Command.Stdout, maxLines)
+		}
+	}
+}
+
+func tailLines(value string, maxLines int) string {
+	if maxLines <= 0 || value == "" {
+		return value
+	}
+	hasFinalNewline := strings.HasSuffix(value, "\n")
+	lines := strings.Split(strings.TrimSuffix(value, "\n"), "\n")
+	if len(lines) <= maxLines {
+		return value
+	}
+	result := strings.Join(lines[len(lines)-maxLines:], "\n")
+	if hasFinalNewline {
+		result += "\n"
+	}
+	return result
 }
 
 func fullRecoveryFailed(data []byte) (bool, string, error) {

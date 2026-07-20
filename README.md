@@ -95,7 +95,9 @@ A local pg_probackup drill example is available in
 [examples/pgprobackup.yaml](examples/pgprobackup.yaml).
 
 Release discipline is described in [docs/release.md](docs/release.md), and
-user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+the versioned JSON report contract is documented in
+[docs/report-format.md](docs/report-format.md). User-visible changes are tracked
+in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

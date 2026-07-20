@@ -190,6 +190,14 @@ type Duration struct {
 }
 
 func LoadFile(path string) (Config, error) {
+	return loadFile(path, Load)
+}
+
+func LoadTargetFile(path string) (Config, error) {
+	return loadFile(path, LoadTarget)
+}
+
+func loadFile(path string, loader func(io.Reader, string) (Config, error)) (Config, error) {
 	if path == "" {
 		return Config{}, fmt.Errorf("config file path is required")
 	}
@@ -200,7 +208,7 @@ func LoadFile(path string) (Config, error) {
 	}
 	defer file.Close()
 
-	cfg, err := Load(file, FormatFromPath(path))
+	cfg, err := loader(file, FormatFromPath(path))
 	if err != nil {
 		return Config{}, fmt.Errorf("load config file %s: %w", path, err)
 	}
@@ -208,6 +216,14 @@ func LoadFile(path string) (Config, error) {
 }
 
 func Load(reader io.Reader, format string) (Config, error) {
+	return load(reader, format, Config.Validate)
+}
+
+func LoadTarget(reader io.Reader, format string) (Config, error) {
+	return load(reader, format, Config.ValidateTarget)
+}
+
+func load(reader io.Reader, format string, validate func(Config) error) (Config, error) {
 	var cfg Config
 
 	switch strings.ToLower(strings.TrimSpace(format)) {
@@ -228,7 +244,7 @@ func Load(reader io.Reader, format string) (Config, error) {
 	}
 
 	cfg.Normalize()
-	if err := cfg.Validate(); err != nil {
+	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -259,10 +275,8 @@ func (c Config) Validate() error {
 	if c.Provider.Type == "" {
 		return fmt.Errorf("provider.type is required")
 	}
-	switch c.Provider.Type {
-	case model.ProviderWALG, model.ProviderBarman, model.ProviderPGBackRest, model.ProviderPGProbackup:
-	default:
-		return fmt.Errorf("unsupported provider.type %q", c.Provider.Type)
+	if err := validateProviderType(c.Provider.Type); err != nil {
+		return err
 	}
 	if c.Provider.Type == model.ProviderPGProbackup {
 		if strings.TrimSpace(c.Provider.BackupDir) == "" {
@@ -272,7 +286,28 @@ func (c Config) Validate() error {
 			return fmt.Errorf("provider.pg_probackup_validate.threads must not be negative")
 		}
 	}
+	return c.validateCommon()
+}
 
+func (c Config) ValidateTarget() error {
+	if c.Provider.Type != "" {
+		if err := validateProviderType(c.Provider.Type); err != nil {
+			return err
+		}
+	}
+	return c.validateCommon()
+}
+
+func validateProviderType(providerType model.ProviderType) error {
+	switch providerType {
+	case model.ProviderWALG, model.ProviderBarman, model.ProviderPGBackRest, model.ProviderPGProbackup:
+		return nil
+	default:
+		return fmt.Errorf("unsupported provider.type %q", providerType)
+	}
+}
+
+func (c Config) validateCommon() error {
 	if c.Target.Type == "" {
 		return fmt.Errorf("target.type is required")
 	}

@@ -490,3 +490,53 @@ target:
 		t.Fatalf("expected provider validation error, got %v", err)
 	}
 }
+
+func TestLoadTargetConfigAllowsMissingProvider(t *testing.T) {
+	cfg, err := LoadTarget(strings.NewReader(`
+target:
+  type: kubernetes
+  kubernetes:
+    namespace: d003-db
+  cnpg:
+    source_cluster: altbox
+    backup_name: altbox-backup
+    image_name: ghcr.io/cloudnative-pg/postgresql:16
+`), "yaml")
+	if err != nil {
+		t.Fatalf("load target config: %v", err)
+	}
+	if cfg.Provider.Type != "" {
+		t.Fatalf("expected optional provider to remain empty, got %q", cfg.Provider.Type)
+	}
+	if cfg.Target.Type != model.RestoreTargetKubernetes {
+		t.Fatalf("unexpected target type %q", cfg.Target.Type)
+	}
+	if cfg.Recovery.Target != model.RecoveryTargetLatest || cfg.Report.Format != "json" {
+		t.Fatalf("expected normalized target defaults, got %#v", cfg)
+	}
+}
+
+func TestLoadTargetConfigRejectsUnsupportedProviderWhenPresent(t *testing.T) {
+	_, err := LoadTarget(strings.NewReader(`
+provider:
+  type: imaginary
+target:
+  type: kubernetes
+`), "yaml")
+	if err == nil || !strings.Contains(err.Error(), "unsupported provider.type") {
+		t.Fatalf("expected provider validation error, got %v", err)
+	}
+}
+
+func TestLoadCNPGTargetExampleConfig(t *testing.T) {
+	cfg, err := LoadTargetFile(filepath.Join("..", "..", "examples", "cnpg-target-verify.yaml"))
+	if err != nil {
+		t.Fatalf("load CNPG target example config: %v", err)
+	}
+	if cfg.Provider.Type != "" {
+		t.Fatalf("target example must not invent a provider, got %q", cfg.Provider.Type)
+	}
+	if cfg.Target.Type != model.RestoreTargetKubernetes || cfg.Target.CNPG.SourceCluster != "altbox" {
+		t.Fatalf("unexpected CNPG target example %#v", cfg.Target)
+	}
+}

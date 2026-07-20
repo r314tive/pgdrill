@@ -17,10 +17,22 @@ type metricLabel struct {
 }
 
 func WritePrometheus(writer io.Writer, result model.DrillResult) error {
+	if err := normalizeSchemaVersion(&result); err != nil {
+		return err
+	}
 	baseLabels := []metricLabel{
 		{name: "provider", value: labelOrUnknown(string(result.Provider))},
 		{name: "target_type", value: labelOrUnknown(string(result.Target.Type))},
 		{name: "recovery_target", value: labelOrUnknown(string(result.RecoveryTarget.Type))},
+	}
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_report_info Report format information."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_report_info gauge"); err != nil {
+		return err
+	}
+	if err := writeMetric(writer, "pgdrill_report_info", []metricLabel{{name: "schema_version", value: result.SchemaVersion}}, "1"); err != nil {
+		return err
 	}
 
 	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_drill_status Last drill status as a one-hot gauge."); err != nil {

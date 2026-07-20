@@ -221,8 +221,6 @@ func TestTargetManifestCommandRendersCNPGManifest(t *testing.T) {
 	writeFile(t, configPath, `
 cluster:
   name: altbox
-provider:
-  type: wal-g
 target:
   type: kubernetes
   labels:
@@ -330,8 +328,6 @@ esac
 	writeFile(t, configPath, `
 cluster:
   name: altbox
-provider:
-  type: wal-g
 target:
   type: kubernetes
   kubernetes:
@@ -386,6 +382,14 @@ func TestTargetVerifyCommandRunsCNPGLifecycleAndProbes(t *testing.T) {
 
 	writeExecutable(t, kubectlPath, `#!/bin/sh
 case "$*" in
+  *" get backups.postgresql.cnpg.io -o json"*)
+    cat <<'JSON'
+{"items":[{"metadata":{"name":"altbox-backup-20260707","creationTimestamp":"2026-07-07T01:00:00Z"},"spec":{"cluster":{"name":"altbox"}},"status":{"phase":"completed"}}]}
+JSON
+    ;;
+  *" get cluster.postgresql.cnpg.io altbox -o json"*)
+    echo '{"spec":{"imageName":"ghcr.io/cloudnative-pg/postgresql:16"}}'
+    ;;
   *" apply -f -"*)
     manifest="$(cat)"
     case "$manifest" in
@@ -454,8 +458,6 @@ esac
 	writeFile(t, configPath, `
 cluster:
   name: altbox
-provider:
-  type: wal-g
 target:
   type: kubernetes
   labels:
@@ -472,8 +474,6 @@ target:
   cnpg:
     source_cluster: altbox
     verify_cluster_name: verify-altbox-test
-    backup_name: altbox-backup-20260707
-    image_name: ghcr.io/cloudnative-pg/postgresql:16
 probes:
   - type: sql
     name: select_1
@@ -486,7 +486,7 @@ report:
 `)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"target", "verify", "-f", configPath, "-confirm-create", "-drill-id", "cnpg-drill-1"}, &stdout, &stderr)
+	code := run([]string{"target", "verify", "-f", configPath, "-discover", "-confirm-create", "-drill-id", "cnpg-drill-1"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
@@ -501,8 +501,14 @@ report:
 	if result.ID != "cnpg-drill-1" || result.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected result id/status %#v", result)
 	}
+	if result.SchemaVersion != model.CurrentReportSchemaVersion {
+		t.Fatalf("unexpected report schema version %q", result.SchemaVersion)
+	}
 	if result.Backup.ID != "cnpg:altbox-backup-20260707" {
 		t.Fatalf("unexpected backup %#v", result.Backup)
+	}
+	if result.Provider != "" || result.Backup.Provider != "" {
+		t.Fatalf("target-only config must not invent a backup provider: %#v", result)
 	}
 	if !hasCheckNamed(result.Checks, "cnpg-instance-ready", model.CheckStatusPassed) {
 		t.Fatalf("expected cnpg readiness check, got %#v", result.Checks)
@@ -511,6 +517,8 @@ report:
 		t.Fatalf("expected sql probe check, got %#v", result.Checks)
 	}
 	for _, operation := range []string{
+		"kubectl-discover-cnpg-backups",
+		"kubectl-discover-cnpg-source-image",
 		"cnpg-manifest-render",
 		"kubectl-apply-cluster",
 		"kubectl-check-full-recovery",
@@ -526,6 +534,57 @@ report:
 		if !hasEvidenceOperation(result.Evidence, operation) {
 			t.Fatalf("expected evidence operation %q, got %#v", operation, result.Evidence)
 		}
+	}
+}
+
+func TestTargetVerifyWritesDiscoveryFailureReport(t *testing.T) {
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	reportPath := filepath.Join(dir, "cnpg-report.json")
+
+	writeExecutable(t, kubectlPath, `#!/bin/sh
+echo "forbidden" >&2
+exit 42
+`)
+	writeFile(t, configPath, `
+target:
+  type: kubernetes
+  kubernetes:
+    namespace: d003-db
+    kubectl_binary: `+kubectlPath+`
+  cnpg:
+    source_cluster: altbox
+    image_name: ghcr.io/cloudnative-pg/postgresql:16
+report:
+  format: json
+  path: `+reportPath+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"target", "verify", "-f", configPath, "-discover", "-confirm-create", "-drill-id", "cnpg-discovery-failure"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "discover target verify inputs") {
+		t.Fatalf("expected discovery failure, got %q", stderr.String())
+	}
+
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read discovery failure report: %v", err)
+	}
+	if result.ID != "cnpg-discovery-failure" || result.Status != model.DrillStatusFailed {
+		t.Fatalf("unexpected failure result %#v", result)
+	}
+	if !hasCheckNamed(result.Checks, "cnpg-input-discovery", model.CheckStatusFailed) {
+		t.Fatalf("expected failed discovery check, got %#v", result.Checks)
+	}
+	if !hasEvidenceOperation(result.Evidence, "kubectl-discover-cnpg-backups") {
+		t.Fatalf("expected discovery command evidence, got %#v", result.Evidence)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].Command == nil || result.Evidence[0].Command.ExitStatus.ExitCode != 42 {
+		t.Fatalf("expected structured exit status, got %#v", result.Evidence)
 	}
 }
 
@@ -1102,6 +1161,7 @@ func TestReportShowCommandText(t *testing.T) {
 
 	output := stdout.String()
 	for _, expected := range []string{
+		model.CurrentReportSchemaVersion,
 		"ID        drill-1",
 		"Status    failed",
 		"Backup    wal-g:base_1",
@@ -1168,6 +1228,7 @@ func TestReportMetricsCommandPrometheus(t *testing.T) {
 
 	output := stdout.String()
 	for _, expected := range []string{
+		`pgdrill_report_info{schema_version="pgdrill.report/v1alpha1"} 1`,
 		"# TYPE pgdrill_drill_status gauge",
 		`pgdrill_drill_status{provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 1`,
 		`pgdrill_drill_duration_seconds{provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 120`,

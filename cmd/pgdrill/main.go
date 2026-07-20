@@ -367,7 +367,7 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	cfg, err := config.LoadFile(configPath)
+	cfg, err := config.LoadTargetFile(configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "load config: %v\n", err)
 		return 1
@@ -379,7 +379,7 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 
 	cnpgTarget := cfg.Target.CNPG
 	if discover {
-		if err := discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget); err != nil {
+		if _, err := discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget); err != nil {
 			fmt.Fprintf(stderr, "discover target manifest inputs: %v\n", err)
 			return 1
 		}
@@ -436,7 +436,7 @@ func runTargetVerify(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	cfg, err := config.LoadFile(configPath)
+	cfg, err := config.LoadTargetFile(configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "load config: %v\n", err)
 		return 1
@@ -450,11 +450,24 @@ func runTargetVerify(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	startedAt := time.Now().UTC()
 	cnpgTarget := cfg.Target.CNPG
+	discoveryEvidence := []model.EvidenceRecord{}
 	if discover {
-		if err := discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget); err != nil {
-			fmt.Fprintf(stderr, "discover target verify inputs: %v\n", err)
-			return 1
+		discoveryEvidence, err = discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget)
+		if err != nil {
+			runErr := fmt.Errorf("discover target verify inputs: %w", err)
+			result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, drillID, startedAt)
+			result.FinishedAt = time.Now().UTC()
+			result.Status = model.DrillStatusFailed
+			result.Evidence = discoveryEvidence
+			result.Checks = []model.Check{{
+				Name:        "cnpg-input-discovery",
+				Status:      model.CheckStatusFailed,
+				Message:     runErr.Error(),
+				EvidenceIDs: evidenceRecordIDs(discoveryEvidence),
+			}}
+			return finishCNPGTargetVerify(stdout, stderr, cfg.Report.Path, result, runErr)
 		}
 	}
 	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID)
@@ -468,12 +481,16 @@ func runTargetVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	result, runErr := executeCNPGTargetVerify(context.Background(), cfg, spec, configuredProbes, drillID)
-	if sinkErr := (report.JSONFileSink{Path: cfg.Report.Path}).Write(context.Background(), result); sinkErr != nil {
+	result, runErr := executeCNPGTargetVerify(context.Background(), cfg, spec, configuredProbes, drillID, startedAt, discoveryEvidence)
+	return finishCNPGTargetVerify(stdout, stderr, cfg.Report.Path, result, runErr)
+}
+
+func finishCNPGTargetVerify(stdout, stderr io.Writer, reportPath string, result model.DrillResult, runErr error) int {
+	if sinkErr := (report.JSONFileSink{Path: reportPath}).Write(context.Background(), result); sinkErr != nil {
 		fmt.Fprintf(stderr, "write report: %v\n", sinkErr)
 		return 1
 	}
-	if err := writeRunSummary(stdout, result, cfg.Report.Path); err != nil {
+	if err := writeRunSummary(stdout, result, reportPath); err != nil {
 		fmt.Fprintf(stderr, "write target verify summary: %v\n", err)
 		return 1
 	}
@@ -488,9 +505,9 @@ func runTargetVerify(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func discoverCNPGManifestInputs(ctx context.Context, cfg config.Config, target *config.CNPGTargetConfig) error {
+func discoverCNPGManifestInputs(ctx context.Context, cfg config.Config, target *config.CNPGTargetConfig) ([]model.EvidenceRecord, error) {
 	if strings.TrimSpace(target.SourceCluster) == "" {
-		return fmt.Errorf("target.cnpg.source_cluster is required for discovery")
+		return nil, fmt.Errorf("target.cnpg.source_cluster is required for discovery")
 	}
 
 	client := cnpg.NewKubectlClient(cnpg.KubectlConfig{
@@ -505,22 +522,25 @@ func discoverCNPGManifestInputs(ctx context.Context, cfg config.Config, target *
 		Namespace:     cfg.Target.Kubernetes.Namespace,
 		SourceCluster: target.SourceCluster,
 	}
+	evidence := []model.EvidenceRecord{}
 
 	if strings.TrimSpace(target.BackupName) == "" {
-		backupName, _, err := client.LatestCompletedBackup(ctx, discoverySpec)
+		backupName, backupEvidence, err := client.LatestCompletedBackup(ctx, discoverySpec)
+		evidence = append(evidence, backupEvidence...)
 		if err != nil {
-			return fmt.Errorf("discover latest completed CNPG Backup: %w", err)
+			return evidence, fmt.Errorf("discover latest completed CNPG Backup: %w", err)
 		}
 		target.BackupName = backupName
 	}
 	if strings.TrimSpace(target.ImageName) == "" {
-		imageName, _, err := client.SourceClusterImage(ctx, discoverySpec)
+		imageName, imageEvidence, err := client.SourceClusterImage(ctx, discoverySpec)
+		evidence = append(evidence, imageEvidence...)
 		if err != nil {
-			return fmt.Errorf("discover CNPG source image: %w", err)
+			return evidence, fmt.Errorf("discover CNPG source image: %w", err)
 		}
 		target.ImageName = imageName
 	}
-	return nil
+	return evidence, nil
 }
 
 func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfig, drillID string) (cnpg.VerifyClusterSpec, error) {
@@ -542,32 +562,9 @@ func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfi
 	}, drillID)
 }
 
-func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, configuredProbes []core.Probe, drillID string) (model.DrillResult, error) {
-	startedAt := time.Now().UTC()
-	result := model.DrillResult{
-		ID:       targetVerifyID(drillID, startedAt),
-		Provider: cfg.Provider.Type,
-		Backup: model.Backup{
-			ID:          "cnpg:" + spec.BackupName,
-			Provider:    cfg.Provider.Type,
-			ProviderID:  spec.BackupName,
-			ClusterName: spec.SourceCluster,
-			Kind:        model.BackupKindUnknown,
-			Status:      model.BackupStatusAvailable,
-			Metadata: map[string]string{
-				"cnpg_backup":         spec.BackupName,
-				"cnpg_source_cluster": spec.SourceCluster,
-				"cnpg_verify_cluster": spec.Name,
-			},
-		},
-		Target: model.TargetSpec{
-			Type:   model.RestoreTargetKubernetes,
-			Labels: cfg.TargetSpec().Labels,
-		},
-		RecoveryTarget: cfg.RecoveryTarget(),
-		StartedAt:      startedAt,
-		Status:         model.DrillStatusUnknown,
-	}
+func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, configuredProbes []core.Probe, drillID string, startedAt time.Time, initialEvidence []model.EvidenceRecord) (model.DrillResult, error) {
+	result := newCNPGTargetVerifyResult(cfg, spec.SourceCluster, spec.BackupName, spec.Name, drillID, startedAt)
+	result.Evidence = append([]model.EvidenceRecord{}, initialEvidence...)
 
 	client := cnpg.NewKubectlClient(cnpg.KubectlConfig{
 		Binary:       cfg.Target.Kubernetes.KubectlBinary,
@@ -635,6 +632,57 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 		result.Status = model.DrillStatusPassed
 		return result, nil
 	}
+}
+
+func newCNPGTargetVerifyResult(cfg config.Config, sourceCluster, backupName, verifyCluster, drillID string, startedAt time.Time) model.DrillResult {
+	backupStatus := model.BackupStatusUnknown
+	backupID := ""
+	if backupName != "" {
+		backupStatus = model.BackupStatusAvailable
+		backupID = "cnpg:" + backupName
+	}
+	metadata := map[string]string{}
+	for key, value := range map[string]string{
+		"cnpg_backup":         backupName,
+		"cnpg_source_cluster": sourceCluster,
+		"cnpg_verify_cluster": verifyCluster,
+	} {
+		if value != "" {
+			metadata[key] = value
+		}
+	}
+
+	return model.DrillResult{
+		SchemaVersion: model.CurrentReportSchemaVersion,
+		ID:            targetVerifyID(drillID, startedAt),
+		Provider:      cfg.Provider.Type,
+		Backup: model.Backup{
+			ID:          backupID,
+			Provider:    cfg.Provider.Type,
+			ProviderID:  backupName,
+			ClusterName: sourceCluster,
+			Kind:        model.BackupKindUnknown,
+			Status:      backupStatus,
+			Metadata:    metadata,
+		},
+		Target: model.TargetSpec{
+			Type:   model.RestoreTargetKubernetes,
+			Labels: cfg.TargetSpec().Labels,
+		},
+		RecoveryTarget: cfg.RecoveryTarget(),
+		StartedAt:      startedAt,
+		Status:         model.DrillStatusUnknown,
+	}
+}
+
+func evidenceRecordIDs(records []model.EvidenceRecord) []string {
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		if record.ID != "" {
+			ids = append(ids, record.ID)
+		}
+	}
+	return ids
 }
 
 func targetVerifyID(id string, startedAt time.Time) string {
@@ -805,9 +853,10 @@ type catalogListOutput struct {
 func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) error {
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	rows := [][2]string{
+		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"ID", valueOrDash(result.ID)},
 		{"Status", string(result.Status)},
-		{"Provider", string(result.Provider)},
+		{"Provider", valueOrDash(string(result.Provider))},
 		{"Backup", valueOrDash(result.Backup.ID)},
 		{"Report", valueOrDash(reportPath)},
 	}
@@ -846,9 +895,10 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 
 	rows := [][2]string{
+		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"ID", valueOrDash(result.ID)},
 		{"Status", string(result.Status)},
-		{"Provider", string(result.Provider)},
+		{"Provider", valueOrDash(string(result.Provider))},
 		{"Backup", valueOrDash(result.Backup.ID)},
 		{"Target", targetSummary(result.Target)},
 		{"Recovery", recoveryTargetSummary(result.RecoveryTarget)},

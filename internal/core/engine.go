@@ -35,6 +35,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	clock := e.clock()
 	startedAt := clock()
 	result := model.DrillResult{
+		SchemaVersion:  model.CurrentReportSchemaVersion,
 		ID:             drillID(req.ID, startedAt),
 		Provider:       e.Provider.Type(),
 		Target:         req.Target,

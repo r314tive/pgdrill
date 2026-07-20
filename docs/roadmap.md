@@ -53,6 +53,8 @@ Status: usable for local-target smoke drills.
 
 - JSON evidence sink wired into `pgdrill run`.
 - JSON evidence report written to disk.
+- Versioned `pgdrill.report/v1alpha1` contract shared by CLI and metrics
+  consumers.
 - More probe ergonomics.
 
 The CLI should become usable here:
@@ -75,13 +77,17 @@ still required before calling it production-ready.
   semantics.
 - `kubectl` compatibility client behind the CNPG lifecycle interface.
 - CNPG `kubectl` discovery for latest completed `Backup` and source image.
+- Source-image fallback through the source pod's `postgres` container.
 - Read-only CNPG manifest discovery through `pgdrill target manifest -discover`.
 - Guarded CNPG target verification through `pgdrill target verify`.
+- Provider-independent target configuration and discovery command evidence in
+  target verification reports.
 - Temporary CNPG cluster restore target with standard JSON reports.
 - Source image reuse for verify clusters.
 - Probe execution against the restored CNPG service.
 - Full-recovery fail-fast handling.
 - Kubernetes events, pod descriptions, logs, and PVC state as evidence.
+- Bounded Kubernetes event evidence through `events_tail`.
 - Explicit cluster/PVC cleanup evidence.
 - CronJob-friendly examples.
 

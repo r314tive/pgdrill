@@ -9,11 +9,6 @@
 cluster:
   name: altbox
 
-# Required by the strict top-level config model. `target verify` uses the CNPG
-# target settings below instead of provider restore planning.
-provider:
-  type: wal-g
-
 target:
   type: kubernetes
   labels:

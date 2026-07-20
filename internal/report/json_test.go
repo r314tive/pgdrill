@@ -1,9 +1,11 @@
 package report
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +50,9 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 	if loaded.ID != result.ID {
 		t.Fatalf("unexpected report id %q", loaded.ID)
 	}
+	if loaded.SchemaVersion != model.CurrentReportSchemaVersion {
+		t.Fatalf("unexpected schema version %q", loaded.SchemaVersion)
+	}
 	if loaded.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected status %q", loaded.Status)
 	}
@@ -83,5 +88,47 @@ func TestJSONFileSinkReplacesExistingFile(t *testing.T) {
 	}
 	if loaded.ID != "new" {
 		t.Fatalf("expected replacement report, got %#v", loaded)
+	}
+}
+
+func TestReadJSONNormalizesLegacyReportSchema(t *testing.T) {
+	result, err := ReadJSON(strings.NewReader(`{"id":"legacy","status":"passed"}`))
+	if err != nil {
+		t.Fatalf("read legacy report: %v", err)
+	}
+	if result.SchemaVersion != model.CurrentReportSchemaVersion {
+		t.Fatalf("unexpected normalized schema version %q", result.SchemaVersion)
+	}
+}
+
+func TestReadJSONRejectsUnsupportedSchema(t *testing.T) {
+	_, err := ReadJSON(strings.NewReader(`{"schema_version":"pgdrill.report/v99","id":"future"}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported report schema_version") {
+		t.Fatalf("expected unsupported schema error, got %v", err)
+	}
+}
+
+func TestReadJSONRejectsMultipleValues(t *testing.T) {
+	_, err := ReadJSON(strings.NewReader(`{"id":"one"} {"id":"two"}`))
+	if err == nil || !strings.Contains(err.Error(), "multiple JSON values") {
+		t.Fatalf("expected multiple JSON values error, got %v", err)
+	}
+}
+
+func TestWriteJSONAddsSchemaVersion(t *testing.T) {
+	var output bytes.Buffer
+	if err := WriteJSON(&output, model.DrillResult{ID: "new"}); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	if !strings.Contains(output.String(), `"schema_version": "`+model.CurrentReportSchemaVersion+`"`) {
+		t.Fatalf("expected schema version in report:\n%s", output.String())
+	}
+}
+
+func TestWriteJSONRejectsUnsupportedSchema(t *testing.T) {
+	var output bytes.Buffer
+	err := WriteJSON(&output, model.DrillResult{SchemaVersion: "pgdrill.report/v99"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported report schema_version") {
+		t.Fatalf("expected unsupported schema error, got %v", err)
 	}
 }

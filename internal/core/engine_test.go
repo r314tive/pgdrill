@@ -71,6 +71,9 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed status, got %q", result.Status)
 	}
+	if result.SchemaVersion != model.CurrentReportSchemaVersion {
+		t.Fatalf("unexpected report schema version %q", result.SchemaVersion)
+	}
 	if result.Backup.ID != "wal-g:base_1" {
 		t.Fatalf("unexpected selected backup %q", result.Backup.ID)
 	}

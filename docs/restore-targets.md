@@ -12,8 +12,10 @@ PostgreSQL instance.
 
 The target implementation should keep these operational rules:
 
-- Discover the source cluster image and reuse it for the verify cluster. Do not
-  hardcode a PostgreSQL image or major version.
+- Discover the source cluster image and reuse it for the verify cluster. Fall
+  back to the `postgres` container image from a source-cluster pod when
+  `Cluster.spec.imageName` is omitted. Do not hardcode a PostgreSQL image or
+  major version.
 - Build deterministic, DNS-safe verify cluster names with a bounded length and a
   short hash suffix.
 - Create a one-instance verify cluster with explicit CPU, memory, and storage
@@ -85,6 +87,7 @@ Implemented lifecycle contract:
   bootstrap-controller logs, and postgres logs
 - delete the verify cluster and optional PVCs with cleanup evidence
 - capture diagnostics on successful destroy when configured
+- bound captured event output with `target.kubernetes.events_tail`
 
 The concrete Kubernetes API client is intentionally separate from this
 controller. This keeps `kubectl` as a future compatibility backend rather than
@@ -102,7 +105,8 @@ JSON output in Go:
 - select the newest `Backup` with `status.phase=completed` for the configured
   source cluster
 - read `Cluster.spec.imageName` from the source cluster so verify clusters
-  reuse the same PostgreSQL image
+  reuse the same PostgreSQL image, falling back to a source pod's `postgres`
+  container image when needed
 
 The guarded verification CLI uses the same lifecycle controller:
 
@@ -114,7 +118,10 @@ pgdrill target verify -f pgdrill-cnpg.yaml -discover -confirm-create
 pod to become Ready, runs the configured probe set against the restored
 PostgreSQL service, writes the standard JSON report, and destroys the verify
 cluster. It refuses to run without `-confirm-create` because it mutates
-Kubernetes resources.
+Kubernetes resources. Backup-provider configuration is optional for target-only
+commands because the referenced CNPG `Backup` is the restore input; read-only
+discovery commands are retained as report evidence when `-discover` is used,
+including when discovery itself fails.
 
 See [../examples/cnpg-target-verify.yaml](../examples/cnpg-target-verify.yaml)
 for a local CLI config example and
@@ -124,8 +131,6 @@ for a CronJob/RBAC template.
 Example target config shape:
 
 ```yaml
-provider:
-  type: wal-g
 target:
   type: kubernetes
   kubernetes:

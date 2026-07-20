@@ -26,6 +26,8 @@ probes, and evidence, not in terms of one provider's command output.
   PostgreSQL instance.
 - `internal/report`: report readers and evidence sinks for durable drill
   results.
+- `docs/report-format.md`: versioning and compatibility contract for durable
+  drill reports.
 - `docs/restore-targets.md`: lifecycle requirements for disposable restore
   environments, including Kubernetes/CNPG notes.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.
@@ -84,9 +86,10 @@ Raw command stdout/stderr stay available to adapter code as `command.RawEvidence
 Reports and logs should use `model.CommandEvidence`, where arguments,
 environment values, stdout, stderr, and exit errors are redacted.
 
-The initial report format is the JSON encoding of `model.DrillResult`. CLI, TUI,
-and future UI surfaces should consume this report contract instead of
-reconstructing drill state from logs.
+The initial report format is the versioned JSON encoding of
+`model.DrillResult`. CLI, TUI, and future UI surfaces should consume this report
+contract instead of reconstructing drill state from logs. Compatibility rules
+are defined in [report-format.md](report-format.md).
 
 ## Design Rules
 
