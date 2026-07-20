@@ -3,6 +3,13 @@
 Adapters should use existing PostgreSQL backup tools instead of reimplementing
 their storage formats.
 
+Catalog discovery and ordinary provider checks use `provider.timeout` while
+the generated physical restore step uses `restore.timeout`. This prevents a
+short catalog deadline from aborting a valid large restore and prevents a
+multi-hour restore allowance from hiding a stuck catalog command. Expensive
+provider checks retain their own nested timeout. Defaults and override rules
+are documented in [configuration.md](configuration.md).
+
 ## Canonical Recovery Targets
 
 Provider adapters receive a validated canonical recovery target. Timestamp

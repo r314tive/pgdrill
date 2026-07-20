@@ -20,6 +20,10 @@ called out explicitly even while the major version is `0`.
 - Requested and resolved executable paths in durable command evidence.
 - Bounded command capture with raw/evidence byte limits, truncation metadata,
   and explicit output-limit failures instead of unbounded process memory use.
+- Bounded operational defaults for provider checks, physical restores,
+  restore validation, probes, and Kubernetes commands/readiness polling.
+- A dedicated `restore.timeout` shared by all provider restore plans, separate
+  from the shorter `provider.timeout` used for catalog and provider commands.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
 - Redaction-safe command start errors for durable failure reporting.
@@ -52,6 +56,11 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- `provider.timeout` no longer sets the physical restore command deadline when
+  config is loaded; use `restore.timeout` for that operation. Existing explicit
+  provider, nested validation, probe, and Kubernetes timeouts remain supported.
+- Negative durations and Kubernetes poll intervals longer than the overall
+  readiness timeout are rejected during strict config loading.
 - CNPG target-only reports no longer claim a configured provider that the
   target verification path did not invoke.
 - `pg_dump` probes discard the generated dump payload after validating it;

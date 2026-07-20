@@ -17,13 +17,14 @@ import (
 const defaultBinary = "wal-g"
 
 type Config struct {
-	Binary       string
-	Env          map[string]string
-	WorkDir      string
-	Timeout      time.Duration
-	RedactValues []string
-	WALVerify    WALVerifyConfig
-	VerifyBackup pgverifybackup.Config
+	Binary         string
+	Env            map[string]string
+	WorkDir        string
+	Timeout        time.Duration
+	RestoreTimeout time.Duration
+	RedactValues   []string
+	WALVerify      WALVerifyConfig
+	VerifyBackup   pgverifybackup.Config
 }
 
 type WALVerifyConfig struct {
@@ -297,7 +298,7 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 				Args:       []string{"backup-fetch", dataDir, backup.ProviderID},
 				Env:        copyStringMap(a.cfg.Env),
 				WorkDir:    a.cfg.WorkDir,
-				Timeout:    durationString(a.cfg.Timeout),
+				Timeout:    durationString(a.restoreTimeout()),
 				Redactions: append([]string{}, a.cfg.RedactValues...),
 			},
 			Inputs: map[string]string{
@@ -361,6 +362,13 @@ func (a *Adapter) binary() string {
 		return a.cfg.Binary
 	}
 	return defaultBinary
+}
+
+func (a *Adapter) restoreTimeout() time.Duration {
+	if a.cfg.RestoreTimeout > 0 {
+		return a.cfg.RestoreTimeout
+	}
+	return a.cfg.Timeout
 }
 
 func (a *Adapter) recoveryConfig(target model.RecoveryTarget) (string, error) {

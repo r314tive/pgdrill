@@ -1277,7 +1277,7 @@ const sampleConfig = `cluster:
 
 provider:
   type: wal-g
-  timeout: 30s
+  timeout: 30m
   wal_verify:
     enabled: false
   env:
@@ -1288,6 +1288,7 @@ target:
   work_dir: /var/tmp/pgdrill/production-main
 
 restore:
+  timeout: 6h
   verify_backup:
     enabled: false
 

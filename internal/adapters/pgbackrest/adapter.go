@@ -18,17 +18,18 @@ import (
 const defaultBinary = "pgbackrest"
 
 type Config struct {
-	Binary       string
-	ConfigPath   string
-	Stanza       string
-	Repo         string
-	Env          map[string]string
-	WorkDir      string
-	Timeout      time.Duration
-	RedactValues []string
-	Check        CheckConfig
-	Verify       VerifyConfig
-	VerifyBackup pgverifybackup.Config
+	Binary         string
+	ConfigPath     string
+	Stanza         string
+	Repo           string
+	Env            map[string]string
+	WorkDir        string
+	Timeout        time.Duration
+	RestoreTimeout time.Duration
+	RedactValues   []string
+	Check          CheckConfig
+	Verify         VerifyConfig
+	VerifyBackup   pgverifybackup.Config
 }
 
 type CheckConfig struct {
@@ -172,7 +173,7 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 			Args:       restoreArgs,
 			Env:        copyStringMap(a.cfg.Env),
 			WorkDir:    a.cfg.WorkDir,
-			Timeout:    durationString(a.cfg.Timeout),
+			Timeout:    durationString(a.restoreTimeout()),
 			Redactions: append([]string{}, a.cfg.RedactValues...),
 		},
 		Inputs: map[string]string{
@@ -212,6 +213,13 @@ func (a *Adapter) binary() string {
 		return a.cfg.Binary
 	}
 	return defaultBinary
+}
+
+func (a *Adapter) restoreTimeout() time.Duration {
+	if a.cfg.RestoreTimeout > 0 {
+		return a.cfg.RestoreTimeout
+	}
+	return a.cfg.Timeout
 }
 
 func (a *Adapter) infoArgs() []string {

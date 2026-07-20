@@ -65,6 +65,8 @@ Status: usable for local-target smoke drills.
   output, and Prometheus metrics.
 - Automatic provider/target/probe version preflight retained in every CLI drill
   report before repository access or target mutation.
+- Bounded operation deadlines with separate provider/catalog and physical
+  restore timeout policies plus guarded Kubernetes polling.
 - More probe ergonomics.
 
 The CLI should become usable here:

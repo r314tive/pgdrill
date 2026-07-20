@@ -150,9 +150,10 @@ func TestAdapterDiscoverBackupsRejectsOutputLimitBeforeParsing(t *testing.T) {
 
 func TestPlanRestoreBuildsBackupFetchStep(t *testing.T) {
 	adapter := New(Config{
-		Binary:  "/usr/local/bin/wal-g",
-		WorkDir: "/var/lib/postgresql",
-		Timeout: 2 * time.Minute,
+		Binary:         "/usr/local/bin/wal-g",
+		WorkDir:        "/var/lib/postgresql",
+		Timeout:        2 * time.Minute,
+		RestoreTimeout: 45 * time.Minute,
 		Env: map[string]string{
 			"WALG_FILE_PREFIX": "/backups/main",
 		},
@@ -206,7 +207,7 @@ func TestPlanRestoreBuildsBackupFetchStep(t *testing.T) {
 	if got, want := step.Command.Args, []string{"backup-fetch", "/tmp/pgdrill/main/data", "base_1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected command args: got %#v want %#v", got, want)
 	}
-	if step.Command.Timeout != "2m0s" {
+	if step.Command.Timeout != "45m0s" {
 		t.Fatalf("unexpected timeout %q", step.Command.Timeout)
 	}
 	if step.Command.Env["WALG_FILE_PREFIX"] != "/backups/main" {

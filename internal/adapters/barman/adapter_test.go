@@ -386,11 +386,12 @@ func TestValidateCatalogWarnsOnInvalidShowBackupJSON(t *testing.T) {
 func TestPlanRestoreBuildsBarmanRestoreStep(t *testing.T) {
 	inclusive := false
 	adapter := New(Config{
-		Binary:     "/usr/local/bin/barman",
-		ConfigPath: "/etc/barman.conf",
-		Server:     "main",
-		WorkDir:    "/var/lib/barman",
-		Timeout:    5 * time.Minute,
+		Binary:         "/usr/local/bin/barman",
+		ConfigPath:     "/etc/barman.conf",
+		Server:         "main",
+		WorkDir:        "/var/lib/barman",
+		Timeout:        5 * time.Minute,
+		RestoreTimeout: 6 * time.Hour,
 		Env: map[string]string{
 			"BARMAN_HOME": "/srv/barman",
 		},
@@ -453,7 +454,7 @@ func TestPlanRestoreBuildsBarmanRestoreStep(t *testing.T) {
 	if step.Command.Path != "/usr/local/bin/barman" {
 		t.Fatalf("unexpected command path %q", step.Command.Path)
 	}
-	if step.Command.Timeout != "5m0s" {
+	if step.Command.Timeout != "6h0m0s" {
 		t.Fatalf("unexpected timeout %q", step.Command.Timeout)
 	}
 	if step.Command.Env["BARMAN_HOME"] != "/srv/barman" {

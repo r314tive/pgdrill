@@ -223,13 +223,14 @@ func TestValidateCatalogReportsCommandFailureAsFailedCheck(t *testing.T) {
 
 func TestPlanRestoreBuildsLocalRestore(t *testing.T) {
 	adapter := New(Config{
-		Binary:       "/usr/bin/pg_probackup",
-		BackupDir:    "/backups",
-		Instance:     "main",
-		WorkDir:      "/var/lib/pgdrill",
-		Timeout:      30 * time.Minute,
-		Env:          map[string]string{"PGPROBACKUP_SSH_REMOTE_PATH": "/opt/pg/bin"},
-		RedactValues: []string{"secret"},
+		Binary:         "/usr/bin/pg_probackup",
+		BackupDir:      "/backups",
+		Instance:       "main",
+		WorkDir:        "/var/lib/pgdrill",
+		Timeout:        30 * time.Minute,
+		RestoreTimeout: 3 * time.Hour,
+		Env:            map[string]string{"PGPROBACKUP_SSH_REMOTE_PATH": "/opt/pg/bin"},
+		RedactValues:   []string{"secret"},
 	}, &fakeRunner{})
 	plan, err := adapter.PlanRestore(context.Background(), model.Backup{
 		ID:          "pg_probackup:main/SBOL94",
@@ -255,7 +256,7 @@ func TestPlanRestoreBuildsLocalRestore(t *testing.T) {
 	if step.Command == nil || !reflect.DeepEqual(step.Command.Args, wantArgs) {
 		t.Fatalf("unexpected restore step %#v", step)
 	}
-	if step.Command.Tool != model.ToolPGProbackup || step.Command.Timeout != "30m0s" {
+	if step.Command.Tool != model.ToolPGProbackup || step.Command.Timeout != "3h0m0s" {
 		t.Fatalf("unexpected command metadata %#v", step.Command)
 	}
 	if plan.Runtime.DataDirectory != "/var/tmp/pgdrill/main/data" || plan.Runtime.Environment["PGPROBACKUP_SSH_REMOTE_PATH"] != "/opt/pg/bin" {

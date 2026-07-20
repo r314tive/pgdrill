@@ -23,6 +23,11 @@ probes:
 Use explicit probes when binaries, query text, `pg_amcheck` arguments, or
 `pg_dump` mode must differ per probe.
 
+Every probe has a command deadline. An omitted timeout defaults to `1h`; set an
+explicit value from measured runtime for large `pg_amcheck` or `pg_dump`
+checks. See [configuration.md](configuration.md) for the complete deadline
+policy.
+
 ## Presets
 
 Presets expand into ordinary probes before execution:

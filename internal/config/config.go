@@ -13,6 +13,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	DefaultProviderTimeout          = 30 * time.Minute
+	DefaultRestoreTimeout           = 6 * time.Hour
+	DefaultValidationTimeout        = 2 * time.Hour
+	DefaultProbeTimeout             = time.Hour
+	DefaultKubernetesCommandTimeout = 2 * time.Minute
+	DefaultKubernetesWaitTimeout    = 20 * time.Minute
+	DefaultKubernetesPollInterval   = 5 * time.Second
+)
+
 type Config struct {
 	Cluster  ClusterConfig  `json:"cluster" yaml:"cluster"`
 	Provider ProviderConfig `json:"provider" yaml:"provider"`
@@ -149,6 +159,7 @@ type RecoveryConfig struct {
 }
 
 type RestoreConfig struct {
+	Timeout      Duration           `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	VerifyBackup VerifyBackupConfig `json:"verify_backup,omitempty" yaml:"verify_backup,omitempty"`
 }
 
@@ -270,6 +281,42 @@ func (c *Config) Normalize() {
 	if c.Report.Format == "" {
 		c.Report.Format = "json"
 	}
+
+	if c.Provider.Type != "" {
+		setDefaultDuration(&c.Provider.Timeout, DefaultProviderTimeout)
+	}
+	if c.Provider.WALVerify.Enabled {
+		setDefaultDuration(&c.Provider.WALVerify.Timeout, DefaultValidationTimeout)
+	}
+	if c.Provider.BarmanVerify.Enabled {
+		setDefaultDuration(&c.Provider.BarmanVerify.Timeout, DefaultValidationTimeout)
+	}
+	if c.Provider.BarmanManifest.Enabled {
+		setDefaultDuration(&c.Provider.BarmanManifest.Timeout, DefaultValidationTimeout)
+	}
+	if c.Provider.PGBackRest.Enabled {
+		setDefaultDuration(&c.Provider.PGBackRest.Timeout, DefaultProviderTimeout)
+	}
+	if c.Provider.PGBackRestVerify.Enabled {
+		setDefaultDuration(&c.Provider.PGBackRestVerify.Timeout, DefaultValidationTimeout)
+	}
+	if c.Provider.PGProbackupValidate.Enabled {
+		setDefaultDuration(&c.Provider.PGProbackupValidate.Timeout, DefaultValidationTimeout)
+	}
+
+	setDefaultDuration(&c.Restore.Timeout, DefaultRestoreTimeout)
+	if c.Restore.VerifyBackup.Enabled {
+		setDefaultDuration(&c.Restore.VerifyBackup.Timeout, DefaultValidationTimeout)
+	}
+	for i := range c.Probes {
+		setDefaultDuration(&c.Probes[i].Timeout, DefaultProbeTimeout)
+	}
+
+	if c.Target.Type == model.RestoreTargetKubernetes {
+		setDefaultDuration(&c.Target.Kubernetes.CommandTimeout, DefaultKubernetesCommandTimeout)
+		setDefaultDuration(&c.Target.Kubernetes.WaitTimeout, DefaultKubernetesWaitTimeout)
+		setDefaultDuration(&c.Target.Kubernetes.PollInterval, DefaultKubernetesPollInterval)
+	}
 }
 
 func (c Config) Validate() error {
@@ -325,7 +372,70 @@ func (c Config) validateCommon() error {
 	if c.Report.Format != "json" {
 		return fmt.Errorf("unsupported report.format %q", c.Report.Format)
 	}
+	if err := c.validateDurations(); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (c Config) validateDurations() error {
+	type durationField struct {
+		name  string
+		value time.Duration
+	}
+	durations := []durationField{
+		{"provider.timeout", c.Provider.Timeout.Duration},
+		{"provider.wal_verify.timeout", c.Provider.WALVerify.Timeout.Duration},
+		{"provider.barman_verify_backup.timeout", c.Provider.BarmanVerify.Timeout.Duration},
+		{"provider.barman_generate_manifest.timeout", c.Provider.BarmanManifest.Timeout.Duration},
+		{"provider.pgbackrest_check.timeout", c.Provider.PGBackRest.Timeout.Duration},
+		{"provider.pgbackrest_check.archive_timeout", c.Provider.PGBackRest.ArchiveTimeout.Duration},
+		{"provider.pgbackrest_verify.timeout", c.Provider.PGBackRestVerify.Timeout.Duration},
+		{"provider.pg_probackup_validate.timeout", c.Provider.PGProbackupValidate.Timeout.Duration},
+		{"target.startup_timeout", c.Target.StartupTimeout.Duration},
+		{"target.shutdown_timeout", c.Target.ShutdownTimeout.Duration},
+		{"target.kubernetes.command_timeout", c.Target.Kubernetes.CommandTimeout.Duration},
+		{"target.kubernetes.wait_timeout", c.Target.Kubernetes.WaitTimeout.Duration},
+		{"target.kubernetes.poll_interval", c.Target.Kubernetes.PollInterval.Duration},
+		{"restore.timeout", c.Restore.Timeout.Duration},
+		{"restore.verify_backup.timeout", c.Restore.VerifyBackup.Timeout.Duration},
+	}
+	for i, probe := range c.Probes {
+		durations = append(durations, durationField{fmt.Sprintf("probes[%d].timeout", i), probe.Timeout.Duration})
+	}
+	for _, duration := range durations {
+		if duration.value < 0 {
+			return fmt.Errorf("%s must not be negative", duration.name)
+		}
+	}
+
+	if c.Provider.Type != "" && c.Provider.Timeout.Duration <= 0 {
+		return fmt.Errorf("provider.timeout must be positive")
+	}
+	if c.Restore.Timeout.Duration <= 0 {
+		return fmt.Errorf("restore.timeout must be positive")
+	}
+	for i, probe := range c.Probes {
+		if probe.Timeout.Duration <= 0 {
+			return fmt.Errorf("probes[%d].timeout must be positive", i)
+		}
+	}
+	if c.Target.Type == model.RestoreTargetKubernetes {
+		kubernetes := c.Target.Kubernetes
+		if kubernetes.CommandTimeout.Duration <= 0 {
+			return fmt.Errorf("target.kubernetes.command_timeout must be positive")
+		}
+		if kubernetes.WaitTimeout.Duration <= 0 {
+			return fmt.Errorf("target.kubernetes.wait_timeout must be positive")
+		}
+		if kubernetes.PollInterval.Duration <= 0 {
+			return fmt.Errorf("target.kubernetes.poll_interval must be positive")
+		}
+		if kubernetes.PollInterval.Duration > kubernetes.WaitTimeout.Duration {
+			return fmt.Errorf("target.kubernetes.poll_interval must not exceed target.kubernetes.wait_timeout")
+		}
+	}
 	return nil
 }
 
@@ -400,4 +510,10 @@ func copyStringMap(values map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+func setDefaultDuration(value *Duration, fallback time.Duration) {
+	if value.Duration == 0 {
+		value.Duration = fallback
+	}
 }

@@ -99,6 +99,10 @@ pgdrill doctor -f pgdrill.yaml -format json
 The exact scope and JSON contract are documented in
 [docs/preflight.md](docs/preflight.md).
 
+Configuration is strict and all external operations have bounded deadline
+defaults. The provider/catalog deadline is separate from the physical restore
+deadline; see [docs/configuration.md](docs/configuration.md).
+
 ## Development
 
 ```sh

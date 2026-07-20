@@ -38,6 +38,7 @@ target:
   startup_timeout: 500ms
   shutdown_timeout: 5s
 restore:
+  timeout: 7h
   verify_backup:
     enabled: true
     profile: strict
@@ -108,6 +109,9 @@ report:
 	if !cfg.Restore.VerifyBackup.Enabled {
 		t.Fatal("expected verify_backup to be enabled")
 	}
+	if cfg.Restore.Timeout.Duration != 7*time.Hour {
+		t.Fatalf("unexpected restore timeout %s", cfg.Restore.Timeout.Duration)
+	}
 	if cfg.Restore.VerifyBackup.Profile != "strict" {
 		t.Fatalf("unexpected verify_backup profile %q", cfg.Restore.VerifyBackup.Profile)
 	}
@@ -151,6 +155,101 @@ target:
 	}
 	if cfg.Report.Format != "json" {
 		t.Fatalf("expected json report format default, got %q", cfg.Report.Format)
+	}
+	if cfg.Provider.Timeout.Duration != DefaultProviderTimeout {
+		t.Fatalf("expected provider timeout default %s, got %s", DefaultProviderTimeout, cfg.Provider.Timeout.Duration)
+	}
+	if cfg.Restore.Timeout.Duration != DefaultRestoreTimeout {
+		t.Fatalf("expected restore timeout default %s, got %s", DefaultRestoreTimeout, cfg.Restore.Timeout.Duration)
+	}
+}
+
+func TestLoadConfigAppliesBoundedOperationalDefaults(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+provider:
+  type: barman
+  server: main
+  barman_verify_backup:
+    enabled: true
+  barman_generate_manifest:
+    enabled: true
+target:
+  type: kubernetes
+restore:
+  verify_backup:
+    enabled: true
+probes:
+  - preset: structural
+`), "yaml")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Provider.Timeout.Duration != DefaultProviderTimeout {
+		t.Fatalf("unexpected provider timeout %s", cfg.Provider.Timeout.Duration)
+	}
+	if cfg.Provider.BarmanVerify.Timeout.Duration != DefaultValidationTimeout || cfg.Provider.BarmanManifest.Timeout.Duration != DefaultValidationTimeout {
+		t.Fatalf("unexpected provider validation defaults %#v", cfg.Provider)
+	}
+	if cfg.Restore.Timeout.Duration != DefaultRestoreTimeout || cfg.Restore.VerifyBackup.Timeout.Duration != DefaultValidationTimeout {
+		t.Fatalf("unexpected restore defaults %#v", cfg.Restore)
+	}
+	if len(cfg.Probes) != 1 || cfg.Probes[0].Timeout.Duration != DefaultProbeTimeout {
+		t.Fatalf("unexpected probe defaults %#v", cfg.Probes)
+	}
+	kubernetes := cfg.Target.Kubernetes
+	if kubernetes.CommandTimeout.Duration != DefaultKubernetesCommandTimeout ||
+		kubernetes.WaitTimeout.Duration != DefaultKubernetesWaitTimeout ||
+		kubernetes.PollInterval.Duration != DefaultKubernetesPollInterval {
+		t.Fatalf("unexpected kubernetes timeout defaults %#v", kubernetes)
+	}
+}
+
+func TestValidateRejectsNegativeDurations(t *testing.T) {
+	tests := []struct {
+		name   string
+		field  string
+		mutate func(*Config)
+	}{
+		{name: "provider", field: "provider.timeout", mutate: func(cfg *Config) { cfg.Provider.Timeout.Duration = -time.Second }},
+		{name: "restore", field: "restore.timeout", mutate: func(cfg *Config) { cfg.Restore.Timeout.Duration = -time.Second }},
+		{name: "probe", field: "probes[0].timeout", mutate: func(cfg *Config) { cfg.Probes[0].Timeout.Duration = -time.Second }},
+		{name: "local startup", field: "target.startup_timeout", mutate: func(cfg *Config) { cfg.Target.StartupTimeout.Duration = -time.Second }},
+		{name: "provider validation", field: "provider.wal_verify.timeout", mutate: func(cfg *Config) { cfg.Provider.WALVerify.Timeout.Duration = -time.Second }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Config{
+				Provider: ProviderConfig{Type: model.ProviderWALG},
+				Target:   TargetConfig{Type: model.RestoreTargetLocal},
+				Probes:   []ProbeConfig{{Type: model.ProbeSQL, Query: "select 1"}},
+			}
+			cfg.Normalize()
+			test.mutate(&cfg)
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), test.field+" must not be negative") {
+				t.Fatalf("expected %s validation error, got %v", test.field, err)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsKubernetesPollIntervalBeyondWaitTimeout(t *testing.T) {
+	cfg := Config{
+		Target: TargetConfig{
+			Type: model.RestoreTargetKubernetes,
+			Kubernetes: KubernetesTargetConfig{
+				CommandTimeout: Duration{Duration: time.Minute},
+				WaitTimeout:    Duration{Duration: time.Minute},
+				PollInterval:   Duration{Duration: 2 * time.Minute},
+			},
+		},
+	}
+	cfg.Normalize()
+	err := cfg.ValidateTarget()
+	if err == nil || !strings.Contains(err.Error(), "poll_interval must not exceed") {
+		t.Fatalf("expected Kubernetes polling validation error, got %v", err)
 	}
 }
 
@@ -497,6 +596,19 @@ func TestLoadPGProbackupExampleConfig(t *testing.T) {
 	}
 	if cfg.Provider.Type != model.ProviderPGProbackup || cfg.Target.Type != model.RestoreTargetLocal {
 		t.Fatalf("unexpected example config %#v", cfg)
+	}
+}
+
+func TestLoadWALGExampleConfig(t *testing.T) {
+	cfg, err := LoadFile(filepath.Join("..", "..", "examples", "pgdrill.yaml"))
+	if err != nil {
+		t.Fatalf("load WAL-G example config: %v", err)
+	}
+	if cfg.Provider.Type != model.ProviderWALG || cfg.Provider.Timeout.Duration != 30*time.Minute {
+		t.Fatalf("unexpected example provider config %#v", cfg.Provider)
+	}
+	if cfg.Restore.Timeout.Duration != 6*time.Hour {
+		t.Fatalf("unexpected example restore timeout %s", cfg.Restore.Timeout.Duration)
 	}
 }
 

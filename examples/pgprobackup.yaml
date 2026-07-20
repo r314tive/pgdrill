@@ -19,6 +19,9 @@ target:
   work_dir: /var/tmp/pgdrill/pgprobackup-main
   remove_work_dir: true
 
+restore:
+  timeout: 6h
+
 recovery:
   target: latest
 

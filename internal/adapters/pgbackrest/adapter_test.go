@@ -347,12 +347,13 @@ func TestValidateCatalogVerifyRequiresPgBackRestBackup(t *testing.T) {
 func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 	inclusive := false
 	adapter := New(Config{
-		Binary:     "/usr/local/bin/pgbackrest",
-		ConfigPath: "/etc/pgbackrest.conf",
-		Stanza:     "main",
-		Repo:       "1",
-		WorkDir:    "/var/lib/pgbackrest",
-		Timeout:    5 * time.Minute,
+		Binary:         "/usr/local/bin/pgbackrest",
+		ConfigPath:     "/etc/pgbackrest.conf",
+		Stanza:         "main",
+		Repo:           "1",
+		WorkDir:        "/var/lib/pgbackrest",
+		Timeout:        5 * time.Minute,
+		RestoreTimeout: 4 * time.Hour,
 		Env: map[string]string{
 			"PGBACKREST_REPO1_PATH": "/repo",
 		},
@@ -419,7 +420,7 @@ func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 	if step.Command.Path != "/usr/local/bin/pgbackrest" {
 		t.Fatalf("unexpected command path %q", step.Command.Path)
 	}
-	if step.Command.Timeout != "5m0s" {
+	if step.Command.Timeout != "4h0m0s" {
 		t.Fatalf("unexpected timeout %q", step.Command.Timeout)
 	}
 	if step.Command.Env["PGBACKREST_REPO1_PATH"] != "/repo" {

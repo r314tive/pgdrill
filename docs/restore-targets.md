@@ -166,6 +166,11 @@ report:
   path: ./pgdrill-cnpg-report.json
 ```
 
+If these fields are omitted, the compatibility client uses a `2m` timeout per
+`kubectl` command, a `20m` overall readiness wait, and a `5s` polling interval.
+The command timeout is independent so one stuck client process cannot bypass
+the overall readiness deadline.
+
 ## Probe Mapping
 
 Useful CNPG target probes:
