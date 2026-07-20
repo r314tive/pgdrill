@@ -253,7 +253,7 @@ probes:
 	}
 	kubernetes := cfg.Target.Kubernetes
 	if kubernetes.CommandTimeout.Duration != DefaultKubernetesCommandTimeout ||
-		kubernetes.WaitTimeout.Duration != DefaultKubernetesWaitTimeout ||
+		kubernetes.WaitTimeout.Duration != 2*time.Hour ||
 		kubernetes.PollInterval.Duration != DefaultKubernetesPollInterval {
 		t.Fatalf("unexpected kubernetes timeout defaults %#v", kubernetes)
 	}

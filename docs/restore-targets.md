@@ -158,7 +158,7 @@ target:
     namespace: d003-db
     kubectl_binary: kubectl
     command_timeout: 2m
-    wait_timeout: 20m
+    wait_timeout: 2h
     poll_interval: 5s
     cleanup_pvc: true
     cleanup_on_fail: true
@@ -180,9 +180,10 @@ report:
 ```
 
 If these fields are omitted, the compatibility client uses a `2m` timeout per
-`kubectl` command, a `20m` overall readiness wait, and a `5s` polling interval.
+`kubectl` command, a `2h` overall readiness wait, and a `5s` polling interval.
 The command timeout is independent so one stuck client process cannot bypass
-the overall readiness deadline.
+the overall readiness deadline. Size the readiness deadline from measured base
+restore and WAL replay time; it is a safety bound, not an RTO assertion.
 
 ## Probe Mapping
 

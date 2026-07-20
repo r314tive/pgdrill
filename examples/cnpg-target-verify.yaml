@@ -17,7 +17,7 @@ target:
     namespace: d003-db
     kubectl_binary: kubectl
     command_timeout: 2m
-    wait_timeout: 20m
+    wait_timeout: 2h
     poll_interval: 5s
     cleanup_pvc: true
     cleanup_on_fail: true

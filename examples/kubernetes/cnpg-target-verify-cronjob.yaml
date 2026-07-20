@@ -64,7 +64,7 @@ data:
         namespace: d003-db
         kubectl_binary: kubectl
         command_timeout: 2m
-        wait_timeout: 20m
+        wait_timeout: 2h
         poll_interval: 5s
         cleanup_pvc: true
         cleanup_on_fail: true
@@ -99,7 +99,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 7200
+      activeDeadlineSeconds: 9000
       template:
         spec:
           serviceAccountName: pgdrill-cnpg-verify

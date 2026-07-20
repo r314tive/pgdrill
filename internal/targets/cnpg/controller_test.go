@@ -52,6 +52,21 @@ func TestControllerStartCreatesClusterAndWaitsForInstance(t *testing.T) {
 	}
 }
 
+func TestControllerStartUsesRestoreScaleWaitDefault(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	controller := Controller{
+		Spec:   testVerifyClusterSpec(t),
+		Client: client,
+	}
+
+	if _, _, err := controller.Start(context.Background()); err != nil {
+		t.Fatalf("start controller: %v", err)
+	}
+	if client.waitOptions.Timeout != 2*time.Hour || client.waitOptions.PollInterval != DefaultPollInterval {
+		t.Fatalf("unexpected default wait options %#v", client.waitOptions)
+	}
+}
+
 func TestControllerStartFailureCapturesAndCleansUp(t *testing.T) {
 	client := &fakeLifecycleClient{waitErr: errors.New("full-recovery job failed")}
 	controller := Controller{

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	DefaultWaitTimeout  = 20 * time.Minute
+	DefaultWaitTimeout  = 2 * time.Hour
 	DefaultPollInterval = 5 * time.Second
 	DefaultPostgresPort = 5432
 )

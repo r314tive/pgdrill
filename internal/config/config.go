@@ -20,7 +20,7 @@ const (
 	DefaultValidationTimeout        = 2 * time.Hour
 	DefaultProbeTimeout             = time.Hour
 	DefaultKubernetesCommandTimeout = 2 * time.Minute
-	DefaultKubernetesWaitTimeout    = 20 * time.Minute
+	DefaultKubernetesWaitTimeout    = 2 * time.Hour
 	DefaultKubernetesPollInterval   = 5 * time.Second
 )
 
