@@ -8,6 +8,8 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-07-20
+
 ### Added
 
 - Configured cluster identity in standard local and CNPG drill reports and text
@@ -144,6 +146,18 @@ called out explicitly even while the major version is `0`.
   ownership label to the `Cluster` and its inherited resources; ambiguous
   create failures and normal teardown delete only resources selected by that
   ownership ID, including when an explicit cluster name is configured.
+
+### Known Limitations
+
+- Adapter fixtures, controlled CLI end-to-end tests, and release gates do not
+  replace validation against real WAL-G, Barman, pgBackRest, and pg_probackup
+  repositories. No native provider-version support matrix is claimed yet.
+- CNPG verification has automated manifest, lifecycle, ownership, failure, and
+  evidence coverage, but still requires a disposable live-cluster drill before
+  it can be described as production-ready.
+- Full `pgdrill run` execution currently supports the local target. Kubernetes
+  is exposed through guarded target manifest/verify commands; the canonical
+  container target and UI/TUI remain deliberately unimplemented.
 
 ## [0.1.0-alpha.5] - 2026-07-20
 
