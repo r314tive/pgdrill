@@ -110,6 +110,11 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "run requires report.path in config")
 		return 2
 	}
+	preflightRequirements, err := preflight.Requirements(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "create preflight: %v\n", err)
+		return 1
+	}
 
 	provider, err := adapters.NewProvider(cfg.Provider, cfg.Restore)
 	if err != nil {
@@ -128,10 +133,12 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 
 	result, runErr := core.Engine{
-		Provider: provider,
-		Target:   target,
-		Probes:   configuredProbes,
-		Sink:     report.JSONFileSink{Path: cfg.Report.Path},
+		Provider:       provider,
+		Target:         target,
+		Preflight:      preflight.NewSuite(preflightRequirements, nil, 0),
+		Probes:         configuredProbes,
+		Sink:           report.JSONFileSink{Path: cfg.Report.Path},
+		PGDrillVersion: version.String(),
 	}.Run(ctx, core.DrillRequest{
 		Target:         cfg.TargetSpec(),
 		RecoveryTarget: cfg.RecoveryTarget(),
@@ -476,6 +483,34 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 
 	startedAt := time.Now().UTC()
 	cnpgTarget := cfg.Target.CNPG
+	configuredProbes, err := probes.NewProbes(cfg.Probes)
+	if err != nil {
+		fmt.Fprintf(stderr, "create probes: %v\n", err)
+		return 1
+	}
+	preflightRequirements, err := preflight.Requirements(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "create preflight: %v\n", err)
+		return 1
+	}
+	preflightReport, preflightErr := preflight.NewSuite(preflightRequirements, nil, 0).Check(ctx)
+	if preflightErr != nil || hasFailedChecks(preflightReport.Checks) {
+		runErr := preflightErr
+		if runErr != nil {
+			runErr = fmt.Errorf("run target preflight: %w", runErr)
+		} else {
+			runErr = fmt.Errorf("target preflight failed")
+		}
+		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, drillID, startedAt)
+		result.FinishedAt = time.Now().UTC()
+		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
+		result.Checks = append(result.Checks, preflightReport.Checks...)
+		result.Evidence = append(result.Evidence, preflightReport.Evidence...)
+		result.Failure = model.NewDrillFailure(model.DrillStagePreflight, runErr, result.Evidence)
+		return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
+	}
+	initialChecks := append([]model.Check{}, preflightReport.Checks...)
+	initialEvidence := append([]model.EvidenceRecord{}, preflightReport.Evidence...)
 	discoveryEvidence := []model.EvidenceRecord{}
 	if discover {
 		discoveryEvidence, err = discoverCNPGManifestInputs(ctx, cfg, &cnpgTarget)
@@ -484,13 +519,13 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 			result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, drillID, startedAt)
 			result.FinishedAt = time.Now().UTC()
 			result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
-			result.Evidence = discoveryEvidence
-			result.Checks = []model.Check{{
+			result.Evidence = append(initialEvidence, discoveryEvidence...)
+			result.Checks = append(initialChecks, model.Check{
 				Name:        "cnpg-input-discovery",
 				Status:      model.CheckStatusFailed,
 				Message:     runErr.Error(),
 				EvidenceIDs: evidenceRecordIDs(discoveryEvidence),
-			}}
+			})
 			result.Failure = model.NewDrillFailure(model.DrillStageTargetDiscovery, runErr, result.Evidence)
 			return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 		}
@@ -500,13 +535,8 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "build target verify spec: %v\n", err)
 		return 1
 	}
-	configuredProbes, err := probes.NewProbes(cfg.Probes)
-	if err != nil {
-		fmt.Fprintf(stderr, "create probes: %v\n", err)
-		return 1
-	}
-
-	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, configuredProbes, drillID, startedAt, discoveryEvidence)
+	initialEvidence = append(initialEvidence, discoveryEvidence...)
+	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, configuredProbes, drillID, startedAt, initialChecks, initialEvidence)
 	return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 }
 
@@ -594,8 +624,9 @@ func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfi
 	}, drillID)
 }
 
-func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, configuredProbes []core.Probe, drillID string, startedAt time.Time, initialEvidence []model.EvidenceRecord) (model.DrillResult, error) {
+func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, configuredProbes []core.Probe, drillID string, startedAt time.Time, initialChecks []model.Check, initialEvidence []model.EvidenceRecord) (model.DrillResult, error) {
 	result := newCNPGTargetVerifyResult(cfg, spec.SourceCluster, spec.BackupName, spec.Name, drillID, startedAt)
+	result.Checks = append([]model.Check{}, initialChecks...)
 	result.Evidence = append([]model.EvidenceRecord{}, initialEvidence...)
 
 	client := cnpg.NewKubectlClient(cnpg.KubectlConfig{
@@ -717,12 +748,13 @@ func newCNPGTargetVerifyResult(cfg config.Config, sourceCluster, backupName, ver
 	}
 
 	return model.DrillResult{
-		SchemaVersion: model.CurrentReportSchemaVersion,
-		ID:            targetVerifyID(drillID, startedAt),
-		Provider:      cfg.Provider.Type,
+		SchemaVersion:  model.CurrentReportSchemaVersion,
+		PGDrillVersion: version.String(),
+		ID:             targetVerifyID(drillID, startedAt),
+		Provider:       "",
 		Backup: model.Backup{
 			ID:          backupID,
-			Provider:    cfg.Provider.Type,
+			Provider:    "",
 			ProviderID:  backupName,
 			ClusterName: sourceCluster,
 			Kind:        model.BackupKindUnknown,
@@ -1022,6 +1054,7 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	rows := [][2]string{
 		{"Schema", valueOrDash(result.SchemaVersion)},
+		{"pgdrill", valueOrDash(result.PGDrillVersion)},
 		{"ID", valueOrDash(result.ID)},
 		{"Status", string(result.Status)},
 	}
@@ -1111,6 +1144,7 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 
 	rows := [][2]string{
 		{"Schema", valueOrDash(result.SchemaVersion)},
+		{"pgdrill", valueOrDash(result.PGDrillVersion)},
 		{"ID", valueOrDash(result.ID)},
 		{"Status", string(result.Status)},
 	}

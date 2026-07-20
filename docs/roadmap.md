@@ -63,6 +63,8 @@ Status: usable for local-target smoke drills.
   consumers.
 - Structured lifecycle failure stage and evidence links shared by JSON, text
   output, and Prometheus metrics.
+- Automatic provider/target/probe version preflight retained in every CLI drill
+  report before repository access or target mutation.
 - More probe ergonomics.
 
 The CLI should become usable here:

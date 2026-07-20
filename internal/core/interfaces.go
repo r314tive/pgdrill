@@ -29,3 +29,7 @@ type Probe interface {
 type EvidenceSink interface {
 	Write(ctx context.Context, result model.DrillResult) error
 }
+
+type Preflight interface {
+	Check(ctx context.Context) (model.CheckReport, error)
+}

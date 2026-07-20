@@ -60,6 +60,10 @@ type Probe interface {
 type EvidenceSink interface {
     Write(ctx context.Context, result model.DrillResult) error
 }
+
+type Preflight interface {
+    Check(ctx context.Context) (model.CheckReport, error)
+}
 ```
 
 ## Canonical Model
@@ -102,6 +106,10 @@ The initial report format is the versioned JSON encoding of
 `model.DrillResult`. CLI, TUI, and future UI surfaces should consume this report
 contract instead of reconstructing drill state from logs. Compatibility rules
 are defined in [report-format.md](report-format.md).
+
+CLI execution injects a config-derived `Preflight` into the engine. It records
+the pgdrill build and native client versions, and stops before provider
+discovery or target mutation when a required executable cannot be started.
 
 Failed and aborted results carry a structured `DrillFailure`. Its finite
 lifecycle `stage` is suitable for automation and metrics; `message` is

@@ -36,6 +36,11 @@ type Checker struct {
 	now     func() time.Time
 }
 
+type Suite struct {
+	checker      Checker
+	requirements []Requirement
+}
+
 func NewChecker(runner command.Runner, timeout time.Duration) Checker {
 	if runner == nil {
 		runner = command.NewRunner(command.Options{})
@@ -44,6 +49,18 @@ func NewChecker(runner command.Runner, timeout time.Duration) Checker {
 		timeout = DefaultTimeout
 	}
 	return Checker{Runner: runner, Timeout: timeout, now: time.Now}
+}
+
+func NewSuite(requirements []Requirement, runner command.Runner, timeout time.Duration) Suite {
+	return Suite{
+		checker:      NewChecker(runner, timeout),
+		requirements: append([]Requirement{}, requirements...),
+	}
+}
+
+func (s Suite) Check(ctx context.Context) (model.CheckReport, error) {
+	result, err := s.checker.Run(ctx, s.requirements)
+	return model.CheckReport{Checks: result.Checks, Evidence: result.Evidence}, err
 }
 
 func (c Checker) Run(ctx context.Context, requirements []Requirement) (Result, error) {

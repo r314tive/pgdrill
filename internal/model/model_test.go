@@ -81,6 +81,7 @@ func TestNewDrillFailureCollectsUniqueEvidenceIDs(t *testing.T) {
 func TestDrillStageIsKnown(t *testing.T) {
 	known := []DrillStage{
 		DrillStageRequestValidation,
+		DrillStagePreflight,
 		DrillStageBackupDiscovery,
 		DrillStageBackupSelection,
 		DrillStageCatalogValidation,

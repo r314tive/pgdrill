@@ -130,6 +130,11 @@ target, or probe command is canceled first; pgdrill then uses a bounded
 finalization context for owned-target cleanup and atomic report persistence.
 Interrupted drills are reported as `aborted` and return exit code `130`.
 
+`pgdrill run` and `pgdrill target verify` execute the same native-tool
+preflight automatically. Missing or non-runnable provider, target, restore
+check, or probe clients fail before backup discovery or Kubernetes resource
+creation, and their version checks remain in the JSON drill report.
+
 CLI exit codes are stable automation inputs:
 
 - `0`: command or drill completed successfully

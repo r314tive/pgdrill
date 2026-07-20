@@ -52,13 +52,19 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 		},
 	}
 	sink := &fakeSink{}
+	preflight := &fakePreflight{report: model.CheckReport{
+		Checks:   []model.Check{{Name: "tool.wal-g", Status: model.CheckStatusPassed}},
+		Evidence: []model.EvidenceRecord{testEvidence("preflight")},
+	}}
 
 	result, err := Engine{
-		Provider: provider,
-		Target:   target,
-		Probes:   []Probe{probe},
-		Sink:     sink,
-		Clock:    fixedClock("2025-01-04T00:00:00Z"),
+		Provider:       provider,
+		Target:         target,
+		Preflight:      preflight,
+		Probes:         []Probe{probe},
+		Sink:           sink,
+		PGDrillVersion: "pgdrill v0.1.0-test",
+		Clock:          fixedClock("2025-01-04T00:00:00Z"),
 	}.Run(context.Background(), DrillRequest{
 		ID:             "drill-1",
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill"},
@@ -77,6 +83,9 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	if result.SchemaVersion != model.CurrentReportSchemaVersion {
 		t.Fatalf("unexpected report schema version %q", result.SchemaVersion)
 	}
+	if result.PGDrillVersion != "pgdrill v0.1.0-test" {
+		t.Fatalf("unexpected pgdrill version %q", result.PGDrillVersion)
+	}
 	if result.Backup.ID != "wal-g:base_1" {
 		t.Fatalf("unexpected selected backup %q", result.Backup.ID)
 	}
@@ -92,13 +101,46 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	if sink.result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed sink result, got %q", sink.result.Status)
 	}
-	for _, id := range []string{"catalog", "validate", "plan", "execute:fetch", "execute:recover", "start", "probe", "cleanup"} {
+	for _, id := range []string{"preflight", "catalog", "validate", "plan", "execute:fetch", "execute:recover", "start", "probe", "cleanup"} {
 		if !hasEvidence(result.Evidence, id) {
 			t.Fatalf("expected evidence %q in %#v", id, evidenceIDs(result.Evidence))
 		}
 	}
-	if len(result.Checks) != 2 {
-		t.Fatalf("expected catalog and probe checks, got %d", len(result.Checks))
+	if len(result.Checks) != 3 {
+		t.Fatalf("expected preflight, catalog, and probe checks, got %d", len(result.Checks))
+	}
+}
+
+func TestEngineStopsBeforeDiscoveryOnPreflightFailure(t *testing.T) {
+	provider := &fakeProvider{catalog: model.BackupCatalog{Provider: model.ProviderWALG}}
+	target := &fakeTarget{}
+	sink := &fakeSink{}
+	preflight := &fakePreflight{report: model.CheckReport{
+		Checks:   []model.Check{{Name: "tool.wal-g", Status: model.CheckStatusFailed, Message: "not found"}},
+		Evidence: []model.EvidenceRecord{testEvidence("preflight")},
+	}}
+
+	result, err := Engine{
+		Provider:  provider,
+		Target:    target,
+		Preflight: preflight,
+		Sink:      sink,
+	}.Run(context.Background(), DrillRequest{
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "preflight failed") {
+		t.Fatalf("expected preflight failure, got %v", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStagePreflight {
+		t.Fatalf("unexpected preflight result %#v", result)
+	}
+	if len(provider.calls) != 0 || len(target.calls) != 0 {
+		t.Fatalf("preflight failure must stop before external drill work: provider=%#v target=%#v", provider.calls, target.calls)
+	}
+	if !sink.called || !hasEvidence(sink.result.Evidence, "preflight") {
+		t.Fatalf("expected durable preflight failure, got %#v", sink.result)
 	}
 }
 
@@ -320,6 +362,15 @@ type fakeProvider struct {
 	validateErr    error
 	planErr        error
 	calls          []string
+}
+
+type fakePreflight struct {
+	report model.CheckReport
+	err    error
+}
+
+func (p *fakePreflight) Check(context.Context) (model.CheckReport, error) {
+	return p.report, p.err
 }
 
 func (p *fakeProvider) Type() model.ProviderType {

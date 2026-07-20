@@ -485,6 +485,9 @@ func TestTargetVerifyCommandRunsCNPGLifecycleAndProbes(t *testing.T) {
 
 	writeExecutable(t, kubectlPath, `#!/bin/sh
 case "$*" in
+  "version --client --output=json")
+    echo '{"clientVersion":{"gitVersion":"v1.34.1"}}'
+    ;;
   *" get backups.postgresql.cnpg.io -o json"*)
     cat <<'JSON'
 {"items":[{"metadata":{"name":"altbox-backup-20260707","creationTimestamp":"2026-07-07T01:00:00Z"},"spec":{"cluster":{"name":"altbox"}},"status":{"phase":"completed"}}]}
@@ -554,6 +557,7 @@ esac
 `)
 	writeExecutable(t, psqlPath, `#!/bin/sh
 case "$*" in
+  "--version") echo "psql (PostgreSQL) 16.4" ;;
   *"verify-altbox-test-rw.d003-db.svc:5432"*"select 1"*) exit 0 ;;
   *) echo "unexpected psql args: $*" >&2; exit 64 ;;
 esac
@@ -561,6 +565,8 @@ esac
 	writeFile(t, configPath, `
 cluster:
   name: altbox
+provider:
+  type: wal-g
 target:
   type: kubernetes
   labels:
@@ -611,13 +617,18 @@ report:
 		t.Fatalf("unexpected backup %#v", result.Backup)
 	}
 	if result.Provider != "" || result.Backup.Provider != "" {
-		t.Fatalf("target-only config must not invent a backup provider: %#v", result)
+		t.Fatalf("target verification must not claim its unused configured provider: %#v", result)
 	}
 	if !hasCheckNamed(result.Checks, "cnpg-instance-ready", model.CheckStatusPassed) {
 		t.Fatalf("expected cnpg readiness check, got %#v", result.Checks)
 	}
 	if !hasCheck(result.Checks, model.ProbeSQL, model.CheckStatusPassed) {
 		t.Fatalf("expected sql probe check, got %#v", result.Checks)
+	}
+	for _, name := range []string{"tool.kubectl", "tool.psql"} {
+		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
+			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
+		}
 	}
 	for _, operation := range []string{
 		"kubectl-discover-cnpg-backups",
@@ -647,6 +658,10 @@ func TestTargetVerifyWritesDiscoveryFailureReport(t *testing.T) {
 	reportPath := filepath.Join(dir, "cnpg-report.json")
 
 	writeExecutable(t, kubectlPath, `#!/bin/sh
+if [ "$*" = "version --client --output=json" ]; then
+  echo '{"clientVersion":{"gitVersion":"v1.34.1"}}'
+  exit 0
+fi
 echo "forbidden" >&2
 exit 42
 `)
@@ -689,8 +704,8 @@ report:
 	if !hasEvidenceOperation(result.Evidence, "kubectl-discover-cnpg-backups") {
 		t.Fatalf("expected discovery command evidence, got %#v", result.Evidence)
 	}
-	if len(result.Evidence) != 1 || result.Evidence[0].Command == nil || result.Evidence[0].Command.ExitStatus.ExitCode != 42 {
-		t.Fatalf("expected structured exit status, got %#v", result.Evidence)
+	if len(result.Evidence) != 2 || result.Evidence[1].Command == nil || result.Evidence[1].Command.ExitStatus.ExitCode != 42 {
+		t.Fatalf("expected preflight and structured discovery exit evidence, got %#v", result.Evidence)
 	}
 }
 
@@ -730,11 +745,11 @@ report:
 	if result.Status != model.DrillStatusAborted {
 		t.Fatalf("expected aborted report, got %#v", result)
 	}
-	if result.Failure == nil || result.Failure.Stage != model.DrillStageTargetDiscovery {
-		t.Fatalf("expected aborted target discovery failure, got %#v", result.Failure)
+	if result.Failure == nil || result.Failure.Stage != model.DrillStagePreflight {
+		t.Fatalf("expected aborted preflight failure, got %#v", result.Failure)
 	}
-	if len(result.Evidence) != 1 || result.Evidence[0].Command == nil || !result.Evidence[0].Command.ExitStatus.Canceled {
-		t.Fatalf("expected canceled command evidence, got %#v", result.Evidence)
+	if len(result.Evidence) != 0 {
+		t.Fatalf("context canceled before command start must not invent evidence, got %#v", result.Evidence)
 	}
 }
 
@@ -754,6 +769,9 @@ func TestRunCommandExecutesWALLocalDrill(t *testing.T) {
 
 	writeExecutable(t, walgPath, `#!/bin/sh
 case "$1" in
+  --version)
+    echo "WAL-G v3.0.7"
+    ;;
   backup-list)
     cat <<'JSON'
 [
@@ -787,6 +805,10 @@ JSON
 esac
 `)
 	writeExecutable(t, pgVerifyBackupPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "pg_verifybackup (PostgreSQL) 16.4"
+  exit 0
+fi
 if [ "$1" != "--exit-on-error" ] || [ "$2" != "--quiet" ]; then
   echo "unexpected pg_verifybackup args: $*" >&2
   exit 64
@@ -800,26 +822,34 @@ fi
 exit 0
 `)
 	writeExecutable(t, postgresPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "postgres (PostgreSQL) 16.4"
+  exit 0
+fi
 trap 'echo stopped > "$PGDRILL_STOP_FILE"; exit 0' TERM
 while true; do sleep 1; done
 `)
 	writeExecutable(t, pgIsReadyPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "pg_isready (PostgreSQL) 16.4"; fi
 exit 0
 `)
 	writeExecutable(t, psqlPath, `#!/bin/sh
 case "$*" in
+  "--version") echo "psql (PostgreSQL) 16.4" ;;
   *"select 1"*) exit 0 ;;
   *) echo "unexpected psql args: $*" >&2; exit 64 ;;
 esac
 `)
 	writeExecutable(t, pgAMCheckPath, `#!/bin/sh
 case "$*" in
+  "--version") echo "pg_amcheck (PostgreSQL) 16.4" ;;
   *"postgresql://127.0.0.1:15432/postgres?sslmode=disable"*) exit 0 ;;
   *) echo "unexpected pg_amcheck args: $*" >&2; exit 64 ;;
 esac
 `)
 	writeExecutable(t, pgDumpPath, `#!/bin/sh
 case "$*" in
+  "--version") echo "pg_dump (PostgreSQL) 16.4" ;;
   *"--schema-only"*) exit 0 ;;
   *) echo "unexpected pg_dump args: $*" >&2; exit 64 ;;
 esac
@@ -887,6 +917,14 @@ report:
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed report, got %#v", result)
 	}
+	if result.PGDrillVersion == "" {
+		t.Fatal("expected pgdrill version in report")
+	}
+	for _, name := range []string{"tool.wal-g", "tool.postgres", "tool.pg_verifybackup", "tool.pg_isready", "tool.psql", "tool.pg_amcheck", "tool.pg_dump"} {
+		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
+			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
+		}
+	}
 	if result.Backup.ID != "wal-g:base_00000001000000000000007F" {
 		t.Fatalf("unexpected backup %q", result.Backup.ID)
 	}
@@ -940,6 +978,9 @@ if [ "$1" = "--config" ]; then
   shift 2
 fi
 case "$1" in
+  --version)
+    echo "3.17.0"
+    ;;
   --format)
     if [ "$2" != "json" ]; then
       echo "unexpected barman format args: $*" >&2
@@ -1022,10 +1063,15 @@ JSON
 esac
 `)
 	writeExecutable(t, postgresPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "postgres (PostgreSQL) 16.4"
+  exit 0
+fi
 trap 'exit 0' TERM
 while true; do sleep 1; done
 `)
 	writeExecutable(t, pgIsReadyPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "pg_isready (PostgreSQL) 16.4"; fi
 exit 0
 `)
 	writeFile(t, configPath, `
@@ -1072,6 +1118,11 @@ report:
 	}
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed report, got %#v", result)
+	}
+	for _, name := range []string{"tool.barman", "tool.postgres", "tool.pg_isready"} {
+		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
+			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
+		}
 	}
 	if result.Provider != model.ProviderBarman {
 		t.Fatalf("unexpected provider %q", result.Provider)
@@ -1121,6 +1172,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$1" in
+  version)
+    echo "pgBackRest 2.57.0"
+    ;;
   info)
     if [ "$2" != "--output=json" ]; then
       echo "unexpected pgbackrest info args: $*" >&2
@@ -1192,10 +1246,15 @@ JSON
 esac
 `)
 	writeExecutable(t, postgresPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "postgres (PostgreSQL) 16.4"
+  exit 0
+fi
 trap 'exit 0' TERM
 while true; do sleep 1; done
 `)
 	writeExecutable(t, pgIsReadyPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "pg_isready (PostgreSQL) 16.4"; fi
 exit 0
 `)
 	writeFile(t, configPath, `
@@ -1244,6 +1303,11 @@ report:
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed report, got %#v", result)
 	}
+	for _, name := range []string{"tool.pgbackrest", "tool.postgres", "tool.pg_isready"} {
+		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
+			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
+		}
+	}
 	if result.Provider != model.ProviderPGBackRest {
 		t.Fatalf("unexpected provider %q", result.Provider)
 	}
@@ -1258,6 +1322,61 @@ report:
 	}
 	if !hasCheck(result.Checks, model.ProbePGIsReady, model.CheckStatusPassed) {
 		t.Fatalf("expected passed pg_isready check, got %#v", result.Checks)
+	}
+}
+
+func TestRunCommandWritesPreflightFailureBeforeCatalogAccess(t *testing.T) {
+	dir := t.TempDir()
+	const secret = "binary-secret"
+	postgresPath := filepath.Join(dir, "postgres")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	reportPath := filepath.Join(dir, "report.json")
+	writeExecutable(t, postgresPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "postgres (PostgreSQL) 16.4"
+  exit 0
+fi
+exit 64
+`)
+	writeFile(t, configPath, `
+provider:
+  type: wal-g
+  binary: /definitely/missing/`+secret+`
+  redact_values:
+    - `+secret+`
+target:
+  type: local
+  work_dir: `+filepath.Join(dir, "restore")+`
+  postgres_binary: `+postgresPath+`
+report:
+  format: json
+  path: `+reportPath+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "-f", configPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read preflight failure report: %v", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStagePreflight {
+		t.Fatalf("unexpected preflight failure %#v", result)
+	}
+	if result.Backup.ID != "" {
+		t.Fatalf("preflight must stop before backup selection, got %#v", result.Backup)
+	}
+	if !hasCheckNamed(result.Checks, "tool.wal-g", model.CheckStatusFailed) || !hasCheckNamed(result.Checks, "tool.postgres", model.CheckStatusPassed) {
+		t.Fatalf("expected complete tool outcomes, got %#v", result.Checks)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("encode result: %v", err)
+	}
+	if strings.Contains(string(encoded), secret) {
+		t.Fatalf("preflight report leaked redacted value:\n%s", encoded)
 	}
 }
 
@@ -1322,8 +1441,9 @@ report:
 func TestReportShowCommandText(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "drill.json")
 	writeDrillReport(t, reportPath, model.DrillResult{
-		ID:       "drill-1",
-		Provider: model.ProviderWALG,
+		ID:             "drill-1",
+		PGDrillVersion: "pgdrill v0.1.0-test",
+		Provider:       model.ProviderWALG,
 		Backup: model.Backup{
 			ID:       "wal-g:base_1",
 			Provider: model.ProviderWALG,
@@ -1354,6 +1474,7 @@ func TestReportShowCommandText(t *testing.T) {
 	output := stdout.String()
 	for _, expected := range []string{
 		model.CurrentReportSchemaVersion,
+		"pgdrill   pgdrill v0.1.0-test",
 		"ID        drill-1",
 		"Status    failed",
 		"Stage     probe_execution",

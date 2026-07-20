@@ -18,11 +18,13 @@ type DrillRequest struct {
 }
 
 type Engine struct {
-	Provider BackupProvider
-	Target   RestoreTarget
-	Probes   []Probe
-	Sink     EvidenceSink
-	Clock    func() time.Time
+	Provider       BackupProvider
+	Target         RestoreTarget
+	Preflight      Preflight
+	Probes         []Probe
+	Sink           EvidenceSink
+	PGDrillVersion string
+	Clock          func() time.Time
 
 	FinalizationTimeout time.Duration
 }
@@ -40,6 +42,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	recoveryTarget := req.RecoveryTarget.Normalized()
 	result := model.DrillResult{
 		SchemaVersion:  model.CurrentReportSchemaVersion,
+		PGDrillVersion: e.PGDrillVersion,
 		ID:             drillID(req.ID, startedAt),
 		Provider:       e.Provider.Type(),
 		Target:         req.Target,
@@ -81,6 +84,17 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 	if err := recoveryTarget.Validate(); err != nil {
 		return fail(model.DrillStageRequestValidation, fmt.Errorf("validate recovery target: %w", err))
+	}
+	if e.Preflight != nil {
+		preflightReport, err := e.Preflight.Check(ctx)
+		result.Checks = append(result.Checks, preflightReport.Checks...)
+		result.Evidence = append(result.Evidence, preflightReport.Evidence...)
+		if err != nil {
+			return fail(model.DrillStagePreflight, fmt.Errorf("run preflight: %w", err))
+		}
+		if hasFailedChecks(preflightReport.Checks) {
+			return fail(model.DrillStagePreflight, fmt.Errorf("preflight failed"))
+		}
 	}
 
 	catalog, err := e.Provider.DiscoverBackups(ctx)

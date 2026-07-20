@@ -19,6 +19,7 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 
 	result := model.DrillResult{
 		ID:             "drill-20260706T010203Z",
+		PGDrillVersion: "pgdrill v0.1.0-test",
 		Provider:       model.ProviderWALG,
 		Backup:         model.Backup{ID: "wal-g:base_1", Provider: model.ProviderWALG, Status: model.BackupStatusAvailable},
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill/main"},
@@ -52,6 +53,9 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 	}
 	if loaded.SchemaVersion != model.CurrentReportSchemaVersion {
 		t.Fatalf("unexpected schema version %q", loaded.SchemaVersion)
+	}
+	if loaded.PGDrillVersion != result.PGDrillVersion {
+		t.Fatalf("unexpected pgdrill version %q", loaded.PGDrillVersion)
 	}
 	if loaded.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected status %q", loaded.Status)

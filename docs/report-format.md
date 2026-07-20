@@ -26,7 +26,7 @@ version.
 
 The top-level object is `model.DrillResult` and contains:
 
-- schema version and drill ID
+- schema version, executing pgdrill build identity, and drill ID
 - provider and selected backup, when provider discovery selected the input
 - restore target and recovery target
 - start and finish timestamps
@@ -68,6 +68,7 @@ New failed and aborted reports include a `failure` object:
 `stage` is the machine-readable contract. Current stages are:
 
 - `request_validation`
+- `preflight`
 - `backup_discovery`
 - `backup_selection`
 - `catalog_validation`

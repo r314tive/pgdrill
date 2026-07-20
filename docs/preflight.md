@@ -5,6 +5,10 @@ YAML or JSON config as the execution commands, derives the external executables
 that the selected target will use, and runs a bounded native version command for
 each distinct binary.
 
+`pgdrill run` and `pgdrill target verify` execute the same checks automatically
+and retain them in the standard drill report. Doctor is the standalone,
+non-mutating way to inspect that preflight before scheduling a drill.
+
 ```sh
 pgdrill doctor -f pgdrill.yaml
 pgdrill doctor -f pgdrill.yaml -format json

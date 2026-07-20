@@ -362,6 +362,7 @@ type DrillStage string
 
 const (
 	DrillStageRequestValidation DrillStage = "request_validation"
+	DrillStagePreflight         DrillStage = "preflight"
 	DrillStageBackupDiscovery   DrillStage = "backup_discovery"
 	DrillStageBackupSelection   DrillStage = "backup_selection"
 	DrillStageCatalogValidation DrillStage = "catalog_validation"
@@ -379,6 +380,7 @@ const (
 func (s DrillStage) IsKnown() bool {
 	switch s {
 	case DrillStageRequestValidation,
+		DrillStagePreflight,
 		DrillStageBackupDiscovery,
 		DrillStageBackupSelection,
 		DrillStageCatalogValidation,
@@ -424,6 +426,7 @@ func NewDrillFailure(stage DrillStage, err error, evidence []EvidenceRecord) *Dr
 
 type DrillResult struct {
 	SchemaVersion  string           `json:"schema_version"`
+	PGDrillVersion string           `json:"pgdrill_version,omitempty"`
 	ID             string           `json:"id"`
 	Provider       ProviderType     `json:"provider"`
 	Backup         Backup           `json:"backup"`

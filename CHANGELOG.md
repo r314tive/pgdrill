@@ -13,6 +13,10 @@ called out explicitly even while the major version is `0`.
 - Read-only `pgdrill doctor` preflight for strict config validation, required
   executable discovery, native version capture, structured checks, redacted
   command evidence, and text/JSON output.
+- Automatic native-tool preflight in `pgdrill run` and `pgdrill target verify`,
+  with early failure before repository access or Kubernetes resource creation
+  and version evidence retained in the drill report.
+- The executing pgdrill build identity in new drill reports and text summaries.
 - Requested and resolved executable paths in durable command evidence.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
@@ -46,6 +50,8 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- CNPG target-only reports no longer claim a configured provider that the
+  target verification path did not invoke.
 - Recovery targets are validated consistently before repository access.
   Timestamp PITR now requires an explicit RFC3339 timezone and selects only a
   backup with a known finish time strictly before the requested target.

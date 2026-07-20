@@ -102,6 +102,22 @@ func TestVersionTextParsesKubectlClientJSON(t *testing.T) {
 	}
 }
 
+func TestSuiteExposesCanonicalCheckReport(t *testing.T) {
+	finishedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	runner := &stubRunner{responses: []stubResponse{{
+		result: commandResult("wal-g", "/opt/bin/wal-g", "WAL-G v3.0.7\n", "", model.ExitStatus{Started: true, Exited: true, Success: true, ExitCode: 0}, finishedAt),
+	}}}
+
+	report, err := NewSuite([]Requirement{{Tool: model.ToolWALG, Binary: "wal-g", Args: []string{"--version"}}}, runner, time.Second).Check(context.Background())
+
+	if err != nil {
+		t.Fatalf("run suite: %v", err)
+	}
+	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusPassed || len(report.Evidence) != 1 {
+		t.Fatalf("unexpected check report %#v", report)
+	}
+}
+
 func TestMergeRequirementsKeepsDistinctBinaries(t *testing.T) {
 	merged := mergeRequirements([]Requirement{
 		{Tool: model.ToolPSQL, Components: []string{"probe.one"}, Binary: "/v16/psql", Args: []string{"--version"}},
