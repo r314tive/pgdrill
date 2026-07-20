@@ -1,0 +1,31 @@
+cluster:
+  name: production-main
+
+provider:
+  type: pg_probackup
+  binary: pg_probackup
+  backup_dir: /srv/pg_probackup
+  instance: main
+  timeout: 30m
+  pg_probackup_validate:
+    enabled: true
+    timeout: 2h
+    wal: false
+    skip_block_validation: false
+    threads: 2
+
+target:
+  type: local
+  work_dir: /var/tmp/pgdrill/pgprobackup-main
+  remove_work_dir: true
+
+recovery:
+  target: latest
+
+probes:
+  - preset: smoke
+  - preset: structural
+
+report:
+  format: json
+  path: ./pgdrill-pgprobackup-report.json

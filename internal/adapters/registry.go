@@ -5,6 +5,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/adapters/barman"
 	"github.com/r314tive/pgdrill/internal/adapters/pgbackrest"
+	"github.com/r314tive/pgdrill/internal/adapters/pgprobackup"
 	"github.com/r314tive/pgdrill/internal/adapters/walg"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
@@ -57,8 +58,30 @@ func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig)
 			Verify:       pgBackRestVerifyConfig(cfg.PGBackRestVerify),
 			VerifyBackup: verifyBackup,
 		}, nil), nil
+	case model.ProviderPGProbackup:
+		return pgprobackup.New(pgprobackup.Config{
+			Binary:       cfg.Binary,
+			BackupDir:    cfg.BackupDir,
+			Instance:     cfg.Instance,
+			Env:          cfg.Env,
+			WorkDir:      cfg.WorkDir,
+			Timeout:      cfg.Timeout.Duration,
+			RedactValues: cfg.RedactValues,
+			Validate:     pgProbackupValidateConfig(cfg.PGProbackupValidate),
+		}, nil), nil
 	default:
 		return nil, fmt.Errorf("provider %q is not implemented", cfg.Type)
+	}
+}
+
+func pgProbackupValidateConfig(cfg config.PGProbackupValidateConfig) pgprobackup.ValidateConfig {
+	return pgprobackup.ValidateConfig{
+		Enabled:             cfg.Enabled,
+		Timeout:             cfg.Timeout.Duration,
+		WAL:                 cfg.WAL,
+		SkipBlockValidation: cfg.SkipBlockValidation,
+		Threads:             cfg.Threads,
+		RedactValues:        append([]string{}, cfg.RedactValues...),
 	}
 }
 

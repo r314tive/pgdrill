@@ -13,11 +13,12 @@ operational question:
 
 Pre-alpha. The repository has the first canonical model, core interfaces,
 command runner, strict configuration loading, initial catalog discovery adapters
-for WAL-G, Barman, and pgBackRest, provider-side checks for Barman and optional
-WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
+for WAL-G, Barman, pgBackRest, and pg_probackup, provider-side checks for Barman
+and optional WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
 `generate-manifest` and `verify-backup`, optional pgBackRest `check` and
-`verify`, pgBackRest local restore planning, JSON drill report persistence,
-local PostgreSQL startup for restore targets, optional `pg_verifybackup`
+`verify`, optional pg_probackup `validate`, pgBackRest and pg_probackup local
+restore planning, JSON drill report persistence, local PostgreSQL startup for
+restore targets, optional `pg_verifybackup`
 restore checks, `pg_isready`, SQL, `pg_amcheck`, and `pg_dump` probes, built-in
 probe presets, strict
 `pg_verifybackup` profile support, Prometheus metrics export from JSON reports,
@@ -36,17 +37,19 @@ verification surfaces for the Kubernetes restore target.
 
 ## Initial Providers
 
-The first adapters are planned for:
+Initial adapters are implemented for:
 
 - WAL-G
 - Barman
 - pgBackRest
+- pg_probackup
 
 Additional providers can be added behind the same internal provider contract.
 
 ## Core Concepts
 
-- **Provider**: a backup system such as WAL-G, Barman, or pgBackRest.
+- **Provider**: a backup system such as WAL-G, Barman, pgBackRest, or
+  pg_probackup.
 - **Restore target**: a disposable place to restore into, such as a local
   directory, container, VM, or Kubernetes volume.
 - **Recovery target**: latest available WAL, a timestamp, an LSN, an XID, or a
@@ -88,6 +91,8 @@ and CLI/UI direction. Probe configuration is documented in
 CNPG target verification examples are available in
 [examples/cnpg-target-verify.yaml](examples/cnpg-target-verify.yaml) and
 [examples/kubernetes/cnpg-target-verify-cronjob.yaml](examples/kubernetes/cnpg-target-verify-cronjob.yaml).
+A local pg_probackup drill example is available in
+[examples/pgprobackup.yaml](examples/pgprobackup.yaml).
 
 Release discipline is described in [docs/release.md](docs/release.md), and
 user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).

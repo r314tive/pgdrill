@@ -76,6 +76,8 @@ provider-scoped ID:
 ```text
 wal-g:<backup-name>
 barman:<server>/<backup-id>
+pgbackrest:<stanza>/<backup-label>
+pg_probackup:<instance>/<backup-id>
 ```
 
 Raw command stdout/stderr stay available to adapter code as `command.RawEvidence`.

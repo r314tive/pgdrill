@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -383,6 +384,87 @@ target:
 	}
 	if got, want := cfg.Provider.PGBackRestVerify.RedactValues, []string{"pgbackrest-verify-secret"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("unexpected pgbackrest_verify redactions %#v", got)
+	}
+}
+
+func TestLoadPGProbackupProviderConfig(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+provider:
+  type: pg_probackup
+  binary: /usr/bin/pg_probackup
+  backup_dir: /srv/pg_probackup
+  instance: main
+  timeout: 30m
+  pg_probackup_validate:
+    enabled: true
+    timeout: 2h
+    wal: true
+    skip_block_validation: true
+    threads: 4
+    redact_values:
+      - pg-probackup-secret
+target:
+  type: local
+`), "yaml")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Provider.Type != model.ProviderPGProbackup {
+		t.Fatalf("unexpected provider type %q", cfg.Provider.Type)
+	}
+	if cfg.Provider.Binary != "/usr/bin/pg_probackup" || cfg.Provider.BackupDir != "/srv/pg_probackup" || cfg.Provider.Instance != "main" {
+		t.Fatalf("unexpected pg_probackup provider config %#v", cfg.Provider)
+	}
+	if cfg.Provider.Timeout.Duration != 30*time.Minute {
+		t.Fatalf("unexpected provider timeout %s", cfg.Provider.Timeout.Duration)
+	}
+	validate := cfg.Provider.PGProbackupValidate
+	if !validate.Enabled || !validate.WAL || !validate.SkipBlockValidation || validate.Threads != 4 {
+		t.Fatalf("unexpected pg_probackup validate config %#v", validate)
+	}
+	if validate.Timeout.Duration != 2*time.Hour {
+		t.Fatalf("unexpected validate timeout %s", validate.Timeout.Duration)
+	}
+	if got, want := validate.RedactValues, []string{"pg-probackup-secret"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("unexpected validate redactions %#v", got)
+	}
+}
+
+func TestLoadPGProbackupRequiresBackupDir(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+provider:
+  type: pg_probackup
+target:
+  type: local
+`), "yaml")
+	if err == nil || !strings.Contains(err.Error(), "provider.backup_dir is required") {
+		t.Fatalf("expected backup_dir validation error, got %v", err)
+	}
+}
+
+func TestLoadPGProbackupRejectsNegativeValidateThreads(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+provider:
+  type: pg_probackup
+  backup_dir: /srv/pg_probackup
+  pg_probackup_validate:
+    threads: -1
+target:
+  type: local
+`), "yaml")
+	if err == nil || !strings.Contains(err.Error(), "threads must not be negative") {
+		t.Fatalf("expected validate threads error, got %v", err)
+	}
+}
+
+func TestLoadPGProbackupExampleConfig(t *testing.T) {
+	cfg, err := LoadFile(filepath.Join("..", "..", "examples", "pgprobackup.yaml"))
+	if err != nil {
+		t.Fatalf("load pg_probackup example config: %v", err)
+	}
+	if cfg.Provider.Type != model.ProviderPGProbackup || cfg.Target.Type != model.RestoreTargetLocal {
+		t.Fatalf("unexpected example config %#v", cfg)
 	}
 }
 

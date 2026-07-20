@@ -1,0 +1,72 @@
+[
+  {
+    "instance": "main",
+    "backups": [
+      {
+        "id": "SBOL94",
+        "status": "OK",
+        "start-time": "2024-04-09 18:19:52+03",
+        "backup-mode": "FULL",
+        "wal": "ARCHIVE",
+        "compress-alg": "lz4",
+        "compress-level": 1,
+        "from-replica": "false",
+        "checksum-version": 1,
+        "program-version": "2.7.3",
+        "server-version": "17",
+        "current-tli": 16,
+        "parent-tli": 2,
+        "start-lsn": "0/41000028",
+        "stop-lsn": "0/420000C0",
+        "end-time": "2024-04-09 18:19:58+03",
+        "end-validation-time": "2024-04-09 18:19:59+03",
+        "recovery-xid": 757,
+        "recovery-time": "2024-04-09 18:19:56.603355+03",
+        "data-bytes": 395651278,
+        "wal-bytes": 16777216,
+        "uncompressed-bytes": 578552566,
+        "pgdata-bytes": 578552248,
+        "primary_conninfo": "user=backup host=database.internal",
+        "content-crc": 3862224379
+      },
+      {
+        "id": "SBOL8S",
+        "status": "DONE",
+        "start-time": "2024-04-09 19:00:00+03",
+        "end-time": "2024-04-09 19:01:00+03",
+        "parent-backup-id": "SBOL94",
+        "backup-mode": "DELTA",
+        "wal": "STREAM",
+        "server-version": "17",
+        "current-tli": 16,
+        "start-lsn": "0/43000028",
+        "stop-lsn": "0/440000C0"
+      },
+      {
+        "id": "SBOL8P",
+        "status": "RUNNING",
+        "start-time": "2024-04-09 20:00:00+03",
+        "parent-backup-id": "SBOL8S",
+        "backup-mode": "PAGE"
+      },
+      {
+        "id": "SBOL8T",
+        "status": "CORRUPT",
+        "start-time": "2024-04-09 21:00:00+03",
+        "parent-backup-id": "SBOL8P",
+        "backup-mode": "PTRACK"
+      }
+    ]
+  },
+  {
+    "instance": "analytics",
+    "backups": [
+      {
+        "id": "SBOL7E",
+        "status": "ERROR",
+        "start-time": "2024-04-08 18:00:00+03",
+        "backup-mode": "FULL"
+      }
+    ]
+  }
+]

@@ -6,7 +6,7 @@ runbooks without requiring a server.
 
 ## Phase 1: Engine Skeleton
 
-Status: in progress.
+Status: complete for the initial CLI engine.
 
 - Canonical model for backups, restore plans, checks, drill results, and
   evidence.
@@ -66,7 +66,8 @@ pgdrill catalog list -f pgdrill.yaml
 
 ## Phase 3: Kubernetes / CNPG Target
 
-Status: started.
+Status: implemented for guarded CNPG drills; live-cluster field validation is
+still required before calling it production-ready.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
@@ -86,6 +87,11 @@ Status: started.
 
 ## Phase 4: More Providers And Probes
 
+Status: in progress.
+
+- pg_probackup catalog discovery through `show --format=json`.
+- Optional pg_probackup selected-backup and recovery-target validation.
+- pg_probackup local restore planning with canonical PITR target mapping.
 - Richer Barman manifest handling if real repositories expose more cases than
   `generate-manifest`.
 - Additional `pg_verifybackup` profiles, if real drills prove they are useful.

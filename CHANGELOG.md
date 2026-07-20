@@ -8,6 +8,16 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- Initial `pg_probackup` catalog discovery adapter for
+  `pg_probackup show -B <backup-dir> --format=json` with fixture-driven tests.
+- Optional selected-backup validation through `pg_probackup validate`, including
+  WAL, block-validation, thread, timeout, redaction, and canonical PITR target
+  options.
+- Initial `pg_probackup` local restore planning for `pg_probackup restore` with
+  provider instance checks and canonical PITR target mapping.
+
 ## [0.1.0-alpha.5] - 2026-07-20
 
 ### Added

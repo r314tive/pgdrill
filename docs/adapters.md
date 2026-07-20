@@ -146,3 +146,51 @@ Initial value:
 - repository verification
 - restore drill with provider evidence
 - PITR target profiles
+
+## pg_probackup
+
+Initial discovery command:
+
+- `pg_probackup show -B <backup-dir> [--instance=<instance>] --format=json`
+
+Implemented normalization:
+
+- provider ID: `<instance>/<backup-id>`
+- status: `OK` and `DONE` are available; running/merge/delete states are
+  transitional; `CORRUPT` and `ORPHAN` are invalid; `ERROR` is failed
+- kind: `FULL` is full, `DELTA` is delta, and `PAGE`/`PTRACK` are incremental
+  while the native mode remains in metadata
+- timestamps: `start-time`, `end-time`, and `end-validation-time`
+- WAL range: `start-lsn`, `stop-lsn`, and `current-tli`
+- PostgreSQL and pg_probackup versions, compression, checksum, size, and
+  recovery metadata
+- `primary_conninfo` is deliberately excluded from normalized metadata
+
+Implemented provider validation:
+
+- optional `pg_probackup validate -B <backup-dir> --instance=<instance>
+  -i <backup-id>` when `provider.pg_probackup_validate.enabled` is true
+- canonical recovery target options are passed to validation, proving the
+  selected backup chain against the same target intended for restore
+- optional full WAL archive validation, block-validation skipping, thread
+  count, timeout, and redaction controls
+- disabled by default because explicit validation can be expensive; the
+  restore command still retains pg_probackup's default pre-restore validation
+
+Implemented restore planning:
+
+- local target `pg_probackup restore -B <backup-dir> --instance=<instance>
+  -i <backup-id> -D <target-data-dir>` command step
+- instance consistency checks across configuration, canonical cluster name,
+  and provider-scoped backup ID
+- PITR flags mapped from the canonical recovery target:
+  `--recovery-target=latest|immediate`, `--recovery-target-time`,
+  `--recovery-target-lsn`, `--recovery-target-xid`,
+  `--recovery-target-name`, `--recovery-target-timeline`,
+  `--recovery-target-inclusive`, and `--recovery-target-action=promote`
+
+Initial value:
+
+- backup-chain discovery
+- opt-in native checksum and WAL validation
+- local restore drill with PITR evidence

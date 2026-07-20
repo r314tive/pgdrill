@@ -28,21 +28,24 @@ type ClusterConfig struct {
 }
 
 type ProviderConfig struct {
-	Type             model.ProviderType     `json:"type" yaml:"type"`
-	Binary           string                 `json:"binary,omitempty" yaml:"binary,omitempty"`
-	ConfigPath       string                 `json:"config_path,omitempty" yaml:"config_path,omitempty"`
-	Server           string                 `json:"server,omitempty" yaml:"server,omitempty"`
-	Stanza           string                 `json:"stanza,omitempty" yaml:"stanza,omitempty"`
-	Repo             string                 `json:"repo,omitempty" yaml:"repo,omitempty"`
-	WALVerify        WALVerifyConfig        `json:"wal_verify,omitempty" yaml:"wal_verify,omitempty"`
-	BarmanVerify     BarmanVerifyConfig     `json:"barman_verify_backup,omitempty" yaml:"barman_verify_backup,omitempty"`
-	BarmanManifest   BarmanManifestConfig   `json:"barman_generate_manifest,omitempty" yaml:"barman_generate_manifest,omitempty"`
-	PGBackRest       PGBackRestConfig       `json:"pgbackrest_check,omitempty" yaml:"pgbackrest_check,omitempty"`
-	PGBackRestVerify PGBackRestVerifyConfig `json:"pgbackrest_verify,omitempty" yaml:"pgbackrest_verify,omitempty"`
-	Env              map[string]string      `json:"env,omitempty" yaml:"env,omitempty"`
-	WorkDir          string                 `json:"work_dir,omitempty" yaml:"work_dir,omitempty"`
-	Timeout          Duration               `json:"timeout,omitempty" yaml:"timeout,omitempty"`
-	RedactValues     []string               `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
+	Type                model.ProviderType        `json:"type" yaml:"type"`
+	Binary              string                    `json:"binary,omitempty" yaml:"binary,omitempty"`
+	ConfigPath          string                    `json:"config_path,omitempty" yaml:"config_path,omitempty"`
+	Server              string                    `json:"server,omitempty" yaml:"server,omitempty"`
+	Stanza              string                    `json:"stanza,omitempty" yaml:"stanza,omitempty"`
+	Repo                string                    `json:"repo,omitempty" yaml:"repo,omitempty"`
+	BackupDir           string                    `json:"backup_dir,omitempty" yaml:"backup_dir,omitempty"`
+	Instance            string                    `json:"instance,omitempty" yaml:"instance,omitempty"`
+	WALVerify           WALVerifyConfig           `json:"wal_verify,omitempty" yaml:"wal_verify,omitempty"`
+	BarmanVerify        BarmanVerifyConfig        `json:"barman_verify_backup,omitempty" yaml:"barman_verify_backup,omitempty"`
+	BarmanManifest      BarmanManifestConfig      `json:"barman_generate_manifest,omitempty" yaml:"barman_generate_manifest,omitempty"`
+	PGBackRest          PGBackRestConfig          `json:"pgbackrest_check,omitempty" yaml:"pgbackrest_check,omitempty"`
+	PGBackRestVerify    PGBackRestVerifyConfig    `json:"pgbackrest_verify,omitempty" yaml:"pgbackrest_verify,omitempty"`
+	PGProbackupValidate PGProbackupValidateConfig `json:"pg_probackup_validate,omitempty" yaml:"pg_probackup_validate,omitempty"`
+	Env                 map[string]string         `json:"env,omitempty" yaml:"env,omitempty"`
+	WorkDir             string                    `json:"work_dir,omitempty" yaml:"work_dir,omitempty"`
+	Timeout             Duration                  `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	RedactValues        []string                  `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
 }
 
 type WALVerifyConfig struct {
@@ -82,6 +85,15 @@ type PGBackRestVerifyConfig struct {
 	Output       string   `json:"output,omitempty" yaml:"output,omitempty"`
 	Verbose      bool     `json:"verbose,omitempty" yaml:"verbose,omitempty"`
 	RedactValues []string `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
+}
+
+type PGProbackupValidateConfig struct {
+	Enabled             bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Timeout             Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	WAL                 bool     `json:"wal,omitempty" yaml:"wal,omitempty"`
+	SkipBlockValidation bool     `json:"skip_block_validation,omitempty" yaml:"skip_block_validation,omitempty"`
+	Threads             int      `json:"threads,omitempty" yaml:"threads,omitempty"`
+	RedactValues        []string `json:"redact_values,omitempty" yaml:"redact_values,omitempty"`
 }
 
 type TargetConfig struct {
@@ -251,6 +263,14 @@ func (c Config) Validate() error {
 	case model.ProviderWALG, model.ProviderBarman, model.ProviderPGBackRest, model.ProviderPGProbackup:
 	default:
 		return fmt.Errorf("unsupported provider.type %q", c.Provider.Type)
+	}
+	if c.Provider.Type == model.ProviderPGProbackup {
+		if strings.TrimSpace(c.Provider.BackupDir) == "" {
+			return fmt.Errorf("provider.backup_dir is required for pg_probackup")
+		}
+		if c.Provider.PGProbackupValidate.Threads < 0 {
+			return fmt.Errorf("provider.pg_probackup_validate.threads must not be negative")
+		}
 	}
 
 	if c.Target.Type == "" {
