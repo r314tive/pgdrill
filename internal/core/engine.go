@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -22,6 +23,8 @@ type Engine struct {
 	Probes   []Probe
 	Sink     EvidenceSink
 	Clock    func() time.Time
+
+	FinalizationTimeout time.Duration
 }
 
 func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, error) {
@@ -48,7 +51,10 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		result.FinishedAt = clock()
 		result.Status = status
 		if e.Sink != nil {
-			if sinkErr := e.Sink.Write(ctx, result); sinkErr != nil {
+			sinkCtx, cancel := finalize.Context(ctx, e.FinalizationTimeout)
+			sinkErr := e.Sink.Write(sinkCtx, result)
+			cancel()
+			if sinkErr != nil {
 				err = errors.Join(err, fmt.Errorf("write evidence: %w", sinkErr))
 			}
 		}
@@ -60,6 +66,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 			return finish(model.DrillStatusAborted, err)
 		}
 		return finish(model.DrillStatusFailed, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(fmt.Errorf("start drill: %w", err))
 	}
 
 	catalog, err := e.Provider.DiscoverBackups(ctx)
@@ -99,7 +108,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if !prepared {
 			return nil
 		}
-		evidence, err := e.Target.Destroy(ctx)
+		cleanupCtx, cancel := finalize.Context(ctx, e.FinalizationTimeout)
+		evidence, err := e.Target.Destroy(cleanupCtx)
+		cancel()
 		result.Evidence = append(result.Evidence, evidence...)
 		if err != nil {
 			return fmt.Errorf("destroy restore target: %w", err)
@@ -141,10 +152,18 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 
 	probeFailed := false
 	for _, probe := range e.Probes {
+		if err := ctx.Err(); err != nil {
+			cleanupErr := cleanup()
+			return fail(errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
+		}
 		report, err := probe.Run(ctx, pg)
 		result.Checks = append(result.Checks, report.Checks...)
 		result.Evidence = append(result.Evidence, report.Evidence...)
 		if err != nil {
+			if ctx.Err() != nil {
+				cleanupErr := cleanup()
+				return fail(errors.Join(fmt.Errorf("run probe %q: %w", probe.Type(), err), cleanupErr))
+			}
 			probeFailed = true
 			result.Checks = append(result.Checks, model.Check{
 				Name:    string(probe.Type()),
@@ -157,6 +176,10 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if hasFailedChecks(report.Checks) {
 			probeFailed = true
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		cleanupErr := cleanup()
+		return fail(errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
 	}
 
 	cleanupErr := cleanup()

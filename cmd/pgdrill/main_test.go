@@ -588,6 +588,47 @@ report:
 	}
 }
 
+func TestTargetVerifyWritesAbortedDiscoveryReport(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	reportPath := filepath.Join(dir, "cnpg-report.json")
+	writeFile(t, configPath, `
+target:
+  type: kubernetes
+  kubernetes:
+    namespace: d003-db
+    kubectl_binary: kubectl
+  cnpg:
+    source_cluster: altbox
+    image_name: ghcr.io/cloudnative-pg/postgresql:16
+report:
+  format: json
+  path: `+reportPath+`
+`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var stdout, stderr bytes.Buffer
+	code := runContext(ctx, []string{"target", "verify", "-f", configPath, "-discover", "-confirm-create", "-drill-id", "cnpg-discovery-aborted"}, &stdout, &stderr)
+
+	if code != exitCodeInterrupted {
+		t.Fatalf("expected exit code %d, got %d\nstdout:\n%s\nstderr:\n%s", exitCodeInterrupted, code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "target verify aborted") {
+		t.Fatalf("expected aborted message, got %q", stderr.String())
+	}
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read aborted discovery report: %v", err)
+	}
+	if result.Status != model.DrillStatusAborted {
+		t.Fatalf("expected aborted report, got %#v", result)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].Command == nil || !result.Evidence[0].Command.ExitStatus.Canceled {
+		t.Fatalf("expected canceled command evidence, got %#v", result.Evidence)
+	}
+}
+
 func TestRunCommandExecutesWALLocalDrill(t *testing.T) {
 	dir := t.TempDir()
 	walgPath := filepath.Join(dir, "wal-g")
@@ -1128,6 +1169,41 @@ target:
 	}
 	if got := stderr.String(); !strings.Contains(got, "requires report.path") {
 		t.Fatalf("expected report path error, got: %s", got)
+	}
+}
+
+func TestRunCommandWritesAbortedReportForCanceledContext(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	reportPath := filepath.Join(dir, "report.json")
+	writeFile(t, configPath, `
+provider:
+  type: wal-g
+target:
+  type: local
+  work_dir: `+filepath.Join(dir, "restore")+`
+report:
+  format: json
+  path: `+reportPath+`
+`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var stdout, stderr bytes.Buffer
+	code := runContext(ctx, []string{"run", "-f", configPath}, &stdout, &stderr)
+
+	if code != exitCodeInterrupted {
+		t.Fatalf("expected exit code %d, got %d: %s", exitCodeInterrupted, code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "run aborted") {
+		t.Fatalf("expected aborted error, got %q", stderr.String())
+	}
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read aborted report: %v", err)
+	}
+	if result.Status != model.DrillStatusAborted {
+		t.Fatalf("expected aborted report, got %#v", result)
 	}
 }
 

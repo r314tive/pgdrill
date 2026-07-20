@@ -10,6 +10,9 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Signal-aware cancellation for long-running CLI operations, with bounded
+  cleanup and report finalization, `aborted` drill reports, exit code 130, and
+  structured `exit_status.canceled` command evidence.
 - Deterministic Linux and macOS release archives for amd64 and arm64, embedded
   version metadata, SHA256 checksums, and changelog-derived release notes.
 - Read-only release build and guarded tag publication workflows with annotated

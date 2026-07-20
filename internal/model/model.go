@@ -318,6 +318,7 @@ type ExitStatus struct {
 	Success  bool   `json:"success"`
 	ExitCode int    `json:"exit_code"`
 	TimedOut bool   `json:"timed_out,omitempty"`
+	Canceled bool   `json:"canceled,omitempty"`
 	Error    string `json:"error,omitempty"`
 }
 
@@ -330,6 +331,9 @@ func (s ExitStatus) Summary() string {
 	}
 	if s.TimedOut {
 		return "timed out"
+	}
+	if s.Canceled {
+		return "canceled"
 	}
 	if s.Success {
 		return "success"

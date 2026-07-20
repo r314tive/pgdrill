@@ -8,13 +8,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/adapters"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
+	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/probes"
 	"github.com/r314tive/pgdrill/internal/report"
@@ -23,11 +26,24 @@ import (
 	"github.com/r314tive/pgdrill/internal/version"
 )
 
+const exitCodeInterrupted = 130
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	code := runContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runContext(context.Background(), args, stdout, stderr)
+}
+
+func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 2
@@ -35,7 +51,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch args[0] {
 	case "run":
-		return runDrill(args[1:], stdout, stderr)
+		return runDrill(ctx, args[1:], stdout, stderr)
 	case "version":
 		return runVersion(args[1:], stdout, stderr)
 	case "sample-config":
@@ -43,9 +59,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "explain":
 		return runExplain(args[1:], stdout, stderr)
 	case "catalog":
-		return runCatalog(args[1:], stdout, stderr)
+		return runCatalog(ctx, args[1:], stdout, stderr)
 	case "target":
-		return runTarget(args[1:], stdout, stderr)
+		return runTarget(ctx, args[1:], stdout, stderr)
 	case "report":
 		return runReport(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -58,7 +74,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func runDrill(args []string, stdout, stderr io.Writer) int {
+func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -112,7 +128,7 @@ func runDrill(args []string, stdout, stderr io.Writer) int {
 		Target:   target,
 		Probes:   configuredProbes,
 		Sink:     report.JSONFileSink{Path: cfg.Report.Path},
-	}.Run(context.Background(), core.DrillRequest{
+	}.Run(ctx, core.DrillRequest{
 		Target:         cfg.TargetSpec(),
 		RecoveryTarget: cfg.RecoveryTarget(),
 	})
@@ -121,12 +137,16 @@ func runDrill(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if runErr != nil {
-		fmt.Fprintf(stderr, "run failed: %v\n", runErr)
-		return 1
+		if result.Status == model.DrillStatusAborted {
+			fmt.Fprintf(stderr, "run aborted: %v\n", runErr)
+		} else {
+			fmt.Fprintf(stderr, "run failed: %v\n", runErr)
+		}
+		return failureExitCode(ctx, result.Status)
 	}
 	if result.Status != model.DrillStatusPassed {
 		fmt.Fprintf(stderr, "run finished with status %s\n", result.Status)
-		return 1
+		return failureExitCode(ctx, result.Status)
 	}
 	return 0
 }
@@ -224,7 +244,7 @@ func runReportMetrics(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func runCatalog(args []string, stdout, stderr io.Writer) int {
+func runCatalog(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printCatalogUsage(stderr)
 		return 2
@@ -232,7 +252,7 @@ func runCatalog(args []string, stdout, stderr io.Writer) int {
 
 	switch args[0] {
 	case "list":
-		return runCatalogList(args[1:], stdout, stderr)
+		return runCatalogList(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printCatalogUsage(stdout)
 		return 0
@@ -243,7 +263,7 @@ func runCatalog(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func runCatalogList(args []string, stdout, stderr io.Writer) int {
+func runCatalogList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("catalog list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -282,10 +302,10 @@ func runCatalogList(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	catalog, err := provider.DiscoverBackups(context.Background())
+	catalog, err := provider.DiscoverBackups(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "discover backups: %v\n", err)
-		return 1
+		return failureExitCode(ctx, model.DrillStatusUnknown)
 	}
 
 	output := catalogListOutput{
@@ -319,7 +339,7 @@ func runCatalogList(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func runTarget(args []string, stdout, stderr io.Writer) int {
+func runTarget(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printTargetUsage(stderr)
 		return 2
@@ -327,9 +347,9 @@ func runTarget(args []string, stdout, stderr io.Writer) int {
 
 	switch args[0] {
 	case "manifest":
-		return runTargetManifest(args[1:], stdout, stderr)
+		return runTargetManifest(ctx, args[1:], stdout, stderr)
 	case "verify":
-		return runTargetVerify(args[1:], stdout, stderr)
+		return runTargetVerify(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printTargetUsage(stdout)
 		return 0
@@ -340,7 +360,7 @@ func runTarget(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func runTargetManifest(args []string, stdout, stderr io.Writer) int {
+func runTargetManifest(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("target manifest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -379,9 +399,9 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 
 	cnpgTarget := cfg.Target.CNPG
 	if discover {
-		if _, err := discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget); err != nil {
+		if _, err := discoverCNPGManifestInputs(ctx, cfg, &cnpgTarget); err != nil {
 			fmt.Fprintf(stderr, "discover target manifest inputs: %v\n", err)
-			return 1
+			return failureExitCode(ctx, model.DrillStatusUnknown)
 		}
 	}
 
@@ -403,7 +423,7 @@ func runTargetManifest(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runTargetVerify(args []string, stdout, stderr io.Writer) int {
+func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("target verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -454,12 +474,12 @@ func runTargetVerify(args []string, stdout, stderr io.Writer) int {
 	cnpgTarget := cfg.Target.CNPG
 	discoveryEvidence := []model.EvidenceRecord{}
 	if discover {
-		discoveryEvidence, err = discoverCNPGManifestInputs(context.Background(), cfg, &cnpgTarget)
+		discoveryEvidence, err = discoverCNPGManifestInputs(ctx, cfg, &cnpgTarget)
 		if err != nil {
 			runErr := fmt.Errorf("discover target verify inputs: %w", err)
 			result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, drillID, startedAt)
 			result.FinishedAt = time.Now().UTC()
-			result.Status = model.DrillStatusFailed
+			result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
 			result.Evidence = discoveryEvidence
 			result.Checks = []model.Check{{
 				Name:        "cnpg-input-discovery",
@@ -467,7 +487,7 @@ func runTargetVerify(args []string, stdout, stderr io.Writer) int {
 				Message:     runErr.Error(),
 				EvidenceIDs: evidenceRecordIDs(discoveryEvidence),
 			}}
-			return finishCNPGTargetVerify(stdout, stderr, cfg.Report.Path, result, runErr)
+			return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 		}
 	}
 	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID)
@@ -481,12 +501,15 @@ func runTargetVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	result, runErr := executeCNPGTargetVerify(context.Background(), cfg, spec, configuredProbes, drillID, startedAt, discoveryEvidence)
-	return finishCNPGTargetVerify(stdout, stderr, cfg.Report.Path, result, runErr)
+	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, configuredProbes, drillID, startedAt, discoveryEvidence)
+	return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 }
 
-func finishCNPGTargetVerify(stdout, stderr io.Writer, reportPath string, result model.DrillResult, runErr error) int {
-	if sinkErr := (report.JSONFileSink{Path: reportPath}).Write(context.Background(), result); sinkErr != nil {
+func finishCNPGTargetVerify(ctx context.Context, stdout, stderr io.Writer, reportPath string, result model.DrillResult, runErr error) int {
+	sinkCtx, cancel := finalize.Context(ctx, 0)
+	sinkErr := (report.JSONFileSink{Path: reportPath}).Write(sinkCtx, result)
+	cancel()
+	if sinkErr != nil {
 		fmt.Fprintf(stderr, "write report: %v\n", sinkErr)
 		return 1
 	}
@@ -495,12 +518,16 @@ func finishCNPGTargetVerify(stdout, stderr io.Writer, reportPath string, result 
 		return 1
 	}
 	if runErr != nil {
-		fmt.Fprintf(stderr, "target verify failed: %v\n", runErr)
-		return 1
+		if result.Status == model.DrillStatusAborted {
+			fmt.Fprintf(stderr, "target verify aborted: %v\n", runErr)
+		} else {
+			fmt.Fprintf(stderr, "target verify failed: %v\n", runErr)
+		}
+		return failureExitCode(ctx, result.Status)
 	}
 	if result.Status != model.DrillStatusPassed {
 		fmt.Fprintf(stderr, "target verify finished with status %s\n", result.Status)
-		return 1
+		return failureExitCode(ctx, result.Status)
 	}
 	return 0
 }
@@ -593,17 +620,26 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 	if startErr != nil {
 		result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusFailed, startErr.Error(), spec, pg))
 		result.FinishedAt = time.Now().UTC()
-		result.Status = model.DrillStatusFailed
+		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
 		return result, startErr
 	}
 	result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusPassed, "CNPG verify cluster is Ready", spec, pg))
 
 	probeFailed := false
+	var operationErr error
 	for _, probe := range configuredProbes {
+		if err := ctx.Err(); err != nil {
+			operationErr = fmt.Errorf("run probes: %w", err)
+			break
+		}
 		report, err := probe.Run(ctx, pg)
 		result.Checks = append(result.Checks, report.Checks...)
 		result.Evidence = append(result.Evidence, report.Evidence...)
 		if err != nil {
+			if ctx.Err() != nil {
+				operationErr = fmt.Errorf("run probe %q: %w", probe.Type(), err)
+				break
+			}
 			probeFailed = true
 			result.Checks = append(result.Checks, model.Check{
 				Name:    string(probe.Type()),
@@ -618,13 +654,27 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 		}
 	}
 
-	destroyEvidence, destroyErr := controller.Destroy(ctx)
+	destroyCtx, cancel := finalize.Context(ctx, 0)
+	destroyEvidence, destroyErr := controller.Destroy(destroyCtx)
+	cancel()
 	result.Evidence = append(result.Evidence, destroyEvidence...)
 	result.FinishedAt = time.Now().UTC()
 	switch {
+	case ctx.Err() != nil:
+		if operationErr == nil {
+			operationErr = fmt.Errorf("target verify: %w", ctx.Err())
+		}
+		result.Status = model.DrillStatusAborted
+		if destroyErr != nil {
+			operationErr = errors.Join(operationErr, fmt.Errorf("destroy cnpg verify target: %w", destroyErr))
+		}
+		return result, operationErr
 	case destroyErr != nil:
 		result.Status = model.DrillStatusFailed
 		return result, fmt.Errorf("destroy cnpg verify target: %w", destroyErr)
+	case operationErr != nil:
+		result.Status = model.DrillStatusFailed
+		return result, operationErr
 	case probeFailed:
 		result.Status = model.DrillStatusFailed
 		return result, fmt.Errorf("one or more probes failed")
@@ -714,6 +764,20 @@ func hasFailedChecks(checks []model.Check) bool {
 		}
 	}
 	return false
+}
+
+func drillStatusForContext(ctx context.Context, fallback model.DrillStatus) model.DrillStatus {
+	if ctx != nil && ctx.Err() != nil {
+		return model.DrillStatusAborted
+	}
+	return fallback
+}
+
+func failureExitCode(ctx context.Context, status model.DrillStatus) int {
+	if status == model.DrillStatusAborted || (ctx != nil && ctx.Err() != nil) {
+		return exitCodeInterrupted
+	}
+	return 1
 }
 
 func runVersion(args []string, stdout, stderr io.Writer) int {

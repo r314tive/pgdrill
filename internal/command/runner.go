@@ -86,9 +86,10 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 	startedAt := time.Now().UTC()
 	err := cmd.Run()
 	finishedAt := time.Now().UTC()
-	timedOut := timeout > 0 && errors.Is(runCtx.Err(), context.DeadlineExceeded)
+	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+	canceled := errors.Is(runCtx.Err(), context.Canceled)
 
-	status := exitStatus(cmd.ProcessState, err, timedOut)
+	status := exitStatus(cmd.ProcessState, err, timedOut, canceled)
 	result := buildResult(inv, stdout.Bytes(), stderr.Bytes(), status, startedAt, finishedAt, r.effectiveRedactor(inv))
 	if cmd.ProcessState == nil && err != nil {
 		return result, err
@@ -106,16 +107,17 @@ func (r *ExecRunner) effectiveRedactor(inv Invocation) Redactor {
 	return redactor
 }
 
-func exitStatus(state *os.ProcessState, err error, timedOut bool) model.ExitStatus {
+func exitStatus(state *os.ProcessState, err error, timedOut, canceled bool) model.ExitStatus {
 	status := model.ExitStatus{
 		Started:  state != nil,
 		Exited:   state != nil,
 		ExitCode: -1,
 		TimedOut: timedOut,
+		Canceled: canceled,
 	}
 	if state != nil {
 		status.ExitCode = state.ExitCode()
-		status.Success = state.Success() && !timedOut
+		status.Success = state.Success() && !timedOut && !canceled
 	}
 	if err != nil && !status.Success {
 		status.Error = err.Error()

@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +112,67 @@ func TestRunnerMarksTimeout(t *testing.T) {
 	}
 }
 
+func TestRunnerMarksParentCancellation(t *testing.T) {
+	runner := NewRunner(Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	readyPath := filepath.Join(t.TempDir(), "ready")
+	type outcome struct {
+		result Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := runner.Run(ctx, Invocation{
+			Path: os.Args[0],
+			Args: []string{
+				"-test.run=TestHelperProcess",
+				"--",
+				"sleep-ready",
+				"1s",
+			},
+			Timeout: 2 * time.Second,
+			Env: map[string]string{
+				"PGDRILL_COMMAND_HELPER": "1",
+				"PGDRILL_COMMAND_READY":  readyPath,
+			},
+		})
+		done <- outcome{result: result, err: err}
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("helper process did not become ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	var completed outcome
+	select {
+	case completed = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("canceled helper process did not exit")
+	}
+	result, err := completed.result, completed.err
+
+	if err != nil {
+		t.Fatalf("expected cancellation as structured status, not start error: %v", err)
+	}
+	if !result.Evidence.ExitStatus.Canceled {
+		t.Fatalf("expected canceled status, got %#v", result.Evidence.ExitStatus)
+	}
+	if result.Evidence.ExitStatus.TimedOut || result.Evidence.ExitStatus.Success {
+		t.Fatalf("unexpected canceled status %#v", result.Evidence.ExitStatus)
+	}
+	if got := result.Evidence.ExitStatus.Summary(); got != "canceled" {
+		t.Fatalf("expected canceled summary, got %q", got)
+	}
+}
+
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("PGDRILL_COMMAND_HELPER") != "1" {
 		return
@@ -145,6 +207,19 @@ func TestHelperProcess(t *testing.T) {
 		}
 		duration, err := time.ParseDuration(args[1])
 		if err != nil {
+			os.Exit(2)
+		}
+		time.Sleep(duration)
+		os.Exit(0)
+	case "sleep-ready":
+		if len(args) != 2 || os.Getenv("PGDRILL_COMMAND_READY") == "" {
+			os.Exit(2)
+		}
+		duration, err := time.ParseDuration(args[1])
+		if err != nil {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(os.Getenv("PGDRILL_COMMAND_READY"), []byte("ready\n"), 0o600); err != nil {
 			os.Exit(2)
 		}
 		time.Sleep(duration)

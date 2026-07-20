@@ -84,6 +84,39 @@ func TestControllerStartFailureCapturesAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestControllerStartCancellationFinalizesWithLiveContexts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &fakeLifecycleClient{
+		waitHook: func() error {
+			cancel()
+			return ctx.Err()
+		},
+	}
+	controller := Controller{
+		Spec:   testVerifyClusterSpec(t),
+		Client: client,
+		Options: LifecycleOptions{
+			CaptureLogs:   true,
+			CleanupOnFail: true,
+			CleanupPVC:    true,
+		},
+	}
+
+	_, _, err := controller.Start(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation error, got %v", err)
+	}
+	if client.captureContextErr != nil {
+		t.Fatalf("capture inherited canceled context: %v", client.captureContextErr)
+	}
+	if client.deleteContextErr != nil {
+		t.Fatalf("cleanup inherited canceled context: %v", client.deleteContextErr)
+	}
+	if got, want := client.calls, []string{"apply", "wait", "capture:start-failed", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected calls: got %#v want %#v", got, want)
+	}
+}
+
 func TestControllerDestroyCapturesAndDeletesCluster(t *testing.T) {
 	client := &fakeLifecycleClient{
 		instance: Instance{
@@ -134,12 +167,15 @@ func TestControllerStartRequiresClient(t *testing.T) {
 }
 
 type fakeLifecycleClient struct {
-	calls          []string
-	manifest       []byte
-	waitOptions    WaitOptions
-	captureOptions CaptureOptions
-	instance       Instance
-	waitErr        error
+	calls             []string
+	manifest          []byte
+	waitOptions       WaitOptions
+	captureOptions    CaptureOptions
+	instance          Instance
+	waitErr           error
+	waitHook          func() error
+	captureContextErr error
+	deleteContextErr  error
 }
 
 func (c *fakeLifecycleClient) ApplyCluster(_ context.Context, _ VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error) {
@@ -151,22 +187,30 @@ func (c *fakeLifecycleClient) ApplyCluster(_ context.Context, _ VerifyClusterSpe
 func (c *fakeLifecycleClient) WaitForInstanceReady(_ context.Context, _ VerifyClusterSpec, opts WaitOptions) (Instance, []model.EvidenceRecord, error) {
 	c.calls = append(c.calls, "wait")
 	c.waitOptions = opts
+	if c.waitHook != nil {
+		return c.instance, []model.EvidenceRecord{testEvidence("wait")}, c.waitHook()
+	}
 	return c.instance, []model.EvidenceRecord{testEvidence("wait")}, c.waitErr
 }
 
-func (c *fakeLifecycleClient) CaptureEvidence(_ context.Context, _ VerifyClusterSpec, _ Instance, opts CaptureOptions) ([]model.EvidenceRecord, error) {
+func (c *fakeLifecycleClient) CaptureEvidence(ctx context.Context, _ VerifyClusterSpec, _ Instance, opts CaptureOptions) ([]model.EvidenceRecord, error) {
 	c.calls = append(c.calls, "capture:"+opts.Reason)
 	c.captureOptions = opts
+	c.captureContextErr = ctx.Err()
 	return []model.EvidenceRecord{testEvidence("capture:" + opts.Reason)}, nil
 }
 
-func (c *fakeLifecycleClient) DeleteCluster(context.Context, VerifyClusterSpec) ([]model.EvidenceRecord, error) {
+func (c *fakeLifecycleClient) DeleteCluster(ctx context.Context, _ VerifyClusterSpec) ([]model.EvidenceRecord, error) {
 	c.calls = append(c.calls, "delete-cluster")
+	c.deleteContextErr = ctx.Err()
 	return []model.EvidenceRecord{testEvidence("delete-cluster")}, nil
 }
 
-func (c *fakeLifecycleClient) DeletePVCs(context.Context, VerifyClusterSpec) ([]model.EvidenceRecord, error) {
+func (c *fakeLifecycleClient) DeletePVCs(ctx context.Context, _ VerifyClusterSpec) ([]model.EvidenceRecord, error) {
 	c.calls = append(c.calls, "delete-pvcs")
+	if c.deleteContextErr == nil {
+		c.deleteContextErr = ctx.Err()
+	}
 	return []model.EvidenceRecord{testEvidence("delete-pvcs")}, nil
 }
 

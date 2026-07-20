@@ -41,6 +41,13 @@ structured exit status. Raw command output is available only to in-process
 adapters while a command is being normalized and must not be reconstructed from
 the durable report.
 
+The structured exit status distinguishes successful execution, ordinary
+non-zero exit codes, timeouts, cancellation, and failure to start. Consumers
+should use `timed_out` and `canceled` instead of matching platform-specific
+error strings. A drill canceled by the operator or its parent scheduler has
+top-level status `aborted`; it is distinct from a completed verification with
+status `failed`.
+
 ## Consumer Rules
 
 - Check `schema_version` before interpreting the object.

@@ -186,6 +186,56 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 	}
 }
 
+func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{{ID: "wal-g:base_1", Status: model.BackupStatusAvailable}},
+		},
+		plan: model.RestorePlan{Steps: []model.RestoreStep{{Name: "fetch"}}},
+	}
+	target := &fakeTarget{
+		executeHook: func() error {
+			cancel()
+			return ctx.Err()
+		},
+		destroyEvidence: []model.EvidenceRecord{testEvidence("cleanup")},
+	}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Provider: provider,
+		Target:   target,
+		Sink:     sink,
+	}.Run(ctx, DrillRequest{
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation error, got %v", err)
+	}
+	if result.Status != model.DrillStatusAborted {
+		t.Fatalf("expected aborted status, got %q", result.Status)
+	}
+	if got, want := target.calls, []string{"prepare", "execute:fetch", "destroy"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
+	}
+	if target.destroyContextErr != nil {
+		t.Fatalf("cleanup inherited canceled context: %v", target.destroyContextErr)
+	}
+	if !hasEvidence(result.Evidence, "cleanup") {
+		t.Fatalf("expected cleanup evidence, got %#v", evidenceIDs(result.Evidence))
+	}
+	if !sink.called || sink.contextErr != nil {
+		t.Fatalf("expected sink with live context, got called=%v context_err=%v", sink.called, sink.contextErr)
+	}
+	if sink.result.Status != model.DrillStatusAborted {
+		t.Fatalf("expected aborted result in sink, got %q", sink.result.Status)
+	}
+}
+
 type fakeProvider struct {
 	catalog        model.BackupCatalog
 	validateReport model.CheckReport
@@ -216,12 +266,14 @@ func (p *fakeProvider) PlanRestore(context.Context, model.Backup, model.Recovery
 }
 
 type fakeTarget struct {
-	calls           []string
-	executeErrStep  string
-	prepareErr      error
-	startErr        error
-	destroyErr      error
-	destroyEvidence []model.EvidenceRecord
+	calls             []string
+	executeErrStep    string
+	executeHook       func() error
+	prepareErr        error
+	startErr          error
+	destroyErr        error
+	destroyContextErr error
+	destroyEvidence   []model.EvidenceRecord
 }
 
 func (t *fakeTarget) Type() model.RestoreTargetType {
@@ -236,6 +288,9 @@ func (t *fakeTarget) Prepare(context.Context, model.TargetSpec) error {
 func (t *fakeTarget) Execute(_ context.Context, step model.RestoreStep) ([]model.EvidenceRecord, error) {
 	t.calls = append(t.calls, "execute:"+step.Name)
 	evidence := []model.EvidenceRecord{testEvidence("execute:" + step.Name)}
+	if t.executeHook != nil {
+		return evidence, t.executeHook()
+	}
 	if step.Name == t.executeErrStep {
 		return evidence, errors.New("restore step failed")
 	}
@@ -250,8 +305,9 @@ func (t *fakeTarget) StartPostgres(context.Context, model.RuntimeConfig) (model.
 	return model.RunningPostgres{ConnString: "postgres://verify"}, []model.EvidenceRecord{testEvidence("start")}, nil
 }
 
-func (t *fakeTarget) Destroy(context.Context) ([]model.EvidenceRecord, error) {
+func (t *fakeTarget) Destroy(ctx context.Context) ([]model.EvidenceRecord, error) {
 	t.calls = append(t.calls, "destroy")
+	t.destroyContextErr = ctx.Err()
 	return t.destroyEvidence, t.destroyErr
 }
 
@@ -270,14 +326,16 @@ func (p *fakeProbe) Run(context.Context, model.RunningPostgres) (model.CheckRepo
 }
 
 type fakeSink struct {
-	called bool
-	result model.DrillResult
-	err    error
+	called     bool
+	result     model.DrillResult
+	err        error
+	contextErr error
 }
 
-func (s *fakeSink) Write(_ context.Context, result model.DrillResult) error {
+func (s *fakeSink) Write(ctx context.Context, result model.DrillResult) error {
 	s.called = true
 	s.result = result
+	s.contextErr = ctx.Err()
 	return s.err
 }
 

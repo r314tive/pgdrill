@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -25,14 +26,15 @@ type Client interface {
 }
 
 type LifecycleOptions struct {
-	WaitTimeout     time.Duration
-	PollInterval    time.Duration
-	CleanupPVC      bool
-	CleanupOnFail   bool
-	CaptureLogs     bool
-	EventsTail      int
-	PostgresLogTail int
-	Clock           func() time.Time
+	WaitTimeout         time.Duration
+	PollInterval        time.Duration
+	CleanupPVC          bool
+	CleanupOnFail       bool
+	CaptureLogs         bool
+	EventsTail          int
+	PostgresLogTail     int
+	FinalizationTimeout time.Duration
+	Clock               func() time.Time
 }
 
 type WaitOptions struct {
@@ -97,15 +99,19 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 	evidence = append(evidence, waitEvidence...)
 	if err != nil {
 		if c.Options.CaptureLogs {
-			captureEvidence, captureErr := c.Client.CaptureEvidence(ctx, c.Spec, Instance{
+			captureCtx, cancel := finalize.Context(ctx, c.Options.FinalizationTimeout)
+			captureEvidence, captureErr := c.Client.CaptureEvidence(captureCtx, c.Spec, Instance{
 				PodName: c.Spec.InstancePodName,
 				Port:    DefaultPostgresPort,
 			}, c.captureOptions("start-failed"))
+			cancel()
 			evidence = append(evidence, captureEvidence...)
 			err = errors.Join(err, captureErr)
 		}
 		if c.Options.CleanupOnFail {
-			cleanupEvidence, cleanupErr := c.cleanup(ctx)
+			cleanupCtx, cancel := finalize.Context(ctx, c.Options.FinalizationTimeout)
+			cleanupEvidence, cleanupErr := c.cleanup(cleanupCtx)
+			cancel()
 			evidence = append(evidence, cleanupEvidence...)
 			err = errors.Join(err, cleanupErr)
 		}

@@ -33,6 +33,8 @@ Status: complete for the initial CLI engine.
 - Strict `pg_verifybackup` profile.
 - Optional WAL-G `wal-verify` provider check.
 - First CLI drill surface: `pgdrill run`.
+- Signal-aware CLI cancellation with `aborted` reports, structured canceled
+  command evidence, bounded cleanup, and stable automation exit codes.
 - WAL-G local restore planning for `backup-fetch` and `wal-fetch` recovery
   configuration.
 - Barman local restore planning for `barman restore`.
@@ -89,6 +91,7 @@ still required before calling it production-ready.
 - Kubernetes events, pod descriptions, logs, and PVC state as evidence.
 - Bounded Kubernetes event evidence through `events_tail`.
 - Explicit cluster/PVC cleanup evidence.
+- Cancellation-safe CNPG diagnostics, cleanup, and report persistence.
 - CronJob-friendly examples.
 
 ## Phase 4: More Providers And Probes

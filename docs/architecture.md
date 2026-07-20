@@ -99,6 +99,9 @@ are defined in [report-format.md](report-format.md).
 - Probes only inspect a running restored PostgreSQL instance.
 - Evidence keeps raw command output plus normalized status.
 - Cleanup must be explicit and observable.
+- Cancellation stops active provider, target, and probe work. Cleanup and report
+  persistence run on separate bounded finalization contexts so a canceled
+  operation can still produce an `aborted` report.
 - Secrets must be resolved late and redacted in logs and reports.
 - Commands are executed directly from Go; shell wrappers are compatibility
   boundaries, not the control plane.

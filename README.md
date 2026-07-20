@@ -110,6 +110,18 @@ go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```
 
+Long-running commands handle `SIGINT` and `SIGTERM`. The active provider,
+target, or probe command is canceled first; pgdrill then uses a bounded
+finalization context for owned-target cleanup and atomic report persistence.
+Interrupted drills are reported as `aborted` and return exit code `130`.
+
+CLI exit codes are stable automation inputs:
+
+- `0`: command or drill completed successfully
+- `1`: operational or verification failure
+- `2`: invalid CLI usage
+- `130`: operation interrupted or its context canceled
+
 See [docs/roadmap.md](docs/roadmap.md) for the current implementation sequence
 and CLI/UI direction. Probe configuration is documented in
 [docs/probes.md](docs/probes.md).

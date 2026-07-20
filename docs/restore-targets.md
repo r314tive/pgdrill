@@ -30,6 +30,8 @@ The target implementation should keep these operational rules:
   drill proves what actually restored.
 - Cleanup cluster and PVCs explicitly, record cleanup evidence, and make
   cleanup-on-failure configurable.
+- After cancellation, use a bounded context detached from the canceled work
+  context for diagnostics, cleanup, and report persistence.
 
 The Go target should prefer the Kubernetes API. A `kubectl` compatibility layer
 can be useful for early prototypes or constrained environments, but it should
@@ -122,6 +124,12 @@ Kubernetes resources. Backup-provider configuration is optional for target-only
 commands because the referenced CNPG `Backup` is the restore input; read-only
 discovery commands are retained as report evidence when `-discover` is used,
 including when discovery itself fails.
+
+`SIGINT` or `SIGTERM` cancels active `kubectl` and probe commands and produces
+an `aborted` report. If cancellation happens while the cluster is starting,
+automatic cleanup follows `target.kubernetes.cleanup_on_fail`; after a cluster
+has become Ready, target destruction is always attempted with a bounded
+finalization context.
 
 See [../examples/cnpg-target-verify.yaml](../examples/cnpg-target-verify.yaml)
 for a local CLI config example and
