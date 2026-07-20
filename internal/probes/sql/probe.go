@@ -51,7 +51,7 @@ func (p *Probe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckR
 		Path:         p.binary(),
 		Args:         []string{"-X", "-v", "ON_ERROR_STOP=1", "-d", pg.ConnString, "-c", p.cfg.Query},
 		Timeout:      p.cfg.Timeout,
-		RedactValues: p.cfg.RedactValues,
+		RedactValues: append(append([]string{}, p.cfg.RedactValues...), pg.ConnString),
 	})
 	evidence := commandEvidence(result.Evidence)
 	evidenceIDs := []string{evidence.ID}

@@ -47,6 +47,10 @@ Preset config supports only common fields:
 - `timeout`: applied to every generated probe
 - `redact_values`: copied to every generated probe
 
+The runtime connection string is always redacted from durable command
+evidence, including arguments, output, and command-start errors. Use
+`redact_values` for additional secrets in custom query text or native options.
+
 Example:
 
 ```yaml

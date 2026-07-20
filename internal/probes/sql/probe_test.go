@@ -12,6 +12,7 @@ import (
 )
 
 func TestRunPassesWhenPSQLSucceeds(t *testing.T) {
+	const connString = "postgresql://verify:probe-secret@db.example/postgres"
 	runner := &fakeRunner{result: command.Result{
 		Evidence: model.CommandEvidence{
 			Path:       "psql",
@@ -20,17 +21,20 @@ func TestRunPassesWhenPSQLSucceeds(t *testing.T) {
 			Stdout:     "?column?\n1\n",
 		},
 	}}
-	probe := New(Config{Name: "select_1", Query: "select 1", Timeout: time.Second}, runner)
+	probe := New(Config{Name: "select_1", Query: "select 1", Timeout: time.Second, RedactValues: []string{"configured-secret"}}, runner)
 
-	report, err := probe.Run(context.Background(), model.RunningPostgres{ConnString: "postgresql://verify"})
+	report, err := probe.Run(context.Background(), model.RunningPostgres{ConnString: connString})
 	if err != nil {
 		t.Fatalf("run probe: %v", err)
 	}
 	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("expected passed check, got %#v", report.Checks)
 	}
-	if got, want := runner.invocation.Args, []string{"-X", "-v", "ON_ERROR_STOP=1", "-d", "postgresql://verify", "-c", "select 1"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.invocation.Args, []string{"-X", "-v", "ON_ERROR_STOP=1", "-d", connString, "-c", "select 1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected args: got %#v want %#v", got, want)
+	}
+	if got, want := runner.invocation.RedactValues, []string{"configured-secret", connString}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected redactions: got %#v want %#v", got, want)
 	}
 	if len(report.Evidence) != 1 || report.Evidence[0].Kind != model.EvidenceCommand {
 		t.Fatalf("expected command evidence, got %#v", report.Evidence)

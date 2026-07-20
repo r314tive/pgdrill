@@ -46,6 +46,11 @@ explicit path can remain explicit. Raw command output is available only to
 in-process adapters while a command is being normalized and must not be
 reconstructed from the durable report.
 
+Probe invocations automatically treat the complete runtime PostgreSQL
+connection string as sensitive. Reports retain separate target runtime
+attributes such as host and port while replacing the connection argument and
+any repeated occurrences in command output or errors.
+
 Command capture is bounded per stdout/stderr stream. The in-process raw limit is
 64 MiB; exceeding it returns an operation error so parsers never consume a
 partial catalog or status document. Durable `stdout` and `stderr` are redacted

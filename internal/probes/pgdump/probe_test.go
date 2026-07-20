@@ -13,19 +13,23 @@ import (
 )
 
 func TestRunSchemaOnlyByDefault(t *testing.T) {
+	const connString = "postgresql://verify:probe-secret@db.example/postgres"
 	runner := &fakeRunner{result: successResult()}
-	probe := New(Config{Timeout: time.Second}, runner)
+	probe := New(Config{Timeout: time.Second, RedactValues: []string{"configured-secret"}}, runner)
 
-	report, err := probe.Run(context.Background(), model.RunningPostgres{ConnString: "postgresql://verify"})
+	report, err := probe.Run(context.Background(), model.RunningPostgres{ConnString: connString})
 	if err != nil {
 		t.Fatalf("run probe: %v", err)
 	}
 	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("expected passed check, got %#v", report.Checks)
 	}
-	want := []string{"--dbname", "postgresql://verify", "--file", os.DevNull, "--no-owner", "--no-privileges", "--schema-only"}
+	want := []string{"--dbname", connString, "--file", os.DevNull, "--no-owner", "--no-privileges", "--schema-only"}
 	if !reflect.DeepEqual(runner.invocation.Args, want) {
 		t.Fatalf("unexpected args: got %#v want %#v", runner.invocation.Args, want)
+	}
+	if got, want := runner.invocation.RedactValues, []string{"configured-secret", connString}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected redactions: got %#v want %#v", got, want)
 	}
 }
 

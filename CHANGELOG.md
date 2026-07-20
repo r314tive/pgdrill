@@ -28,6 +28,8 @@ called out explicitly even while the major version is `0`.
   access, with local work directory ownership and symlink-boundary checks.
 - Per-run random local-target ownership markers verified before recursive
   cleanup.
+- Automatic redaction of runtime PostgreSQL connection strings from all probe
+  command evidence and errors.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
 - Redaction-safe command start errors for durable failure reporting.
