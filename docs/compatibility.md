@@ -53,9 +53,30 @@ tests using controlled executables. Real PostgreSQL startup and provider
 repositories still require environment-specific validation.
 
 The CNPG target has manifest, discovery, lifecycle, failure, evidence, and CLI
-tests behind a `kubectl` compatibility client. A disposable live-cluster drill
-is still required before describing the target as production-ready. CNPG
-operator and PostgreSQL version compatibility is not yet a published matrix.
+tests behind a `kubectl` compatibility client.
+
+### CNPG Field Validation
+
+On 2026-07-20, the exact public `v0.1.0-alpha.9` Linux amd64 archive completed
+one end-to-end drill in a disposable CNPG 1.26.0 environment running PostgreSQL
+15.13. The drill selected the latest completed CNPG `Backup`, restored it
+through the operator's `barmanObjectStore` recovery path, waited for the
+temporary cluster to become Ready, version-checked `pg_isready` and `psql`
+inside the restored pod, passed readiness and `select 1` probes over the local
+Unix socket, captured evidence, and removed the owned Cluster and PVC. The
+end-to-end report window was approximately 56 minutes and 39 seconds; this is
+an observation from that environment, not an RTO guarantee.
+
+The release archive checksum matched its published checksum manifest before
+execution. Earlier controlled `v0.1.0-alpha.6` runs separately exercised
+signal cancellation and cleanup and exposed the unauthenticated service-probe
+gap that the in-pod local-socket transport replaced.
+
+This is one validation point, not a production support matrix. Timestamp PITR,
+additional PostgreSQL majors, other CNPG/operator versions, storage classes,
+and failure modes still require field drills. Exercising CNPG's
+`barmanObjectStore` bootstrap does not validate pgdrill's native Barman CLI
+adapter against a real Barman repository.
 
 ## PostgreSQL Versions
 

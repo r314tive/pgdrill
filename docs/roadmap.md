@@ -84,8 +84,8 @@ pgdrill catalog list -f pgdrill.yaml
 
 ## Phase 3: Kubernetes / CNPG Target
 
-Status: implemented for guarded CNPG drills; field validation is in progress and
-does not yet constitute a broad production compatibility claim.
+Status: implemented and field-exercised in one disposable CNPG 1.26.0 /
+PostgreSQL 15.13 environment; a broader compatibility matrix remains pending.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
@@ -112,6 +112,9 @@ does not yet constitute a broad production compatibility claim.
   failures.
 - Cancellation-safe CNPG diagnostics, cleanup, and report persistence.
 - CronJob-friendly examples.
+- Exact public `v0.1.0-alpha.9` Linux amd64 artifact exercised through latest
+  backup recovery, in-pod client preflight, readiness and SQL probes, evidence
+  capture, and ownership-scoped cleanup.
 
 ## Phase 4: More Providers And Probes
 
@@ -146,9 +149,9 @@ be a separate control plane.
 
 ## Release Readiness
 
-Status: implemented and exercised through branch and tag workflows; each release
-still requires its own green CI, immutable tag, published assets, and checksum
-verification.
+Status: implemented and exercised through the published `v0.1.0-alpha.9`
+prerelease; each future release still requires its own green CI, immutable tag,
+published assets, and checksum verification.
 
 - Non-mutating format, module, vet, and test gate.
 - Minimum and pinned release Go toolchain checks.
@@ -157,6 +160,8 @@ verification.
   checksums.
 - Changelog-derived release notes and annotated-tag validation.
 - Read-only build job separated from the write-enabled publication job.
+- Cross-host checksum parity between all four local release archives and the
+  corresponding published `v0.1.0-alpha.9` assets.
 - Dependabot, contribution, security, compatibility, issue, and pull request
   policies.
 

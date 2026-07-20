@@ -13,6 +13,10 @@ called out explicitly even while the major version is `0`.
 - CNPG readiness evidence now compacts repeated identical polling states while
   retaining each raw state transition, observation count, and first/last
   observation timestamps.
+- Compatibility documentation now records the first end-to-end disposable CNPG
+  field drill: the exact public `v0.1.0-alpha.9` Linux amd64 artifact restored a
+  latest backup on CNPG 1.26.0 and PostgreSQL 15.13, passed in-pod readiness and
+  SQL probes, captured evidence, and completed ownership-scoped cleanup.
 
 ## [0.1.0-alpha.9] - 2026-07-20
 
