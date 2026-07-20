@@ -22,6 +22,12 @@ func (s JSONFileSink) Write(ctx context.Context, result model.DrillResult) error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := normalizeSchemaVersion(&result); err != nil {
+		return err
+	}
+	if err := validateProducedReport(result); err != nil {
+		return fmt.Errorf("validate report: %w", err)
+	}
 
 	dir := filepath.Dir(s.Path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -108,12 +114,18 @@ func ReadJSON(reader io.Reader) (model.DrillResult, error) {
 	if err := normalizeSchemaVersion(&result); err != nil {
 		return model.DrillResult{}, err
 	}
+	if err := Validate(result); err != nil {
+		return model.DrillResult{}, fmt.Errorf("validate report: %w", err)
+	}
 	return result, nil
 }
 
 func WriteJSON(writer io.Writer, result model.DrillResult) error {
 	if err := normalizeSchemaVersion(&result); err != nil {
 		return err
+	}
+	if err := Validate(result); err != nil {
+		return fmt.Errorf("validate report: %w", err)
 	}
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")

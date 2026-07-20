@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,7 +24,13 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 		PGDrillVersion: "pgdrill v0.1.0-test",
 		Cluster:        "production-main",
 		Provider:       model.ProviderWALG,
-		Backup:         model.Backup{ID: "wal-g:base_1", Provider: model.ProviderWALG, Status: model.BackupStatusAvailable},
+		Backup: model.Backup{
+			ID:         "wal-g:base_1",
+			Provider:   model.ProviderWALG,
+			ProviderID: "base_1",
+			Kind:       model.BackupKindFull,
+			Status:     model.BackupStatusAvailable,
+		},
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill/main"},
 		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
 		StartedAt:      startedAt,
@@ -111,10 +118,14 @@ func TestJSONFileSinkReplacesExistingFile(t *testing.T) {
 		t.Fatalf("seed report file: %v", err)
 	}
 
-	err := (JSONFileSink{Path: path}).Write(context.Background(), model.DrillResult{
-		ID:     "new",
-		Status: model.DrillStatusFailed,
-	})
+	result := validTestResult()
+	result.ID = "new"
+	result.Status = model.DrillStatusFailed
+	result.Failure = &model.DrillFailure{
+		Stage:   model.DrillStageProbeExecution,
+		Message: "probe failed",
+	}
+	err := (JSONFileSink{Path: path}).Write(context.Background(), result)
 	if err != nil {
 		t.Fatalf("write replacement report: %v", err)
 	}
@@ -167,7 +178,9 @@ func TestJSONFileSinkReplacesFinalSymlinkWithoutFollowingIt(t *testing.T) {
 		t.Skipf("create report symlink: %v", err)
 	}
 
-	if err := (JSONFileSink{Path: reportPath}).Write(context.Background(), model.DrillResult{ID: "safe", Status: model.DrillStatusPassed}); err != nil {
+	result := validTestResult()
+	result.ID = "safe"
+	if err := (JSONFileSink{Path: reportPath}).Write(context.Background(), result); err != nil {
 		t.Fatalf("write report over symlink: %v", err)
 	}
 	outside, err := os.ReadFile(outsidePath)
@@ -184,7 +197,14 @@ func TestJSONFileSinkReplacesFinalSymlinkWithoutFollowingIt(t *testing.T) {
 }
 
 func TestReadJSONNormalizesLegacyReportSchema(t *testing.T) {
-	result, err := ReadJSON(strings.NewReader(`{"id":"legacy","status":"passed"}`))
+	legacy := validTestResult()
+	legacy.SchemaVersion = ""
+	legacy.ID = "legacy"
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy report: %v", err)
+	}
+	result, err := ReadJSON(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("read legacy report: %v", err)
 	}
@@ -209,7 +229,10 @@ func TestReadJSONRejectsMultipleValues(t *testing.T) {
 
 func TestWriteJSONAddsSchemaVersion(t *testing.T) {
 	var output bytes.Buffer
-	if err := WriteJSON(&output, model.DrillResult{ID: "new"}); err != nil {
+	result := validTestResult()
+	result.SchemaVersion = ""
+	result.ID = "new"
+	if err := WriteJSON(&output, result); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	if !strings.Contains(output.String(), `"schema_version": "`+model.CurrentReportSchemaVersion+`"`) {
@@ -229,12 +252,22 @@ func TestReadJSONPreservesStructuredFailure(t *testing.T) {
 	result, err := ReadJSON(strings.NewReader(`{
   "schema_version": "pgdrill.report/v1alpha1",
   "id": "failed-drill",
+  "target": {"type": "local"},
+  "recovery_target": {"type": "latest"},
+  "started_at": "2026-07-20T11:59:00Z",
+  "finished_at": "2026-07-20T12:00:00Z",
   "status": "failed",
   "failure": {
     "stage": "backup_selection",
     "message": "no eligible backup",
     "evidence_ids": ["catalog"]
-  }
+  },
+  "evidence": [{
+    "id": "catalog",
+    "kind": "check",
+    "source": "test",
+    "collected_at": "2026-07-20T12:00:00Z"
+  }]
 }`))
 	if err != nil {
 		t.Fatalf("read failed report: %v", err)
@@ -251,6 +284,11 @@ func TestReadJSONPreservesCommandOutputBounds(t *testing.T) {
 	result, err := ReadJSON(strings.NewReader(`{
   "schema_version": "pgdrill.report/v1alpha1",
   "id": "bounded-output",
+  "target": {"type": "local"},
+  "recovery_target": {"type": "latest"},
+  "started_at": "2026-07-20T11:59:00Z",
+  "finished_at": "2026-07-20T12:00:00Z",
+  "status": "passed",
   "evidence": [{
     "id": "command-1",
     "kind": "command",
@@ -274,5 +312,26 @@ func TestReadJSONPreservesCommandOutputBounds(t *testing.T) {
 	command := result.Evidence[0].Command
 	if command == nil || command.Stdout != "preview" || command.StdoutBytes != 2097152 || !command.StdoutTruncated {
 		t.Fatalf("unexpected command output metadata %#v", command)
+	}
+}
+
+func validTestResult() model.DrillResult {
+	startedAt := time.Date(2026, 7, 20, 11, 59, 0, 0, time.UTC)
+	return model.DrillResult{
+		SchemaVersion: model.CurrentReportSchemaVersion,
+		ID:            "drill-valid",
+		Provider:      model.ProviderWALG,
+		Backup: model.Backup{
+			ID:         "wal-g:base_1",
+			Provider:   model.ProviderWALG,
+			ProviderID: "base_1",
+			Kind:       model.BackupKindFull,
+			Status:     model.BackupStatusAvailable,
+		},
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		StartedAt:      startedAt,
+		FinishedAt:     startedAt.Add(time.Minute),
+		Status:         model.DrillStatusPassed,
 	}
 }

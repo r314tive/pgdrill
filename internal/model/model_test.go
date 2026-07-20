@@ -36,6 +36,41 @@ func TestProjectOverviewDistinguishesCanonicalTargetsFromCommandCapabilities(t *
 	}
 }
 
+func TestCanonicalEnumPredicates(t *testing.T) {
+	overview := ProjectOverview()
+	for _, provider := range overview.Providers {
+		if !provider.IsKnown() {
+			t.Errorf("expected provider %q to be known", provider)
+		}
+	}
+	for _, target := range overview.RestoreTargets {
+		if !target.IsKnown() {
+			t.Errorf("expected target %q to be known", target)
+		}
+	}
+	for _, target := range overview.RecoveryTargets {
+		if !target.IsKnown() {
+			t.Errorf("expected recovery target %q to be known", target)
+		}
+	}
+	for _, probe := range overview.Probes {
+		if !probe.IsKnown() {
+			t.Errorf("expected probe %q to be known", probe)
+		}
+	}
+	for _, tool := range overview.Tools {
+		if !tool.IsKnown() {
+			t.Errorf("expected tool %q to be known", tool)
+		}
+	}
+	if ProviderType("future").IsKnown() || RestoreTargetType("future").IsKnown() ||
+		RecoveryTargetType("future").IsKnown() || ProbeType("future").IsKnown() || ToolType("future").IsKnown() ||
+		BackupKind("future").IsKnown() || BackupStatus("future").IsKnown() ||
+		CheckStatusUnknown.IsTerminal() || DrillStatusUnknown.IsTerminal() || EvidenceKind("future").IsKnown() {
+		t.Fatal("unknown canonical enum value was accepted")
+	}
+}
+
 func TestRecoveryTargetValidate(t *testing.T) {
 	inclusive := true
 	tests := []struct {

@@ -22,6 +22,13 @@ fields without changing the schema identifier. Removing fields, changing field
 types or meanings, or changing required semantics requires a new schema
 version.
 
+Schema recognition is not the only read gate. Current reports are validated for
+canonical enum values, required identity and timestamps, timestamp ordering,
+provider-scoped backup identity, valid WAL LSN/timeline values, terminal status
+coherence, unique evidence IDs, and resolvable check/failure evidence links.
+Unknown JSON fields remain forward-compatible, but a recognized schema with
+contradictory contents is rejected rather than trusted.
+
 ## Canonical Object
 
 The top-level object is `model.DrillResult` and contains:
@@ -72,7 +79,9 @@ The JSON file sink writes a private temporary file, syncs it, atomically
 replaces the configured report path, and syncs the parent directory. Newly
 created report directories and files are owner-only by default. Replacing a
 final symlink does not follow it; existing parent-directory aliases remain an
-operator-controlled path choice.
+operator-controlled path choice. Producer validation runs before the sink
+creates the report directory, so an invalid in-memory report cannot replace a
+previous valid artifact.
 
 ## Failure Contract
 
@@ -107,7 +116,8 @@ New failed and aborted reports include a `failure` object:
 optional `evidence_ids` list links records already present in top-level
 `evidence`. Legacy reports can have `status: failed` or `status: aborted`
 without `failure`; readers preserve compatibility and metrics expose their
-failure stage as `unknown`.
+failure stage as `unknown`. New failed and aborted reports are rejected at the
+producer boundary if structured failure details are absent.
 
 Prometheus output includes one `pgdrill_failure_info` sample with a bounded
 `stage` label. Successful reports use `stage="none"`; the diagnostic message is
@@ -118,6 +128,11 @@ Prometheus samples include the configured cluster name as a `cluster` label.
 Legacy reports or configs without `cluster.name` use `cluster="unknown"`; the
 drill ID is deliberately not a label because it would create an unbounded time
 series for every execution.
+
+Canonical enum labels are bounded as well. Unknown provider, target, recovery
+target, probe, check-status, evidence-kind, or failure-stage values export as
+`unknown` rather than creating arbitrary metric series. Check names and cluster
+names remain operator-defined labels and should come from stable configuration.
 
 ## Consumer Rules
 

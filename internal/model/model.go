@@ -16,6 +16,15 @@ const (
 	ProviderPGProbackup ProviderType = "pg_probackup"
 )
 
+func (p ProviderType) IsKnown() bool {
+	switch p {
+	case ProviderWALG, ProviderBarman, ProviderPGBackRest, ProviderPGProbackup:
+		return true
+	default:
+		return false
+	}
+}
+
 type RestoreTargetType string
 
 const (
@@ -23,6 +32,15 @@ const (
 	RestoreTargetContainer  RestoreTargetType = "container"
 	RestoreTargetKubernetes RestoreTargetType = "kubernetes"
 )
+
+func (t RestoreTargetType) IsKnown() bool {
+	switch t {
+	case RestoreTargetLocal, RestoreTargetContainer, RestoreTargetKubernetes:
+		return true
+	default:
+		return false
+	}
+}
 
 type RecoveryTargetType string
 
@@ -35,6 +53,20 @@ const (
 	RecoveryTargetRestorePoint RecoveryTargetType = "restore_point"
 )
 
+func (t RecoveryTargetType) IsKnown() bool {
+	switch t {
+	case RecoveryTargetImmediate,
+		RecoveryTargetLatest,
+		RecoveryTargetTimestamp,
+		RecoveryTargetLSN,
+		RecoveryTargetXID,
+		RecoveryTargetRestorePoint:
+		return true
+	default:
+		return false
+	}
+}
+
 type ProbeType string
 
 const (
@@ -43,6 +75,15 @@ const (
 	ProbeAMCheck   ProbeType = "amcheck"
 	ProbePGDump    ProbeType = "pg_dump"
 )
+
+func (p ProbeType) IsKnown() bool {
+	switch p {
+	case ProbePGIsReady, ProbeSQL, ProbeAMCheck, ProbePGDump:
+		return true
+	default:
+		return false
+	}
+}
 
 type ToolType string
 
@@ -59,6 +100,25 @@ const (
 	ToolPostgres       ToolType = "postgres"
 	ToolKubectl        ToolType = "kubectl"
 )
+
+func (t ToolType) IsKnown() bool {
+	switch t {
+	case ToolWALG,
+		ToolBarman,
+		ToolPGBackRest,
+		ToolPGProbackup,
+		ToolPGVerifyBackup,
+		ToolPGAMCheck,
+		ToolPGDump,
+		ToolPGIsReady,
+		ToolPSQL,
+		ToolPostgres,
+		ToolKubectl:
+		return true
+	default:
+		return false
+	}
+}
 
 type Overview struct {
 	Providers          []ProviderType       `json:"providers"`
@@ -134,6 +194,20 @@ const (
 	BackupKindLogical      BackupKind = "logical"
 )
 
+func (k BackupKind) IsKnown() bool {
+	switch k {
+	case BackupKindUnknown,
+		BackupKindFull,
+		BackupKindDifferential,
+		BackupKindIncremental,
+		BackupKindDelta,
+		BackupKindLogical:
+		return true
+	default:
+		return false
+	}
+}
+
 type BackupStatus string
 
 const (
@@ -144,6 +218,20 @@ const (
 	BackupStatusFailed        BackupStatus = "failed"
 	BackupStatusInvalid       BackupStatus = "invalid"
 )
+
+func (s BackupStatus) IsKnown() bool {
+	switch s {
+	case BackupStatusUnknown,
+		BackupStatusAvailable,
+		BackupStatusWaitingForWAL,
+		BackupStatusRunning,
+		BackupStatusFailed,
+		BackupStatusInvalid:
+		return true
+	default:
+		return false
+	}
+}
 
 type WALRange struct {
 	StartSegment string `json:"start_segment,omitempty"`
@@ -345,6 +433,15 @@ const (
 	CheckStatusSkipped CheckStatus = "skipped"
 )
 
+func (s CheckStatus) IsTerminal() bool {
+	switch s {
+	case CheckStatusPassed, CheckStatusFailed, CheckStatusWarning, CheckStatusSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
 type Check struct {
 	Name        string            `json:"name"`
 	Probe       ProbeType         `json:"probe,omitempty"`
@@ -367,6 +464,15 @@ const (
 	DrillStatusFailed  DrillStatus = "failed"
 	DrillStatusAborted DrillStatus = "aborted"
 )
+
+func (s DrillStatus) IsTerminal() bool {
+	switch s {
+	case DrillStatusPassed, DrillStatusFailed, DrillStatusAborted:
+		return true
+	default:
+		return false
+	}
+}
 
 const CurrentReportSchemaVersion = "pgdrill.report/v1alpha1"
 
@@ -462,6 +568,15 @@ const (
 	EvidencePlan    EvidenceKind = "plan"
 	EvidenceRuntime EvidenceKind = "runtime"
 )
+
+func (k EvidenceKind) IsKnown() bool {
+	switch k {
+	case EvidenceCommand, EvidenceCheck, EvidenceFile, EvidencePlan, EvidenceRuntime:
+		return true
+	default:
+		return false
+	}
+}
 
 type EvidenceRecord struct {
 	ID          string            `json:"id"`

@@ -22,9 +22,9 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 	}
 	baseLabels := []metricLabel{
 		{name: "cluster", value: labelOrUnknown(result.Cluster)},
-		{name: "provider", value: labelOrUnknown(string(result.Provider))},
-		{name: "target_type", value: labelOrUnknown(string(result.Target.Type))},
-		{name: "recovery_target", value: labelOrUnknown(string(result.RecoveryTarget.Type))},
+		{name: "provider", value: providerLabel(result.Provider)},
+		{name: "target_type", value: targetTypeLabel(result.Target.Type)},
+		{name: "recovery_target", value: recoveryTargetLabel(result.RecoveryTarget.Type)},
 	}
 	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_report_info Report format information."); err != nil {
 		return err
@@ -155,10 +155,10 @@ func checkCountSamples(cluster string, provider model.ProviderType, checks []mod
 	for _, check := range checks {
 		labels := []metricLabel{
 			{name: "cluster", value: labelOrUnknown(cluster)},
-			{name: "provider", value: labelOrUnknown(string(provider))},
+			{name: "provider", value: providerLabel(provider)},
 			{name: "check", value: labelOrUnknown(check.Name)},
-			{name: "probe", value: labelOrUnknown(string(check.Probe))},
-			{name: "status", value: labelOrUnknown(string(check.Status))},
+			{name: "probe", value: probeLabel(check.Probe)},
+			{name: "status", value: checkStatusLabel(check.Status)},
 		}
 		key := metricKey(labels)
 		counts[key]++
@@ -173,8 +173,8 @@ func evidenceCountSamples(cluster string, provider model.ProviderType, records [
 	for _, record := range records {
 		labels := []metricLabel{
 			{name: "cluster", value: labelOrUnknown(cluster)},
-			{name: "provider", value: labelOrUnknown(string(provider))},
-			{name: "kind", value: labelOrUnknown(string(record.Kind))},
+			{name: "provider", value: providerLabel(provider)},
+			{name: "kind", value: evidenceKindLabel(record.Kind)},
 		}
 		key := metricKey(labels)
 		counts[key]++
@@ -245,6 +245,48 @@ func labelOrUnknown(value string) string {
 		return "unknown"
 	}
 	return value
+}
+
+func providerLabel(value model.ProviderType) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func targetTypeLabel(value model.RestoreTargetType) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func recoveryTargetLabel(value model.RecoveryTargetType) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func probeLabel(value model.ProbeType) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func checkStatusLabel(value model.CheckStatus) string {
+	if !value.IsTerminal() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func evidenceKindLabel(value model.EvidenceKind) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
 }
 
 func normalizeDrillStatus(status model.DrillStatus) model.DrillStatus {

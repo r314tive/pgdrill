@@ -104,6 +104,43 @@ func TestWritePrometheusBoundsUnknownFailureStages(t *testing.T) {
 	}
 }
 
+func TestWritePrometheusBoundsUnknownCanonicalEnums(t *testing.T) {
+	var buf bytes.Buffer
+	result := model.DrillResult{
+		Provider:       "private-provider",
+		Target:         model.TargetSpec{Type: "private-target"},
+		RecoveryTarget: model.RecoveryTarget{Type: "private-recovery"},
+		Status:         model.DrillStatusPassed,
+		Checks: []model.Check{{
+			Name:   "check",
+			Probe:  "private-probe",
+			Status: "private-status",
+		}},
+		Evidence: []model.EvidenceRecord{{Kind: "private-kind"}},
+	}
+	if err := WritePrometheus(&buf, result); err != nil {
+		t.Fatalf("write prometheus: %v", err)
+	}
+	output := buf.String()
+	for _, value := range []string{"private-provider", "private-target", "private-recovery", "private-probe", "private-status", "private-kind"} {
+		if strings.Contains(output, value) {
+			t.Fatalf("unexpected unbounded label %q in:\n%s", value, output)
+		}
+	}
+	for _, expected := range []string{
+		`provider="unknown"`,
+		`target_type="unknown"`,
+		`recovery_target="unknown"`,
+		`probe="unknown"`,
+		`status="unknown"`,
+		`kind="unknown"`,
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected bounded label %q in:\n%s", expected, output)
+		}
+	}
+}
+
 func TestWritePrometheusNormalizesMissingValues(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WritePrometheus(&buf, model.DrillResult{}); err != nil {

@@ -28,10 +28,10 @@ func validateBackupCatalog(provider model.ProviderType, catalog model.BackupCata
 		if want := model.ProviderScopedID(provider, backup.ProviderID); backup.ID != want {
 			return fmt.Errorf("backup id %q does not match provider-scoped id %q", backup.ID, want)
 		}
-		if !knownBackupKind(backup.Kind) {
+		if !backup.Kind.IsKnown() {
 			return fmt.Errorf("backup %q has unsupported kind %q", backup.ID, backup.Kind)
 		}
-		if !knownBackupStatus(backup.Status) {
+		if !backup.Status.IsKnown() {
 			return fmt.Errorf("backup %q has unsupported status %q", backup.ID, backup.Status)
 		}
 		if _, ok := seen[backup.ID]; ok {
@@ -66,7 +66,7 @@ func validateCheckReport(report model.CheckReport, requireChecks bool) error {
 		if strings.TrimSpace(check.Name) == "" {
 			return fmt.Errorf("check %d name is required", i)
 		}
-		if !completedCheckStatus(check.Status) {
+		if !check.Status.IsTerminal() {
 			return fmt.Errorf("check %q has non-terminal status %q", check.Name, check.Status)
 		}
 	}
@@ -136,7 +136,7 @@ func validateRestorePlan(provider model.ProviderType, backup model.Backup, targe
 			return fmt.Errorf("restore step %q has no command or file operations", name)
 		}
 		if step.Command != nil {
-			if !knownTool(step.Command.Tool) {
+			if !step.Command.Tool.IsKnown() {
 				return fmt.Errorf("restore step %q has unsupported command tool %q", name, step.Command.Tool)
 			}
 			if strings.TrimSpace(step.Command.Path) == "" {
@@ -150,63 +150,4 @@ func validateRestorePlan(provider model.ProviderType, backup model.Backup, targe
 		}
 	}
 	return nil
-}
-
-func knownBackupKind(kind model.BackupKind) bool {
-	switch kind {
-	case model.BackupKindUnknown,
-		model.BackupKindFull,
-		model.BackupKindDifferential,
-		model.BackupKindIncremental,
-		model.BackupKindDelta,
-		model.BackupKindLogical:
-		return true
-	default:
-		return false
-	}
-}
-
-func knownBackupStatus(status model.BackupStatus) bool {
-	switch status {
-	case model.BackupStatusUnknown,
-		model.BackupStatusAvailable,
-		model.BackupStatusWaitingForWAL,
-		model.BackupStatusRunning,
-		model.BackupStatusFailed,
-		model.BackupStatusInvalid:
-		return true
-	default:
-		return false
-	}
-}
-
-func completedCheckStatus(status model.CheckStatus) bool {
-	switch status {
-	case model.CheckStatusPassed,
-		model.CheckStatusFailed,
-		model.CheckStatusWarning,
-		model.CheckStatusSkipped:
-		return true
-	default:
-		return false
-	}
-}
-
-func knownTool(tool model.ToolType) bool {
-	switch tool {
-	case model.ToolWALG,
-		model.ToolBarman,
-		model.ToolPGBackRest,
-		model.ToolPGProbackup,
-		model.ToolPGVerifyBackup,
-		model.ToolPGAMCheck,
-		model.ToolPGDump,
-		model.ToolPGIsReady,
-		model.ToolPSQL,
-		model.ToolPostgres,
-		model.ToolKubectl:
-		return true
-	default:
-		return false
-	}
 }

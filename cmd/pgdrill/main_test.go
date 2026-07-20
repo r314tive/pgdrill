@@ -1729,9 +1729,11 @@ func TestReportShowCommandText(t *testing.T) {
 		Cluster:        "production-main",
 		Provider:       model.ProviderWALG,
 		Backup: model.Backup{
-			ID:       "wal-g:base_1",
-			Provider: model.ProviderWALG,
-			Status:   model.BackupStatusAvailable,
+			ID:         "wal-g:base_1",
+			Provider:   model.ProviderWALG,
+			ProviderID: "base_1",
+			Kind:       model.BackupKindFull,
+			Status:     model.BackupStatusAvailable,
 		},
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill/main"},
 		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
@@ -1746,7 +1748,12 @@ func TestReportShowCommandText(t *testing.T) {
 			{Name: "catalog", Status: model.CheckStatusPassed},
 			{Name: "select_1", Probe: model.ProbeSQL, Status: model.CheckStatusFailed, Message: "query failed\nconnection closed"},
 		},
-		Evidence: []model.EvidenceRecord{{ID: "evidence-1"}},
+		Evidence: []model.EvidenceRecord{{
+			ID:          "evidence-1",
+			Kind:        model.EvidenceCheck,
+			Source:      "test",
+			CollectedAt: mustTime(t, "2026-07-06T01:03:03Z"),
+		}},
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -1778,9 +1785,13 @@ func TestReportShowCommandText(t *testing.T) {
 func TestReportShowCommandJSON(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "drill.json")
 	writeDrillReport(t, reportPath, model.DrillResult{
-		ID:       "drill-json",
-		Provider: model.ProviderBarman,
-		Status:   model.DrillStatusPassed,
+		ID:             "drill-json",
+		Provider:       model.ProviderBarman,
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		StartedAt:      mustTime(t, "2026-07-06T01:02:03Z"),
+		FinishedAt:     mustTime(t, "2026-07-06T01:03:03Z"),
+		Status:         model.DrillStatusPassed,
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -1811,7 +1822,8 @@ func TestReportMetricsCommandPrometheus(t *testing.T) {
 			Type: model.RestoreTargetLocal,
 		},
 		RecoveryTarget: model.RecoveryTarget{
-			Type: model.RecoveryTargetTimestamp,
+			Type:  model.RecoveryTargetTimestamp,
+			Value: "2026-07-06T01:05:03Z",
 		},
 		StartedAt:  mustTime(t, "2026-07-06T01:02:03Z"),
 		FinishedAt: mustTime(t, "2026-07-06T01:04:03Z"),

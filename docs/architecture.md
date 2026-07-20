@@ -128,6 +128,12 @@ The initial report format is the versioned JSON encoding of
 contract instead of reconstructing drill state from logs. Compatibility rules
 are defined in [report-format.md](report-format.md).
 
+The durable report is validated at both producer and consumer boundaries. This
+gate covers top-level terminal-state coherence, canonical identities and enums,
+command evidence shape, unique evidence IDs, and every check/failure evidence
+reference. Adapter protocol validation protects execution decisions; report
+validation independently protects stored evidence and downstream automation.
+
 CLI execution injects a config-derived `Preflight` into the engine. Before that
 native-tool preflight, an optional read-only `TargetValidator` rejects invalid
 local ownership or target preconditions. The native preflight then records the

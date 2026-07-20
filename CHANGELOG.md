@@ -78,6 +78,9 @@ called out explicitly even while the major version is `0`.
   terminal check reports, restore plans, target implementation identity, and
   probe reports before target mutation. Selectors now authorize only a catalog
   backup ID; the canonical discovered object remains authoritative.
+- Producer and consumer validation for versioned drill reports, including
+  terminal-state coherence, canonical enum and backup identity checks, command
+  evidence shape, unique evidence IDs, and resolvable check/failure links.
 
 ### Changed
 
@@ -93,6 +96,13 @@ called out explicitly even while the major version is `0`.
   environment variables are retained for the recovery runtime.
 - Provider restore plans normalize a zero-value recovery target to canonical
   `latest` before constructing commands and returning the plan.
+- Recognized `v1alpha1` reports with contradictory or dangling structured data
+  are now rejected. Legacy failed/aborted reports may still omit structured
+  failure details, while new producers require them before creating or
+  replacing a report file.
+- Prometheus export bounds unknown provider, target, recovery-target, probe,
+  check-status, evidence-kind, and failure-stage values to `unknown` instead of
+  admitting arbitrary enum labels.
 - Prometheus samples now include a `cluster` label; update selectors or
   recording rules that match the previous label set. Legacy reports and configs
   without `cluster.name` export `cluster="unknown"`.
