@@ -10,6 +10,8 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Configured cluster identity in standard local and CNPG drill reports and text
+  summaries. Legacy reports without a cluster remain readable.
 - Read-only `pgdrill doctor` preflight for strict config validation, required
   executable discovery, native version capture, structured checks, redacted
   command evidence, and text/JSON output.
@@ -75,6 +77,9 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- Prometheus samples now include a `cluster` label; update selectors or
+  recording rules that match the previous label set. Legacy reports and configs
+  without `cluster.name` export `cluster="unknown"`.
 - `pgdrill run` now rejects non-local target types during semantic config
   validation, before adapter construction or native preflight. `pgdrill
   explain -format json` separately reports canonical target types and the

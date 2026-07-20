@@ -21,6 +21,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		return err
 	}
 	baseLabels := []metricLabel{
+		{name: "cluster", value: labelOrUnknown(result.Cluster)},
 		{name: "provider", value: labelOrUnknown(string(result.Provider))},
 		{name: "target_type", value: labelOrUnknown(string(result.Target.Type))},
 		{name: "recovery_target", value: labelOrUnknown(string(result.RecoveryTarget.Type))},
@@ -31,7 +32,10 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_report_info gauge"); err != nil {
 		return err
 	}
-	if err := writeMetric(writer, "pgdrill_report_info", []metricLabel{{name: "schema_version", value: result.SchemaVersion}}, "1"); err != nil {
+	if err := writeMetric(writer, "pgdrill_report_info", []metricLabel{
+		{name: "cluster", value: labelOrUnknown(result.Cluster)},
+		{name: "schema_version", value: result.SchemaVersion},
+	}, "1"); err != nil {
 		return err
 	}
 
@@ -104,7 +108,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_checks_total gauge"); err != nil {
 		return err
 	}
-	for _, sample := range checkCountSamples(result.Provider, result.Checks) {
+	for _, sample := range checkCountSamples(result.Cluster, result.Provider, result.Checks) {
 		if err := writeMetric(writer, "pgdrill_checks_total", sample.labels, strconv.Itoa(sample.value)); err != nil {
 			return err
 		}
@@ -116,7 +120,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_evidence_records_total gauge"); err != nil {
 		return err
 	}
-	for _, sample := range evidenceCountSamples(result.Provider, result.Evidence) {
+	for _, sample := range evidenceCountSamples(result.Cluster, result.Provider, result.Evidence) {
 		if err := writeMetric(writer, "pgdrill_evidence_records_total", sample.labels, strconv.Itoa(sample.value)); err != nil {
 			return err
 		}
@@ -145,11 +149,12 @@ type metricSample struct {
 	value  int
 }
 
-func checkCountSamples(provider model.ProviderType, checks []model.Check) []metricSample {
+func checkCountSamples(cluster string, provider model.ProviderType, checks []model.Check) []metricSample {
 	counts := map[string]int{}
 	labelsByKey := map[string][]metricLabel{}
 	for _, check := range checks {
 		labels := []metricLabel{
+			{name: "cluster", value: labelOrUnknown(cluster)},
 			{name: "provider", value: labelOrUnknown(string(provider))},
 			{name: "check", value: labelOrUnknown(check.Name)},
 			{name: "probe", value: labelOrUnknown(string(check.Probe))},
@@ -162,11 +167,12 @@ func checkCountSamples(provider model.ProviderType, checks []model.Check) []metr
 	return samplesFromCounts(counts, labelsByKey)
 }
 
-func evidenceCountSamples(provider model.ProviderType, records []model.EvidenceRecord) []metricSample {
+func evidenceCountSamples(cluster string, provider model.ProviderType, records []model.EvidenceRecord) []metricSample {
 	counts := map[string]int{}
 	labelsByKey := map[string][]metricLabel{}
 	for _, record := range records {
 		labels := []metricLabel{
+			{name: "cluster", value: labelOrUnknown(cluster)},
 			{name: "provider", value: labelOrUnknown(string(provider))},
 			{name: "kind", value: labelOrUnknown(string(record.Kind))},
 		}

@@ -143,6 +143,7 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		Sink:           report.JSONFileSink{Path: cfg.Report.Path},
 		PGDrillVersion: version.String(),
 	}.Run(ctx, core.DrillRequest{
+		Cluster:        cfg.Cluster.Name,
 		Target:         cfg.TargetSpec(),
 		RecoveryTarget: cfg.RecoveryTarget(),
 	})
@@ -750,6 +751,7 @@ func newCNPGTargetVerifyResult(cfg config.Config, sourceCluster, backupName, ver
 		SchemaVersion:  model.CurrentReportSchemaVersion,
 		PGDrillVersion: version.String(),
 		ID:             targetVerifyID(drillID, startedAt),
+		Cluster:        strings.TrimSpace(cfg.Cluster.Name),
 		Provider:       "",
 		Backup: model.Backup{
 			ID:          backupID,
@@ -1069,6 +1071,7 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"pgdrill", valueOrDash(result.PGDrillVersion)},
 		{"ID", valueOrDash(result.ID)},
+		{"Cluster", valueOrDash(result.Cluster)},
 		{"Status", string(result.Status)},
 	}
 	if result.Failure != nil {
@@ -1159,6 +1162,7 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"pgdrill", valueOrDash(result.PGDrillVersion)},
 		{"ID", valueOrDash(result.ID)},
+		{"Cluster", valueOrDash(result.Cluster)},
 		{"Status", string(result.Status)},
 	}
 	if result.Failure != nil {

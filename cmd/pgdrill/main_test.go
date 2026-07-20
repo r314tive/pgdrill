@@ -794,6 +794,9 @@ report:
 	if result.ID != "cnpg-drill-1" || result.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected result id/status %#v", result)
 	}
+	if result.Cluster != "altbox" || !strings.Contains(stdout.String(), "Cluster   altbox") {
+		t.Fatalf("expected configured cluster in report and summary: cluster=%q summary=%s", result.Cluster, stdout.String())
+	}
 	if result.SchemaVersion != model.CurrentReportSchemaVersion {
 		t.Fatalf("unexpected report schema version %q", result.SchemaVersion)
 	}
@@ -1487,6 +1490,9 @@ report:
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed report, got %#v", result)
 	}
+	if result.Cluster != "test-main" || !strings.Contains(stdout.String(), "Cluster   test-main") {
+		t.Fatalf("expected configured cluster in report and summary: cluster=%q summary=%s", result.Cluster, stdout.String())
+	}
 	for _, name := range []string{"tool.pgbackrest", "tool.postgres", "tool.pg_isready"} {
 		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
 			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
@@ -1718,6 +1724,7 @@ func TestReportShowCommandText(t *testing.T) {
 	writeDrillReport(t, reportPath, model.DrillResult{
 		ID:             "drill-1",
 		PGDrillVersion: "pgdrill v0.1.0-test",
+		Cluster:        "production-main",
 		Provider:       model.ProviderWALG,
 		Backup: model.Backup{
 			ID:       "wal-g:base_1",
@@ -1751,6 +1758,7 @@ func TestReportShowCommandText(t *testing.T) {
 		model.CurrentReportSchemaVersion,
 		"pgdrill   pgdrill v0.1.0-test",
 		"ID        drill-1",
+		"Cluster   production-main",
 		"Status    failed",
 		"Stage     probe_execution",
 		"Error     one or more probes failed",
@@ -1795,6 +1803,7 @@ func TestReportMetricsCommandPrometheus(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "drill.json")
 	writeDrillReport(t, reportPath, model.DrillResult{
 		ID:       "drill-metrics",
+		Cluster:  "production-main",
 		Provider: model.ProviderPGBackRest,
 		Target: model.TargetSpec{
 			Type: model.RestoreTargetLocal,
@@ -1818,11 +1827,11 @@ func TestReportMetricsCommandPrometheus(t *testing.T) {
 
 	output := stdout.String()
 	for _, expected := range []string{
-		`pgdrill_report_info{schema_version="pgdrill.report/v1alpha1"} 1`,
+		`pgdrill_report_info{cluster="production-main",schema_version="pgdrill.report/v1alpha1"} 1`,
 		"# TYPE pgdrill_drill_status gauge",
-		`pgdrill_drill_status{provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 1`,
-		`pgdrill_drill_duration_seconds{provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 120`,
-		`pgdrill_checks_total{provider="pgbackrest",check="pgbackrest-check",probe="unknown",status="passed"} 1`,
+		`pgdrill_drill_status{cluster="production-main",provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 1`,
+		`pgdrill_drill_duration_seconds{cluster="production-main",provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 120`,
+		`pgdrill_checks_total{cluster="production-main",provider="pgbackrest",check="pgbackrest-check",probe="unknown",status="passed"} 1`,
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected metrics output to contain %q, got:\n%s", expected, output)

@@ -13,6 +13,7 @@ import (
 
 type DrillRequest struct {
 	ID             string
+	Cluster        string
 	Target         model.TargetSpec
 	RecoveryTarget model.RecoveryTarget
 	Selector       BackupSelector
@@ -45,6 +46,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		SchemaVersion:  model.CurrentReportSchemaVersion,
 		PGDrillVersion: e.PGDrillVersion,
 		ID:             drillID(req.ID, startedAt),
+		Cluster:        strings.TrimSpace(req.Cluster),
 		Provider:       e.Provider.Type(),
 		Target:         req.Target,
 		RecoveryTarget: recoveryTarget,

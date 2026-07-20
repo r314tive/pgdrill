@@ -26,7 +26,8 @@ version.
 
 The top-level object is `model.DrillResult` and contains:
 
-- schema version, executing pgdrill build identity, and drill ID
+- schema version, executing pgdrill build identity, drill ID, and configured
+  cluster name when present
 - provider and selected backup, when provider discovery selected the input
 - restore target and recovery target
 - start and finish timestamps
@@ -112,6 +113,11 @@ Prometheus output includes one `pgdrill_failure_info` sample with a bounded
 `stage` label. Successful reports use `stage="none"`; the diagnostic message is
 never used as a metric label. Missing or unrecognized stage values are exported
 as `stage="unknown"`.
+
+Prometheus samples include the configured cluster name as a `cluster` label.
+Legacy reports or configs without `cluster.name` use `cluster="unknown"`; the
+drill ID is deliberately not a label because it would create an unbounded time
+series for every execution.
 
 ## Consumer Rules
 

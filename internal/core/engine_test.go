@@ -67,6 +67,7 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 		Clock:          fixedClock("2025-01-04T00:00:00Z"),
 	}.Run(context.Background(), DrillRequest{
 		ID:             "drill-1",
+		Cluster:        " production-main ",
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill"},
 		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
 	})
@@ -85,6 +86,9 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	}
 	if result.PGDrillVersion != "pgdrill v0.1.0-test" {
 		t.Fatalf("unexpected pgdrill version %q", result.PGDrillVersion)
+	}
+	if result.Cluster != "production-main" {
+		t.Fatalf("unexpected cluster %q", result.Cluster)
 	}
 	if result.Backup.ID != "wal-g:base_1" {
 		t.Fatalf("unexpected selected backup %q", result.Backup.ID)

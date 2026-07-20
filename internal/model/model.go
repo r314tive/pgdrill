@@ -440,6 +440,7 @@ type DrillResult struct {
 	SchemaVersion  string           `json:"schema_version"`
 	PGDrillVersion string           `json:"pgdrill_version,omitempty"`
 	ID             string           `json:"id"`
+	Cluster        string           `json:"cluster,omitempty"`
 	Provider       ProviderType     `json:"provider"`
 	Backup         Backup           `json:"backup"`
 	Target         TargetSpec       `json:"target"`
