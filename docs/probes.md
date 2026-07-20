@@ -3,6 +3,12 @@
 Probes run after the restored PostgreSQL instance starts. They should stay
 explicit enough to explain what the drill actually proved.
 
+A full `pgdrill run` requires at least one probe. Starting a PostgreSQL process
+without checking it cannot produce a passed recovery-readiness result. CNPG
+`target verify` separately proves operator readiness and may add probes for
+database-level assertions. A configured probe must return at least one check;
+an empty probe report fails the drill.
+
 ## Explicit Probes
 
 Explicit probe config remains the most precise form:
@@ -27,6 +33,12 @@ Every probe has a command deadline. An omitted timeout defaults to `1h`; set an
 explicit value from measured runtime for large `pg_amcheck` or `pg_dump`
 checks. See [configuration.md](configuration.md) for the complete deadline
 policy.
+
+For `pg_isready`, the configured timeout is an overall readiness deadline.
+Exit statuses 1 (rejecting connections) and 2 (no response) are retried once
+per second, with each attempt bounded to at most three seconds and retained as
+separate command evidence. Invalid parameters and command-start failures stop
+immediately.
 
 ## Presets
 

@@ -110,6 +110,10 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "run requires report.path in config")
 		return 2
 	}
+	if err := cfg.ValidateDrill(); err != nil {
+		fmt.Fprintf(stderr, "validate drill config: %v\n", err)
+		return 1
+	}
 	preflightRequirements, err := preflight.Requirements(cfg)
 	if err != nil {
 		fmt.Fprintf(stderr, "create preflight: %v\n", err)
@@ -929,7 +933,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 	if cfg.Target.Type == model.RestoreTargetLocal {
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.ValidateDrill(); err != nil {
 			fmt.Fprintf(stderr, "validate local drill config: %v\n", err)
 			return 1
 		}

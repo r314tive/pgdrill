@@ -67,7 +67,8 @@ Status: usable for local-target smoke drills.
   report before repository access or target mutation.
 - Bounded operation deadlines with separate provider/catalog and physical
   restore timeout policies plus guarded Kubernetes polling.
-- More probe ergonomics.
+- Required post-restore proof plus bounded `pg_isready` retry semantics with
+  per-attempt evidence.
 
 The CLI should become usable here:
 

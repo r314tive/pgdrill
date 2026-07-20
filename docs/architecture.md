@@ -131,6 +131,9 @@ link the evidence IDs accumulated through that stage.
 - Destructive cleanup must be opt-in and guarded by per-run target ownership
   markers.
 - Probes only inspect a running restored PostgreSQL instance.
+- A full restore drill requires at least one non-nil probe; process survival
+  alone cannot produce a passed readiness result. A probe that returns no
+  checks is a failed protocol response.
 - Evidence keeps bounded redacted command output previews, byte counts,
   truncation state, and normalized status.
 - Cleanup must be explicit and observable.

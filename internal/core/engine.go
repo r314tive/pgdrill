@@ -90,6 +90,14 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 			return fail(model.DrillStageRequestValidation, fmt.Errorf("validate restore target: %w", err))
 		}
 	}
+	if len(e.Probes) == 0 {
+		return fail(model.DrillStageRequestValidation, fmt.Errorf("at least one probe is required for a restore drill"))
+	}
+	for i, probe := range e.Probes {
+		if probe == nil {
+			return fail(model.DrillStageRequestValidation, fmt.Errorf("probe %d is nil", i))
+		}
+	}
 	if e.Preflight != nil {
 		preflightReport, err := e.Preflight.Check(ctx)
 		result.Checks = append(result.Checks, preflightReport.Checks...)
@@ -201,6 +209,16 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 				Probe:   probe.Type(),
 				Status:  model.CheckStatusFailed,
 				Message: err.Error(),
+			})
+			continue
+		}
+		if len(report.Checks) == 0 {
+			probeFailed = true
+			result.Checks = append(result.Checks, model.Check{
+				Name:    string(probe.Type()),
+				Probe:   probe.Type(),
+				Status:  model.CheckStatusFailed,
+				Message: "probe returned no checks",
 			})
 			continue
 		}

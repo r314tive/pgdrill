@@ -337,6 +337,16 @@ func (c Config) Validate() error {
 	return c.validateCommon()
 }
 
+func (c Config) ValidateDrill() error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if len(c.Probes) == 0 {
+		return fmt.Errorf("at least one probe is required for a restore drill")
+	}
+	return nil
+}
+
 func (c Config) ValidateTarget() error {
 	if c.Provider.Type != "" {
 		if err := validateProviderType(c.Provider.Type); err != nil {

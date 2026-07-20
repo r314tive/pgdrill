@@ -124,6 +124,7 @@ func TestEngineStopsBeforeDiscoveryOnPreflightFailure(t *testing.T) {
 		Provider:  provider,
 		Target:    target,
 		Preflight: preflight,
+		Probes:    []Probe{passingProbe()},
 		Sink:      sink,
 	}.Run(context.Background(), DrillRequest{
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
@@ -163,6 +164,7 @@ func TestEngineCleansUpAndWritesFailureOnRestoreStepError(t *testing.T) {
 	result, err := Engine{
 		Provider: provider,
 		Target:   target,
+		Probes:   []Probe{passingProbe()},
 		Sink:     sink,
 		Clock:    fixedClock("2025-01-04T00:00:00Z"),
 	}.Run(context.Background(), DrillRequest{
@@ -237,6 +239,44 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 	}
 }
 
+func TestEngineFailsWhenProbeReturnsNoChecks(t *testing.T) {
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{{ID: "wal-g:base_1", Status: model.BackupStatusAvailable}},
+		},
+		plan: model.RestorePlan{},
+	}
+	target := &fakeTarget{destroyEvidence: []model.EvidenceRecord{testEvidence("cleanup")}}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Provider: provider,
+		Target:   target,
+		Probes:   []Probe{&fakeProbe{probeType: model.ProbeSQL}},
+		Sink:     sink,
+	}.Run(context.Background(), DrillRequest{
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
+		t.Fatalf("expected empty probe report failure, got %v", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
+		t.Fatalf("unexpected empty probe result %#v", result)
+	}
+	if len(result.Checks) != 1 || result.Checks[0].Status != model.CheckStatusFailed || result.Checks[0].Message != "probe returned no checks" {
+		t.Fatalf("expected synthesized failed check, got %#v", result.Checks)
+	}
+	if got, want := target.calls, []string{"prepare", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
+	}
+	if !sink.called || sink.result.Status != model.DrillStatusFailed {
+		t.Fatalf("expected durable failed result, got called=%v result=%#v", sink.called, sink.result)
+	}
+}
+
 func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	provider := &fakeProvider{
@@ -258,6 +298,7 @@ func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T
 	result, err := Engine{
 		Provider: provider,
 		Target:   target,
+		Probes:   []Probe{passingProbe()},
 		Sink:     sink,
 	}.Run(ctx, DrillRequest{
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
@@ -358,6 +399,50 @@ func TestEngineRejectsInvalidTargetBeforePreflightAndDiscovery(t *testing.T) {
 	}
 }
 
+func TestEngineRejectsInvalidProbeSetBeforePreflightAndDiscovery(t *testing.T) {
+	tests := []struct {
+		name   string
+		probes []Probe
+		want   string
+	}{
+		{name: "missing", want: "at least one probe is required"},
+		{name: "nil", probes: []Probe{nil}, want: "probe 0 is nil"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &fakeProvider{catalog: model.BackupCatalog{Provider: model.ProviderWALG}}
+			target := &fakeTarget{}
+			preflight := &fakePreflight{}
+			sink := &fakeSink{}
+
+			result, err := Engine{
+				Provider:  provider,
+				Target:    target,
+				Preflight: preflight,
+				Probes:    test.probes,
+				Sink:      sink,
+			}.Run(context.Background(), DrillRequest{
+				Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+				RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			})
+
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q error, got %v", test.want, err)
+			}
+			if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+				t.Fatalf("unexpected probe validation result %#v", result)
+			}
+			if preflight.called || len(provider.calls) != 0 || len(target.calls) != 0 {
+				t.Fatalf("invalid probes must fail before external work: preflight=%v provider=%#v target=%#v", preflight.called, provider.calls, target.calls)
+			}
+			if !sink.called || sink.result.Status != model.DrillStatusFailed {
+				t.Fatalf("expected durable failed result, got called=%v result=%#v", sink.called, sink.result)
+			}
+		})
+	}
+}
+
 func TestEngineReturnsReportWriteFailure(t *testing.T) {
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
@@ -371,6 +456,7 @@ func TestEngineReturnsReportWriteFailure(t *testing.T) {
 	result, err := Engine{
 		Provider: provider,
 		Target:   &fakeTarget{},
+		Probes:   []Probe{passingProbe()},
 		Sink:     sink,
 	}.Run(context.Background(), DrillRequest{
 		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
@@ -396,6 +482,17 @@ type fakeProvider struct {
 	validateErr    error
 	planErr        error
 	calls          []string
+}
+
+func passingProbe() Probe {
+	return &fakeProbe{
+		probeType: model.ProbeSQL,
+		report: model.CheckReport{Checks: []model.Check{{
+			Name:   "select_1",
+			Probe:  model.ProbeSQL,
+			Status: model.CheckStatusPassed,
+		}}},
+	}
 }
 
 type fakePreflight struct {

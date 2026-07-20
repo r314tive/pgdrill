@@ -164,6 +164,26 @@ target:
 	}
 }
 
+func TestValidateDrillRequiresProbe(t *testing.T) {
+	cfg := Config{
+		Provider: ProviderConfig{Type: model.ProviderWALG},
+		Target:   TargetConfig{Type: model.RestoreTargetLocal},
+	}
+	cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("base config should remain valid for non-drill commands: %v", err)
+	}
+	if err := cfg.ValidateDrill(); err == nil || !strings.Contains(err.Error(), "at least one probe is required") {
+		t.Fatalf("expected drill probe requirement, got %v", err)
+	}
+
+	cfg.Probes = []ProbeConfig{{Preset: "readiness"}}
+	cfg.Normalize()
+	if err := cfg.ValidateDrill(); err != nil {
+		t.Fatalf("validate drill with probe: %v", err)
+	}
+}
+
 func TestLoadConfigAppliesBoundedOperationalDefaults(t *testing.T) {
 	cfg, err := Load(strings.NewReader(`
 provider:

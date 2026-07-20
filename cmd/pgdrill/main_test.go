@@ -1330,11 +1330,19 @@ func TestRunCommandWritesPreflightFailureBeforeCatalogAccess(t *testing.T) {
 	dir := t.TempDir()
 	const secret = "binary-secret"
 	postgresPath := filepath.Join(dir, "postgres")
+	pgIsReadyPath := filepath.Join(dir, "pg_isready")
 	configPath := filepath.Join(dir, "pgdrill.yaml")
 	reportPath := filepath.Join(dir, "report.json")
 	writeExecutable(t, postgresPath, `#!/bin/sh
 if [ "$1" = "--version" ]; then
   echo "postgres (PostgreSQL) 16.4"
+  exit 0
+fi
+exit 64
+`)
+	writeExecutable(t, pgIsReadyPath, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "pg_isready (PostgreSQL) 16.4"
   exit 0
 fi
 exit 64
@@ -1349,6 +1357,9 @@ target:
   type: local
   work_dir: `+filepath.Join(dir, "restore")+`
   postgres_binary: `+postgresPath+`
+probes:
+  - type: pg_isready
+    binary: `+pgIsReadyPath+`
 report:
   format: json
   path: `+reportPath+`
@@ -1405,6 +1416,8 @@ target:
   type: local
   work_dir: `+workDir+`
   remove_work_dir: true
+probes:
+  - preset: readiness
 report:
   format: json
   path: `+reportPath+`
@@ -1454,6 +1467,28 @@ target:
 	}
 }
 
+func TestRunCommandRequiresProbe(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeFile(t, configPath, `
+provider:
+  type: wal-g
+target:
+  type: local
+report:
+  path: `+filepath.Join(dir, "report.json")+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "-f", configPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "at least one probe is required") {
+		t.Fatalf("expected probe requirement, got: %s", got)
+	}
+}
+
 func TestRunCommandWritesAbortedReportForCanceledContext(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "pgdrill.yaml")
@@ -1464,6 +1499,8 @@ provider:
 target:
   type: local
   work_dir: `+filepath.Join(dir, "restore")+`
+probes:
+  - preset: readiness
 report:
   format: json
   path: `+reportPath+`

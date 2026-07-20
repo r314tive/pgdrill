@@ -30,6 +30,8 @@ called out explicitly even while the major version is `0`.
   cleanup.
 - Automatic redaction of runtime PostgreSQL connection strings from all probe
   command evidence and errors.
+- Required post-restore probes for full drills and bounded `pg_isready`
+  retries with per-attempt evidence for startup transitions.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
 - Redaction-safe command start errors for durable failure reporting.
