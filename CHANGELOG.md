@@ -8,6 +8,8 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5] - 2026-07-20
+
 ### Added
 
 - Guarded `pgdrill target verify` command for CNPG restore target drills:
