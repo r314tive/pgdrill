@@ -3,6 +3,7 @@ package pgdump
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -77,7 +78,7 @@ func (p *Probe) binary() string {
 
 func (p *Probe) args(connString string) ([]string, error) {
 	mode := strings.ToLower(strings.TrimSpace(p.cfg.Mode))
-	args := []string{"--dbname", connString, "--no-owner", "--no-privileges"}
+	args := []string{"--dbname", connString, "--file", os.DevNull, "--no-owner", "--no-privileges"}
 	switch mode {
 	case "", "schema", "schema-only":
 		args = append(args, "--schema-only")

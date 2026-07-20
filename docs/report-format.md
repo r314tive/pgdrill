@@ -46,6 +46,15 @@ explicit path can remain explicit. Raw command output is available only to
 in-process adapters while a command is being normalized and must not be
 reconstructed from the durable report.
 
+Command capture is bounded per stdout/stderr stream. The in-process raw limit is
+64 MiB; exceeding it returns an operation error so parsers never consume a
+partial catalog or status document. Durable `stdout` and `stderr` are redacted
+previews capped at 1 MiB each. `stdout_bytes`/`stderr_bytes` record observed byte
+counts and `stdout_truncated`/`stderr_truncated` make either preview or raw
+truncation explicit. A successful native exit can therefore coexist with a
+failed capture contract; consumers must not use `exit_status.success` alone as
+the drill verdict.
+
 The structured exit status distinguishes successful execution, ordinary
 non-zero exit codes, timeouts, cancellation, and failure to start. Consumers
 should use `timed_out` and `canceled` instead of matching platform-specific

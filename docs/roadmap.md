@@ -14,8 +14,8 @@ Status: complete for the initial CLI engine.
   selection before repository mutation or restore planning.
 - Core drill engine: discover, select backup, validate, plan, restore, start
   PostgreSQL, run probes, cleanup, write evidence.
-- Command runner with timeout, raw evidence, redaction, and structured exit
-  status.
+- Command runner with timeout, bounded raw/evidence capture, redaction,
+  truncation metadata, and structured exit status.
 - WAL-G and Barman catalog discovery adapters with fixture tests.
 - Strict YAML/JSON config loading.
 - Provider registry.

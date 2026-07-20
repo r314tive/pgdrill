@@ -161,9 +161,10 @@ func versionCheck(requirement Requirement, evidence model.CommandEvidence, evide
 	}
 	if runErr != nil || !evidence.ExitStatus.Success {
 		check.Status = model.CheckStatusFailed
-		check.Message = evidence.ExitStatus.Summary()
-		if runErr != nil && (check.Message == "failed" || check.Message == "not started") {
+		if runErr != nil {
 			check.Message = runErr.Error()
+		} else {
+			check.Message = evidence.ExitStatus.Summary()
 		}
 		if detail := firstOutputLine(evidence.Stderr, evidence.Stdout); detail != "" && !strings.Contains(check.Message, detail) {
 			check.Message += ": " + detail

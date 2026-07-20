@@ -18,6 +18,8 @@ called out explicitly even while the major version is `0`.
   and version evidence retained in the drill report.
 - The executing pgdrill build identity in new drill reports and text summaries.
 - Requested and resolved executable paths in durable command evidence.
+- Bounded command capture with raw/evidence byte limits, truncation metadata,
+  and explicit output-limit failures instead of unbounded process memory use.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
 - Redaction-safe command start errors for durable failure reporting.
@@ -52,6 +54,8 @@ called out explicitly even while the major version is `0`.
 
 - CNPG target-only reports no longer claim a configured provider that the
   target verification path did not invoke.
+- `pg_dump` probes discard the generated dump payload after validating it;
+  reports retain command/status evidence without persisting schema contents.
 - Recovery targets are validated consistently before repository access.
   Timestamp PITR now requires an explicit RFC3339 timezone and selects only a
   backup with a known finish time strictly before the requested target.

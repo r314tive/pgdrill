@@ -2,6 +2,7 @@ package pgdump
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func TestRunSchemaOnlyByDefault(t *testing.T) {
 	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("expected passed check, got %#v", report.Checks)
 	}
-	want := []string{"--dbname", "postgresql://verify", "--no-owner", "--no-privileges", "--schema-only"}
+	want := []string{"--dbname", "postgresql://verify", "--file", os.DevNull, "--no-owner", "--no-privileges", "--schema-only"}
 	if !reflect.DeepEqual(runner.invocation.Args, want) {
 		t.Fatalf("unexpected args: got %#v want %#v", runner.invocation.Args, want)
 	}
@@ -45,7 +46,7 @@ func TestRunAddsSelectionOptions(t *testing.T) {
 	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("expected passed check, got %#v", report.Checks)
 	}
-	want := []string{"--dbname", "postgresql://verify", "--no-owner", "--no-privileges", "--schema-only", "--exclude-table", "public.audit_log", "--schema", "public"}
+	want := []string{"--dbname", "postgresql://verify", "--file", os.DevNull, "--no-owner", "--no-privileges", "--schema-only", "--exclude-table", "public.audit_log", "--schema", "public"}
 	if !reflect.DeepEqual(runner.invocation.Args, want) {
 		t.Fatalf("unexpected args: got %#v want %#v", runner.invocation.Args, want)
 	}

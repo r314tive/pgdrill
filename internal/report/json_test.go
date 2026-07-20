@@ -158,3 +158,33 @@ func TestReadJSONPreservesStructuredFailure(t *testing.T) {
 		t.Fatalf("unexpected failure evidence ids %#v", result.Failure.EvidenceIDs)
 	}
 }
+
+func TestReadJSONPreservesCommandOutputBounds(t *testing.T) {
+	result, err := ReadJSON(strings.NewReader(`{
+  "schema_version": "pgdrill.report/v1alpha1",
+  "id": "bounded-output",
+  "evidence": [{
+    "id": "command-1",
+    "kind": "command",
+    "source": "test",
+    "collected_at": "2026-07-20T12:00:00Z",
+    "command": {
+      "path": "tool",
+      "started_at": "2026-07-20T11:59:59Z",
+      "finished_at": "2026-07-20T12:00:00Z",
+      "duration_millis": 1000,
+      "exit_status": {"started": true, "exited": true, "success": true, "exit_code": 0},
+      "stdout": "preview",
+      "stdout_bytes": 2097152,
+      "stdout_truncated": true
+    }
+  }]
+}`))
+	if err != nil {
+		t.Fatalf("read bounded output report: %v", err)
+	}
+	command := result.Evidence[0].Command
+	if command == nil || command.Stdout != "preview" || command.StdoutBytes != 2097152 || !command.StdoutTruncated {
+		t.Fatalf("unexpected command output metadata %#v", command)
+	}
+}

@@ -31,6 +31,11 @@ Presets expand into ordinary probes before execution:
 - `smoke`: `pg_isready` and SQL `select 1`
 - `structural`: `pg_isready`, `pg_amcheck`, and schema-only `pg_dump`
 
+The `pg_dump` probe writes its generated payload to the platform null device.
+The command still reads and serializes the selected database objects, but schema
+or data contents are not copied into the drill report; only command/status
+evidence is retained.
+
 Preset config supports only common fields:
 
 - `name`: optional prefix added to generated probe names

@@ -14,8 +14,8 @@ probes, and evidence, not in terms of one provider's command output.
   canonical runtime specs.
 - `internal/core`: provider, target, probe, evidence sink interfaces, backup
   selection, and the drill engine lifecycle.
-- `internal/command`: direct command runner with timeout, raw stdout/stderr, safe
-  redacted evidence, and structured exit status.
+- `internal/command`: direct command runner with timeout, bounded raw
+  stdout/stderr, bounded redacted evidence, and structured exit status.
 - `internal/preflight`: config-derived executable requirements and read-only
   native version checks used by `pgdrill doctor`.
 - `internal/adapters/*`: provider registry, provider-specific command
@@ -97,10 +97,12 @@ pgbackrest:<stanza>/<backup-label>
 pg_probackup:<instance>/<backup-id>
 ```
 
-Raw command stdout/stderr stay available to adapter code as
-`command.RawEvidence`. Reports and logs should use `model.CommandEvidence`,
-where arguments, environment values, stdout, stderr, exit errors, and the
-requested and resolved executable paths are redacted.
+Bounded raw command stdout/stderr stay available to adapter code as
+`command.RawEvidence`. Reports and logs use `model.CommandEvidence`, where
+arguments, environment values, output previews, exit errors, and the requested
+and resolved executable paths are redacted. Byte counts and truncation flags
+make incomplete capture explicit; raw-limit overflow fails the operation before
+an adapter can parse partial output.
 
 The initial report format is the versioned JSON encoding of
 `model.DrillResult`. CLI, TUI, and future UI surfaces should consume this report
@@ -122,7 +124,8 @@ link the evidence IDs accumulated through that stage.
 - Restore targets own storage and runtime lifecycle.
 - Destructive cleanup must be opt-in or guarded by target ownership markers.
 - Probes only inspect a running restored PostgreSQL instance.
-- Evidence keeps raw command output plus normalized status.
+- Evidence keeps bounded redacted command output previews, byte counts,
+  truncation state, and normalized status.
 - Cleanup must be explicit and observable.
 - Cancellation stops active provider, target, and probe work. Cleanup and report
   persistence run on separate bounded finalization contexts so a canceled

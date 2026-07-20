@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/r314tive/pgdrill/internal/model"
+)
+
+const (
+	DefaultMaxOutputBytes   int64 = 64 << 20
+	DefaultMaxEvidenceBytes int64 = 1 << 20
 )
 
 type Runner interface {
@@ -17,22 +24,28 @@ type Runner interface {
 }
 
 type Invocation struct {
-	Path         string
-	Args         []string
-	Env          map[string]string
-	WorkDir      string
-	Timeout      time.Duration
-	Stdin        []byte
-	RedactValues []string
+	Path             string
+	Args             []string
+	Env              map[string]string
+	WorkDir          string
+	Timeout          time.Duration
+	Stdin            []byte
+	RedactValues     []string
+	MaxOutputBytes   int64
+	MaxEvidenceBytes int64
 }
 
 type RawEvidence struct {
-	Path         string
-	ResolvedPath string
-	Args         []string
-	Env          map[string]string
-	Stdout       []byte
-	Stderr       []byte
+	Path            string
+	ResolvedPath    string
+	Args            []string
+	Env             map[string]string
+	Stdout          []byte
+	StdoutBytes     int64
+	StdoutTruncated bool
+	Stderr          []byte
+	StderrBytes     int64
+	StderrTruncated bool
 }
 
 type Result struct {
@@ -41,19 +54,25 @@ type Result struct {
 }
 
 type Options struct {
-	DefaultTimeout time.Duration
-	Redactor       Redactor
+	DefaultTimeout          time.Duration
+	DefaultMaxOutputBytes   int64
+	DefaultMaxEvidenceBytes int64
+	Redactor                Redactor
 }
 
 type ExecRunner struct {
-	defaultTimeout time.Duration
-	redactor       Redactor
+	defaultTimeout          time.Duration
+	defaultMaxOutputBytes   int64
+	defaultMaxEvidenceBytes int64
+	redactor                Redactor
 }
 
 func NewRunner(opts Options) *ExecRunner {
 	return &ExecRunner{
-		defaultTimeout: opts.DefaultTimeout,
-		redactor:       opts.Redactor,
+		defaultTimeout:          opts.DefaultTimeout,
+		defaultMaxOutputBytes:   positiveOrDefault(opts.DefaultMaxOutputBytes, DefaultMaxOutputBytes),
+		defaultMaxEvidenceBytes: positiveOrDefault(opts.DefaultMaxEvidenceBytes, DefaultMaxEvidenceBytes),
+		redactor:                opts.Redactor,
 	}
 }
 
@@ -79,10 +98,12 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 		cmd.Stdin = bytes.NewReader(inv.Stdin)
 	}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	maxOutputBytes := positiveOrDefault(inv.MaxOutputBytes, r.defaultMaxOutputBytes)
+	maxEvidenceBytes := positiveOrDefault(inv.MaxEvidenceBytes, r.defaultMaxEvidenceBytes)
+	stdout := newLimitedBuffer(maxOutputBytes)
+	stderr := newLimitedBuffer(maxOutputBytes)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	startedAt := time.Now().UTC()
 	err := cmd.Run()
@@ -91,14 +112,31 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 	canceled := errors.Is(runCtx.Err(), context.Canceled)
 
 	status := exitStatus(cmd.ProcessState, err, timedOut, canceled)
-	result := buildResult(inv, cmd.Path, stdout.Bytes(), stderr.Bytes(), status, startedAt, finishedAt, r.effectiveRedactor(inv))
+	result := buildResult(inv, cmd.Path, stdout, stderr, maxEvidenceBytes, status, startedAt, finishedAt, r.effectiveRedactor(inv))
 	if cmd.ProcessState == nil && err != nil {
 		if runCtx.Err() != nil {
 			return result, runCtx.Err()
 		}
 		return result, redactedError{message: result.Evidence.ExitStatus.Error, cause: err}
 	}
+	if runCtx.Err() == nil && (stdout.Truncated() || stderr.Truncated()) {
+		return result, &OutputLimitError{
+			LimitBytes:  maxOutputBytes,
+			StdoutBytes: stdout.TotalBytes(),
+			StderrBytes: stderr.TotalBytes(),
+		}
+	}
 	return result, nil
+}
+
+type OutputLimitError struct {
+	LimitBytes  int64
+	StdoutBytes int64
+	StderrBytes int64
+}
+
+func (e *OutputLimitError) Error() string {
+	return fmt.Sprintf("command output exceeded %d-byte per-stream limit (stdout=%d, stderr=%d)", e.LimitBytes, e.StdoutBytes, e.StderrBytes)
 }
 
 type redactedError struct {
@@ -142,40 +180,108 @@ func exitStatus(state *os.ProcessState, err error, timedOut, canceled bool) mode
 	return status
 }
 
-func buildResult(inv Invocation, resolvedPath string, stdout, stderr []byte, status model.ExitStatus, startedAt, finishedAt time.Time, redactor Redactor) Result {
+func buildResult(inv Invocation, resolvedPath string, stdout, stderr *limitedBuffer, maxEvidenceBytes int64, status model.ExitStatus, startedAt, finishedAt time.Time, redactor Redactor) Result {
 	args := append([]string{}, inv.Args...)
 	env := copyEnv(inv.Env)
-	rawStdout := append([]byte{}, stdout...)
-	rawStderr := append([]byte{}, stderr...)
+	rawStdout := append([]byte{}, stdout.Bytes()...)
+	rawStderr := append([]byte{}, stderr.Bytes()...)
 	redactedStatus := status
 	redactedStatus.Error = redactor.RedactString(redactedStatus.Error)
+	redactedStdout, stdoutEvidenceTruncated := evidenceOutput(rawStdout, stdout.Truncated(), maxEvidenceBytes, redactor)
+	redactedStderr, stderrEvidenceTruncated := evidenceOutput(rawStderr, stderr.Truncated(), maxEvidenceBytes, redactor)
 
 	duration := finishedAt.Sub(startedAt)
 	evidence := model.CommandEvidence{
-		Path:           redactor.RedactString(inv.Path),
-		ResolvedPath:   redactor.RedactString(resolvedPath),
-		Args:           redactStrings(args, redactor),
-		Env:            redactEnv(env, redactor),
-		WorkDir:        redactor.RedactString(inv.WorkDir),
-		StartedAt:      startedAt,
-		FinishedAt:     finishedAt,
-		DurationMillis: duration.Milliseconds(),
-		ExitStatus:     redactedStatus,
-		Stdout:         redactor.RedactString(string(stdout)),
-		Stderr:         redactor.RedactString(string(stderr)),
+		Path:            redactor.RedactString(inv.Path),
+		ResolvedPath:    redactor.RedactString(resolvedPath),
+		Args:            redactStrings(args, redactor),
+		Env:             redactEnv(env, redactor),
+		WorkDir:         redactor.RedactString(inv.WorkDir),
+		StartedAt:       startedAt,
+		FinishedAt:      finishedAt,
+		DurationMillis:  duration.Milliseconds(),
+		ExitStatus:      redactedStatus,
+		Stdout:          redactedStdout,
+		StdoutBytes:     stdout.TotalBytes(),
+		StdoutTruncated: stdoutEvidenceTruncated,
+		Stderr:          redactedStderr,
+		StderrBytes:     stderr.TotalBytes(),
+		StderrTruncated: stderrEvidenceTruncated,
 	}
 
 	return Result{
 		Raw: RawEvidence{
-			Path:         inv.Path,
-			ResolvedPath: resolvedPath,
-			Args:         args,
-			Env:          env,
-			Stdout:       rawStdout,
-			Stderr:       rawStderr,
+			Path:            inv.Path,
+			ResolvedPath:    resolvedPath,
+			Args:            args,
+			Env:             env,
+			Stdout:          rawStdout,
+			StdoutBytes:     stdout.TotalBytes(),
+			StdoutTruncated: stdout.Truncated(),
+			Stderr:          rawStderr,
+			StderrBytes:     stderr.TotalBytes(),
+			StderrTruncated: stderr.Truncated(),
 		},
 		Evidence: evidence,
 	}
+}
+
+func evidenceOutput(raw []byte, rawTruncated bool, limit int64, redactor Redactor) (string, bool) {
+	redacted := redactor.RedactString(string(raw))
+	if int64(len(redacted)) <= limit {
+		return redacted, rawTruncated
+	}
+	end := int(limit)
+	for end > 0 && !utf8.ValidString(redacted[:end]) {
+		end--
+	}
+	return redacted[:end], true
+}
+
+func positiveOrDefault(value, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+type limitedBuffer struct {
+	buffer    bytes.Buffer
+	limit     int64
+	total     int64
+	truncated bool
+}
+
+func newLimitedBuffer(limit int64) *limitedBuffer {
+	return &limitedBuffer{limit: limit}
+}
+
+func (b *limitedBuffer) Write(data []byte) (int, error) {
+	b.total += int64(len(data))
+	remaining := b.limit - int64(b.buffer.Len())
+	if remaining <= 0 {
+		b.truncated = b.truncated || len(data) > 0
+		return len(data), nil
+	}
+	writeBytes := int64(len(data))
+	if writeBytes > remaining {
+		writeBytes = remaining
+		b.truncated = true
+	}
+	_, _ = b.buffer.Write(data[:writeBytes])
+	return len(data), nil
+}
+
+func (b *limitedBuffer) Bytes() []byte {
+	return b.buffer.Bytes()
+}
+
+func (b *limitedBuffer) TotalBytes() int64 {
+	return b.total
+}
+
+func (b *limitedBuffer) Truncated() bool {
+	return b.truncated
 }
 
 func envList(env map[string]string) []string {

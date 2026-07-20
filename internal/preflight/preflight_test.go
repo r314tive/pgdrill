@@ -102,6 +102,18 @@ func TestVersionTextParsesKubectlClientJSON(t *testing.T) {
 	}
 }
 
+func TestVersionCheckPrefersCaptureErrorOverSuccessfulExit(t *testing.T) {
+	evidence := model.CommandEvidence{
+		Path:       "wal-g",
+		ExitStatus: model.ExitStatus{Started: true, Exited: true, Success: true, ExitCode: 0},
+		Stdout:     "large version output",
+	}
+	check := versionCheck(Requirement{Tool: model.ToolWALG}, evidence, "evidence-1", errors.New("command output exceeded limit"))
+	if check.Status != model.CheckStatusFailed || !strings.Contains(check.Message, "command output exceeded limit") {
+		t.Fatalf("unexpected capture failure check %#v", check)
+	}
+}
+
 func TestSuiteExposesCanonicalCheckReport(t *testing.T) {
 	finishedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	runner := &stubRunner{responses: []stubResponse{{

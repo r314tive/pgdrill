@@ -342,8 +342,18 @@ func trimCommandEvidenceStdout(evidence []model.EvidenceRecord, maxLines int) {
 		return
 	}
 	for i := range evidence {
-		if evidence[i].Command != nil {
-			evidence[i].Command.Stdout = tailLines(evidence[i].Command.Stdout, maxLines)
+		commandEvidence := evidence[i].Command
+		if commandEvidence == nil {
+			continue
+		}
+		original := commandEvidence.Stdout
+		trimmed := tailLines(original, maxLines)
+		if trimmed != original {
+			commandEvidence.Stdout = trimmed
+			if commandEvidence.StdoutBytes == 0 {
+				commandEvidence.StdoutBytes = int64(len(original))
+			}
+			commandEvidence.StdoutTruncated = true
 		}
 	}
 }

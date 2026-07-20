@@ -2,6 +2,7 @@ package walg
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -123,6 +124,27 @@ func TestAdapterDiscoverBackupsReturnsStructuredCommandFailure(t *testing.T) {
 	}
 	if len(catalog.Evidence) != 1 {
 		t.Fatalf("expected evidence on failure, got %d records", len(catalog.Evidence))
+	}
+}
+
+func TestAdapterDiscoverBackupsRejectsOutputLimitBeforeParsing(t *testing.T) {
+	fixture := readFixture(t, "testdata/backup-list-detail.json")
+	limitErr := &command.OutputLimitError{LimitBytes: 1024, StdoutBytes: int64(len(fixture))}
+	runner := &fakeRunner{
+		result: successResult(fixture),
+		err:    limitErr,
+	}
+	adapter := New(Config{}, runner)
+
+	catalog, err := adapter.DiscoverBackups(context.Background())
+	if !errors.Is(err, limitErr) {
+		t.Fatalf("expected wrapped output limit error, got %v", err)
+	}
+	if len(catalog.Backups) != 0 {
+		t.Fatalf("partial command capture must not be parsed, got %#v", catalog.Backups)
+	}
+	if len(catalog.Evidence) != 1 {
+		t.Fatalf("expected command evidence on capture failure, got %d records", len(catalog.Evidence))
 	}
 }
 

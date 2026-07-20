@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -196,6 +197,67 @@ func TestRunnerRedactsStartError(t *testing.T) {
 	}
 }
 
+func TestRunnerReturnsOutputLimitErrorWithBoundedRawEvidence(t *testing.T) {
+	runner := NewRunner(Options{
+		DefaultMaxOutputBytes:   8,
+		DefaultMaxEvidenceBytes: 4,
+	})
+
+	result, err := runner.Run(context.Background(), Invocation{
+		Path: os.Args[0],
+		Args: []string{"-test.run=TestHelperProcess", "--", "bounded-output"},
+		Env:  map[string]string{"PGDRILL_COMMAND_HELPER": "1"},
+	})
+
+	var limitErr *OutputLimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected output limit error, got %v", err)
+	}
+	if limitErr.LimitBytes != 8 || limitErr.StdoutBytes != 32 || limitErr.StderrBytes != 24 {
+		t.Fatalf("unexpected output limit error %#v", limitErr)
+	}
+	if len(result.Raw.Stdout) != 8 || result.Raw.StdoutBytes != 32 || !result.Raw.StdoutTruncated {
+		t.Fatalf("unexpected raw stdout %#v", result.Raw)
+	}
+	if len(result.Raw.Stderr) != 8 || result.Raw.StderrBytes != 24 || !result.Raw.StderrTruncated {
+		t.Fatalf("unexpected raw stderr %#v", result.Raw)
+	}
+	if len(result.Evidence.Stdout) != 4 || result.Evidence.StdoutBytes != 32 || !result.Evidence.StdoutTruncated {
+		t.Fatalf("unexpected durable stdout %#v", result.Evidence)
+	}
+	if len(result.Evidence.Stderr) != 4 || result.Evidence.StderrBytes != 24 || !result.Evidence.StderrTruncated {
+		t.Fatalf("unexpected durable stderr %#v", result.Evidence)
+	}
+	if !result.Evidence.ExitStatus.Success {
+		t.Fatalf("output capture failure must preserve process exit status %#v", result.Evidence.ExitStatus)
+	}
+}
+
+func TestRunnerTruncatesDurableEvidenceAfterRedaction(t *testing.T) {
+	const secret = "secret-value"
+	runner := NewRunner(Options{
+		DefaultMaxOutputBytes:   64,
+		DefaultMaxEvidenceBytes: 8,
+		Redactor:                NewRedactor(secret),
+	})
+
+	result, err := runner.Run(context.Background(), Invocation{
+		Path: os.Args[0],
+		Args: []string{"-test.run=TestHelperProcess", "--", "secret-output"},
+		Env:  map[string]string{"PGDRILL_COMMAND_HELPER": "1"},
+	})
+
+	if err != nil {
+		t.Fatalf("evidence-only truncation must not fail command: %v", err)
+	}
+	if result.Raw.StdoutTruncated || !strings.Contains(string(result.Raw.Stdout), secret) {
+		t.Fatalf("expected complete raw output, got %#v", result.Raw)
+	}
+	if !result.Evidence.StdoutTruncated || strings.Contains(result.Evidence.Stdout, "secret") || result.Evidence.Stdout != "[REDACTE" {
+		t.Fatalf("unexpected redacted preview %#v", result.Evidence)
+	}
+}
+
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("PGDRILL_COMMAND_HELPER") != "1" {
 		return
@@ -246,6 +308,13 @@ func TestHelperProcess(t *testing.T) {
 			os.Exit(2)
 		}
 		time.Sleep(duration)
+		os.Exit(0)
+	case "bounded-output":
+		_, _ = os.Stdout.WriteString(strings.Repeat("x", 32))
+		_, _ = os.Stderr.WriteString(strings.Repeat("y", 24))
+		os.Exit(0)
+	case "secret-output":
+		_, _ = os.Stdout.WriteString("secret-value-and-more")
 		os.Exit(0)
 	default:
 		os.Exit(2)

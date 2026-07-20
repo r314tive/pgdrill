@@ -460,17 +460,21 @@ type EvidenceRecord struct {
 }
 
 type CommandEvidence struct {
-	Path           string            `json:"path"`
-	ResolvedPath   string            `json:"resolved_path,omitempty"`
-	Args           []string          `json:"args,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	WorkDir        string            `json:"work_dir,omitempty"`
-	StartedAt      time.Time         `json:"started_at"`
-	FinishedAt     time.Time         `json:"finished_at"`
-	DurationMillis int64             `json:"duration_millis"`
-	ExitStatus     ExitStatus        `json:"exit_status"`
-	Stdout         string            `json:"stdout,omitempty"`
-	Stderr         string            `json:"stderr,omitempty"`
+	Path            string            `json:"path"`
+	ResolvedPath    string            `json:"resolved_path,omitempty"`
+	Args            []string          `json:"args,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	WorkDir         string            `json:"work_dir,omitempty"`
+	StartedAt       time.Time         `json:"started_at"`
+	FinishedAt      time.Time         `json:"finished_at"`
+	DurationMillis  int64             `json:"duration_millis"`
+	ExitStatus      ExitStatus        `json:"exit_status"`
+	Stdout          string            `json:"stdout,omitempty"`
+	StdoutBytes     int64             `json:"stdout_bytes,omitempty"`
+	StdoutTruncated bool              `json:"stdout_truncated,omitempty"`
+	Stderr          string            `json:"stderr,omitempty"`
+	StderrBytes     int64             `json:"stderr_bytes,omitempty"`
+	StderrTruncated bool              `json:"stderr_truncated,omitempty"`
 }
 
 type ExitStatus struct {

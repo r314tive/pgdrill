@@ -154,6 +154,10 @@ func TestKubectlClientCaptureEvidenceIsBestEffort(t *testing.T) {
 	if got := commandStdoutForOperation(evidence, "kubectl-capture-events"); got != "event two\nevent three\n" {
 		t.Fatalf("expected tailed event evidence, got %q", got)
 	}
+	events := commandEvidenceForOperation(evidence, "kubectl-capture-events")
+	if events == nil || !events.StdoutTruncated || events.StdoutBytes != int64(len("event one\nevent two\nevent three\n")) {
+		t.Fatalf("expected explicit event truncation metadata, got %#v", events)
+	}
 }
 
 func TestKubectlClientDeletePVCsUsesClusterLabel(t *testing.T) {
@@ -337,10 +341,18 @@ func sortedKeys(values map[string]string) []string {
 }
 
 func commandStdoutForOperation(records []model.EvidenceRecord, operation string) string {
-	for _, record := range records {
-		if record.Attributes["operation"] == operation && record.Command != nil {
-			return record.Command.Stdout
-		}
+	commandEvidence := commandEvidenceForOperation(records, operation)
+	if commandEvidence != nil {
+		return commandEvidence.Stdout
 	}
 	return ""
+}
+
+func commandEvidenceForOperation(records []model.EvidenceRecord, operation string) *model.CommandEvidence {
+	for _, record := range records {
+		if record.Attributes["operation"] == operation && record.Command != nil {
+			return record.Command
+		}
+	}
+	return nil
 }
