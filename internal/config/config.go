@@ -342,6 +342,9 @@ func (c Config) ValidateDrill() error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	if c.Target.Type == model.RestoreTargetLocal && strings.TrimSpace(c.Target.WorkDir) == "" {
+		return fmt.Errorf("target.work_dir is required for a local restore drill")
+	}
 	if len(c.Probes) == 0 {
 		return fmt.Errorf("at least one probe is required for a restore drill")
 	}
@@ -386,10 +389,30 @@ func (c Config) validateCommon() error {
 	if err := c.validateDurations(); err != nil {
 		return err
 	}
+	if err := c.validateNumericSettings(); err != nil {
+		return err
+	}
 	if err := c.validatePaths(); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func (c Config) validateNumericSettings() error {
+	switch c.Target.Type {
+	case model.RestoreTargetLocal:
+		if c.Target.PostgresPort < 0 || c.Target.PostgresPort > 65535 {
+			return fmt.Errorf("target.postgres_port must be between 0 and 65535")
+		}
+	case model.RestoreTargetKubernetes:
+		if c.Target.Kubernetes.EventsTail < 0 {
+			return fmt.Errorf("target.kubernetes.events_tail must not be negative")
+		}
+		if c.Target.Kubernetes.PostgresLogTail < 0 {
+			return fmt.Errorf("target.kubernetes.postgres_log_tail must not be negative")
+		}
+	}
 	return nil
 }
 

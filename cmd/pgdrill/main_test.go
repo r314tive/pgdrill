@@ -147,6 +147,43 @@ target:
 	}
 }
 
+func TestDoctorCommandRejectsNonEmptyLocalWorkDirBeforeNativePreflight(t *testing.T) {
+	dir := t.TempDir()
+	workDir := filepath.Join(dir, "restore")
+	if err := os.Mkdir(workDir, 0o700); err != nil {
+		t.Fatalf("create workdir: %v", err)
+	}
+	writeFile(t, filepath.Join(workDir, "important.txt"), "keep\n")
+	invokedPath := filepath.Join(dir, "native-invoked")
+	nativePath := filepath.Join(dir, "native")
+	writeExecutable(t, nativePath, `#!/bin/sh
+printf 'invoked\n' > "`+invokedPath+`"
+exit 0
+`)
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeFile(t, configPath, `
+provider:
+  type: wal-g
+  binary: `+nativePath+`
+target:
+  type: local
+  work_dir: `+workDir+`
+  postgres_binary: `+nativePath+`
+probes:
+  - type: pg_isready
+    binary: `+nativePath+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"doctor", "-f", configPath}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "work_dir must be empty") {
+		t.Fatalf("expected read-only target validation, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(invokedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("doctor ran native preflight before target validation, stat err=%v", err)
+	}
+}
+
 func TestDoctorCommandReturnsInterruptedExitCode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "pgdrill.yaml")
@@ -1475,6 +1512,7 @@ provider:
   type: wal-g
 target:
   type: local
+  work_dir: `+filepath.Join(dir, "restore")+`
 report:
   path: `+filepath.Join(dir, "report.json")+`
 `)

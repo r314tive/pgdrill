@@ -61,7 +61,12 @@ timestamps are the evidence used to evaluate RTO.
 For `target.type: local`, `target.work_dir` must be missing or an empty real
 directory when a drill starts. Validation is read-only and runs before native
 tool preflight or backup repository access; `Prepare` repeats the check before
-writing anything.
+writing anything. The path is required for full local drills, and `pgdrill
+doctor` applies the same read-only precondition check.
+
+`target.postgres_port` is either `0` for automatic allocation or an explicit
+port from 1 through 65535. Kubernetes evidence tail counts must be
+non-negative; zero leaves the corresponding native tail option unset.
 
 Set `target.remove_work_dir: true` for recurring automation. pgdrill writes a
 random per-run ownership marker and verifies the exact marker before recursive

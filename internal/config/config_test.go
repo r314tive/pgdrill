@@ -168,7 +168,7 @@ target:
 func TestValidateDrillRequiresProbe(t *testing.T) {
 	cfg := Config{
 		Provider: ProviderConfig{Type: model.ProviderWALG},
-		Target:   TargetConfig{Type: model.RestoreTargetLocal},
+		Target:   TargetConfig{Type: model.RestoreTargetLocal, WorkDir: "/var/tmp/pgdrill/main"},
 	}
 	cfg.Normalize()
 	if err := cfg.Validate(); err != nil {
@@ -182,6 +182,18 @@ func TestValidateDrillRequiresProbe(t *testing.T) {
 	cfg.Normalize()
 	if err := cfg.ValidateDrill(); err != nil {
 		t.Fatalf("validate drill with probe: %v", err)
+	}
+}
+
+func TestValidateDrillRequiresLocalWorkDir(t *testing.T) {
+	cfg := Config{
+		Provider: ProviderConfig{Type: model.ProviderWALG},
+		Target:   TargetConfig{Type: model.RestoreTargetLocal},
+		Probes:   []ProbeConfig{{Preset: "readiness"}},
+	}
+	cfg.Normalize()
+	if err := cfg.ValidateDrill(); err == nil || !strings.Contains(err.Error(), "target.work_dir is required") {
+		t.Fatalf("expected local workdir requirement, got %v", err)
 	}
 }
 
@@ -271,6 +283,49 @@ func TestValidateRejectsKubernetesPollIntervalBeyondWaitTimeout(t *testing.T) {
 	err := cfg.ValidateTarget()
 	if err == nil || !strings.Contains(err.Error(), "poll_interval must not exceed") {
 		t.Fatalf("expected Kubernetes polling validation error, got %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidTargetNumericSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		target TargetConfig
+		want   string
+	}{
+		{
+			name:   "negative postgres port",
+			target: TargetConfig{Type: model.RestoreTargetLocal, PostgresPort: -1},
+			want:   "target.postgres_port must be between 0 and 65535",
+		},
+		{
+			name:   "postgres port overflow",
+			target: TargetConfig{Type: model.RestoreTargetLocal, PostgresPort: 65536},
+			want:   "target.postgres_port must be between 0 and 65535",
+		},
+		{
+			name: "negative events tail",
+			target: TargetConfig{Type: model.RestoreTargetKubernetes, Kubernetes: KubernetesTargetConfig{
+				EventsTail: -1,
+			}},
+			want: "target.kubernetes.events_tail must not be negative",
+		},
+		{
+			name: "negative postgres log tail",
+			target: TargetConfig{Type: model.RestoreTargetKubernetes, Kubernetes: KubernetesTargetConfig{
+				PostgresLogTail: -1,
+			}},
+			want: "target.kubernetes.postgres_log_tail must not be negative",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Config{Provider: ProviderConfig{Type: model.ProviderWALG}, Target: test.target}
+			cfg.Normalize()
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q, got %v", test.want, err)
+			}
+		})
 	}
 }
 

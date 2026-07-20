@@ -19,6 +19,7 @@ pgdrill doctor -f pgdrill.yaml -timeout 10s
 
 For `target.type: local`, doctor requires a complete drill config and checks:
 
+- the local work directory preconditions without creating or modifying it
 - the selected provider client
 - `postgres`
 - `pg_verifybackup` when restore verification is enabled
@@ -44,7 +45,8 @@ of components that depend on it.
 Doctor does not discover backup catalogs, contact PostgreSQL, query the
 Kubernetes API, create resources, or test credentials. A passing result means:
 
-- the config is accepted for the implemented target path
+- the config is accepted for the implemented target path and the local work
+  directory, when selected, is currently safe to prepare
 - every required executable can be started
 - every native version command exits successfully within the timeout
 - requested and resolved executable paths, output, timing, and exit status were

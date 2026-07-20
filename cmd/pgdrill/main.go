@@ -937,6 +937,20 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			fmt.Fprintf(stderr, "validate local drill config: %v\n", err)
 			return 1
 		}
+		restoreTarget, err := targets.NewRestoreTarget(cfg.Target)
+		if err != nil {
+			fmt.Fprintf(stderr, "create local restore target: %v\n", err)
+			return 1
+		}
+		validator, ok := restoreTarget.(core.TargetValidator)
+		if !ok {
+			fmt.Fprintln(stderr, "local restore target does not implement read-only validation")
+			return 1
+		}
+		if err := validator.Validate(ctx, cfg.TargetSpec()); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(stderr, "validate local restore target: %v\n", err)
+			return 1
+		}
 	}
 	requirements, err := preflight.Requirements(cfg)
 	if err != nil {
