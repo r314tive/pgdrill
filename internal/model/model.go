@@ -1,7 +1,9 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -172,6 +174,92 @@ type RecoveryTarget struct {
 	Value     string             `json:"value,omitempty"`
 	Timeline  string             `json:"timeline,omitempty"`
 	Inclusive *bool              `json:"inclusive,omitempty"`
+}
+
+func (t RecoveryTarget) Normalized() RecoveryTarget {
+	t.Type = RecoveryTargetType(strings.TrimSpace(string(t.Type)))
+	if t.Type == "" {
+		t.Type = RecoveryTargetLatest
+	}
+	t.Value = strings.TrimSpace(t.Value)
+	t.Timeline = strings.TrimSpace(t.Timeline)
+	return t
+}
+
+func (t RecoveryTarget) Validate() error {
+	t = t.Normalized()
+	switch t.Type {
+	case RecoveryTargetLatest, RecoveryTargetImmediate:
+		if t.Value != "" {
+			return fmt.Errorf("%s recovery target does not accept value", t.Type)
+		}
+	case RecoveryTargetTimestamp:
+		if t.Value == "" {
+			return fmt.Errorf("timestamp recovery target requires value")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, t.Value); err != nil {
+			return fmt.Errorf("timestamp recovery target value must be RFC3339 with timezone: %w", err)
+		}
+	case RecoveryTargetLSN:
+		if t.Value == "" {
+			return fmt.Errorf("lsn recovery target requires value")
+		}
+		if err := validateLSN(t.Value); err != nil {
+			return err
+		}
+	case RecoveryTargetXID:
+		if t.Value == "" {
+			return fmt.Errorf("xid recovery target requires value")
+		}
+		if _, err := strconv.ParseUint(t.Value, 10, 32); err != nil {
+			return fmt.Errorf("xid recovery target value must be an unsigned 32-bit decimal integer: %w", err)
+		}
+	case RecoveryTargetRestorePoint:
+		if t.Value == "" {
+			return fmt.Errorf("restore point recovery target requires value")
+		}
+	default:
+		return fmt.Errorf("unsupported recovery target %q", t.Type)
+	}
+
+	if t.Inclusive != nil {
+		switch t.Type {
+		case RecoveryTargetTimestamp, RecoveryTargetLSN, RecoveryTargetXID:
+		default:
+			return fmt.Errorf("recovery target %q does not support inclusive", t.Type)
+		}
+	}
+	if t.Timeline != "" && t.Timeline != "latest" && t.Timeline != "current" {
+		timeline, err := strconv.ParseUint(t.Timeline, 10, 32)
+		if err != nil || timeline == 0 {
+			return fmt.Errorf("recovery target timeline must be latest, current, or a positive decimal timeline ID")
+		}
+	}
+	return nil
+}
+
+func (t RecoveryTarget) Timestamp() (time.Time, error) {
+	t = t.Normalized()
+	if t.Type != RecoveryTargetTimestamp {
+		return time.Time{}, fmt.Errorf("recovery target %q is not a timestamp", t.Type)
+	}
+	if err := t.Validate(); err != nil {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339Nano, t.Value)
+}
+
+func validateLSN(value string) error {
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("lsn recovery target value must use PostgreSQL X/Y hexadecimal format")
+	}
+	for _, part := range parts {
+		if _, err := strconv.ParseUint(part, 16, 32); err != nil {
+			return fmt.Errorf("lsn recovery target value must use PostgreSQL X/Y hexadecimal format: %w", err)
+		}
+	}
+	return nil
 }
 
 type TargetSpec struct {

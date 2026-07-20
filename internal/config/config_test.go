@@ -154,6 +154,38 @@ target:
 	}
 }
 
+func TestLoadConfigRejectsAmbiguousRecoveryTimestamp(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+provider:
+  type: wal-g
+target:
+  type: local
+recovery:
+  target: timestamp
+  value: "2026-07-20 01:02:03"
+`), "yaml")
+
+	if err == nil || !strings.Contains(err.Error(), "must be RFC3339 with timezone") {
+		t.Fatalf("expected canonical timestamp error, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsInclusiveForLatestRecovery(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+provider:
+  type: wal-g
+target:
+  type: local
+recovery:
+  target: latest
+  inclusive: false
+`), "yaml")
+
+	if err == nil || !strings.Contains(err.Error(), "does not support inclusive") {
+		t.Fatalf("expected inclusive validation error, got %v", err)
+	}
+}
+
 func TestLoadProbePresetConfig(t *testing.T) {
 	cfg, err := Load(strings.NewReader(`
 provider:

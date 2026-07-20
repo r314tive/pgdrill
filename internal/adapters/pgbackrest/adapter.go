@@ -333,6 +333,9 @@ func (a *Adapter) restoreArgs(target model.RecoveryTarget, label string, stanza 
 }
 
 func pgBackRestRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
 	args := []string{}
 	targeted := false
 	switch target.Type {

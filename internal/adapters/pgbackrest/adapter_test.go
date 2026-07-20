@@ -366,7 +366,7 @@ func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 		ClusterName: "main",
 	}, model.RecoveryTarget{
 		Type:      model.RecoveryTargetTimestamp,
-		Value:     "2026-07-06 01:02:03",
+		Value:     "2026-07-06T01:02:03Z",
 		Timeline:  "latest",
 		Inclusive: &inclusive,
 	}, model.TargetSpec{
@@ -408,7 +408,7 @@ func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 		"--set=20240502-030405F",
 		"--pg1-path=/tmp/pgdrill/main/data",
 		"--type=time",
-		"--target=2026-07-06 01:02:03",
+		"--target=2026-07-06T01:02:03Z",
 		"--target-timeline=latest",
 		"--target-exclusive",
 		"--target-action=promote",
@@ -512,9 +512,9 @@ func TestPlanRestoreRequiresMatchingStanza(t *testing.T) {
 	}
 }
 
-func TestPlanRestoreDoesNotUseExclusiveWithoutPITRTarget(t *testing.T) {
+func TestPlanRestoreRejectsInclusiveWithoutPITRTarget(t *testing.T) {
 	inclusive := false
-	plan, err := New(Config{Stanza: "main"}, nil).PlanRestore(context.Background(), model.Backup{
+	_, err := New(Config{Stanza: "main"}, nil).PlanRestore(context.Background(), model.Backup{
 		ID:         "pgbackrest:main/20240502-030405F",
 		Provider:   model.ProviderPGBackRest,
 		ProviderID: "main/20240502-030405F",
@@ -522,11 +522,8 @@ func TestPlanRestoreDoesNotUseExclusiveWithoutPITRTarget(t *testing.T) {
 		Type:    model.RestoreTargetLocal,
 		WorkDir: "/tmp/pgdrill/main",
 	})
-	if err != nil {
-		t.Fatalf("plan restore: %v", err)
-	}
-	if contains(plan.Steps[0].Command.Args, "--target-exclusive") {
-		t.Fatalf("did not expect --target-exclusive for latest restore args %#v", plan.Steps[0].Command.Args)
+	if err == nil || !strings.Contains(err.Error(), "does not support inclusive") {
+		t.Fatalf("expected inclusive validation error, got %v", err)
 	}
 }
 
@@ -542,15 +539,6 @@ func TestPlanRestoreRequiresRecoveryTargetValue(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "lsn recovery target requires value") {
 		t.Fatalf("expected recovery target validation error, got %v", err)
 	}
-}
-
-func contains(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
 }
 
 type fakeRunner struct {

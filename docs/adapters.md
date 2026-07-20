@@ -3,6 +3,21 @@
 Adapters should use existing PostgreSQL backup tools instead of reimplementing
 their storage formats.
 
+## Canonical Recovery Targets
+
+Provider adapters receive a validated canonical recovery target. Timestamp
+targets must use RFC3339 with an explicit timezone. LSN targets use PostgreSQL
+`X/Y` hexadecimal notation, XIDs are unsigned 32-bit decimal values, and
+timelines are `latest`, `current`, or a positive decimal ID. `inclusive` is
+valid only for timestamp, LSN, and XID targets.
+
+For timestamp PITR, pgdrill selects the newest available backup whose
+`finished_at` is known and strictly earlier than the target. Backups completed
+at or after the target, and backups without a finish timestamp, are not treated
+as eligible. Provider WAL checks and the real restore remain necessary; this
+selection rule proves only that the base backup does not violate PostgreSQL's
+minimum recovery stop point.
+
 ## WAL-G
 
 Initial discovery command:

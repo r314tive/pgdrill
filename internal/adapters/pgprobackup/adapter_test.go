@@ -171,7 +171,7 @@ func TestValidateCatalogRunsSelectedBackupAndRecoveryValidation(t *testing.T) {
 		ProviderID: "main/SBOL94",
 	}, model.RecoveryTarget{
 		Type:      model.RecoveryTargetTimestamp,
-		Value:     "2026-07-20 01:02:03+00",
+		Value:     "2026-07-20T01:02:03Z",
 		Timeline:  "3",
 		Inclusive: &inclusive,
 	})
@@ -184,7 +184,7 @@ func TestValidateCatalogRunsSelectedBackupAndRecoveryValidation(t *testing.T) {
 	wantArgs := []string{
 		"validate", "-B", "/backups", "--instance=main", "-i", "SBOL94",
 		"-j", "4", "--wal", "--skip-block-validation",
-		"--recovery-target-time=2026-07-20 01:02:03+00",
+		"--recovery-target-time=2026-07-20T01:02:03Z",
 		"--recovery-target-timeline=3", "--recovery-target-inclusive=false",
 	}
 	if !reflect.DeepEqual(runner.invocation.Args, wantArgs) {
@@ -272,7 +272,7 @@ func TestRecoveryArgs(t *testing.T) {
 	}{
 		{name: "latest", target: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, want: []string{"--recovery-target=latest", "--recovery-target-action=promote"}},
 		{name: "immediate", target: model.RecoveryTarget{Type: model.RecoveryTargetImmediate}, want: []string{"--recovery-target=immediate", "--recovery-target-action=promote"}},
-		{name: "timestamp", target: model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "2026-07-20 01:02:03+00", Inclusive: &inclusive}, want: []string{"--recovery-target-time=2026-07-20 01:02:03+00", "--recovery-target-inclusive=true", "--recovery-target-action=promote"}},
+		{name: "timestamp", target: model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "2026-07-20T01:02:03Z", Inclusive: &inclusive}, want: []string{"--recovery-target-time=2026-07-20T01:02:03Z", "--recovery-target-inclusive=true", "--recovery-target-action=promote"}},
 		{name: "lsn", target: model.RecoveryTarget{Type: model.RecoveryTargetLSN, Value: "0/420000C0"}, want: []string{"--recovery-target-lsn=0/420000C0", "--recovery-target-action=promote"}},
 		{name: "xid", target: model.RecoveryTarget{Type: model.RecoveryTargetXID, Value: "757"}, want: []string{"--recovery-target-xid=757", "--recovery-target-action=promote"}},
 		{name: "restore point", target: model.RecoveryTarget{Type: model.RecoveryTargetRestorePoint, Value: "before_upgrade", Timeline: "latest"}, want: []string{"--recovery-target-name=before_upgrade", "--recovery-target-timeline=latest", "--recovery-target-action=promote"}},

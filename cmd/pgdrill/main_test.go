@@ -940,7 +940,7 @@ target:
   shutdown_timeout: 5s
 recovery:
   target: timestamp
-  value: "2026-07-06 01:02:03"
+  value: "2026-07-06T01:02:03Z"
   timeline: latest
 probes:
   - type: pg_isready
@@ -1066,7 +1066,7 @@ JSON
         --set=*) set="${arg#--set=}" ;;
         --pg1-path=*) dest="${arg#--pg1-path=}" ;;
         --type=time) saw_type=1 ;;
-        --target=2026-07-06\ 01:02:03) saw_target=1 ;;
+        --target=2026-07-06T01:02:03Z) saw_target=1 ;;
         --target-action=promote) saw_action=1 ;;
       esac
     done
@@ -1111,7 +1111,7 @@ target:
   shutdown_timeout: 5s
 recovery:
   target: timestamp
-  value: "2026-07-06 01:02:03"
+  value: "2026-07-06T01:02:03Z"
   timeline: latest
 probes:
   - type: pg_isready

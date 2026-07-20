@@ -286,6 +286,9 @@ func (a *Adapter) validateTimeout() time.Duration {
 }
 
 func recoveryArgs(target model.RecoveryTarget, includeAction bool) ([]string, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
 	args := []string{}
 	targeted := target.Type != ""
 	switch target.Type {

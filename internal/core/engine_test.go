@@ -236,6 +236,37 @@ func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T
 	}
 }
 
+func TestEngineRejectsInvalidRecoveryTargetBeforeDiscovery(t *testing.T) {
+	provider := &fakeProvider{catalog: model.BackupCatalog{Provider: model.ProviderWALG}}
+	target := &fakeTarget{}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Provider: provider,
+		Target:   target,
+		Sink:     sink,
+	}.Run(context.Background(), DrillRequest{
+		Target: model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{
+			Type:  model.RecoveryTargetTimestamp,
+			Value: "2026-07-20 01:02:03",
+		},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "validate recovery target") {
+		t.Fatalf("expected recovery target validation error, got %v", err)
+	}
+	if result.Status != model.DrillStatusFailed {
+		t.Fatalf("expected failed result, got %q", result.Status)
+	}
+	if len(provider.calls) != 0 || len(target.calls) != 0 {
+		t.Fatalf("invalid target must fail before external work: provider=%#v target=%#v", provider.calls, target.calls)
+	}
+	if !sink.called || sink.result.Status != model.DrillStatusFailed {
+		t.Fatalf("expected durable failed result, got called=%v result=%#v", sink.called, sink.result)
+	}
+}
+
 type fakeProvider struct {
 	catalog        model.BackupCatalog
 	validateReport model.CheckReport

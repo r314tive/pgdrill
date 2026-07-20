@@ -364,6 +364,9 @@ func (a *Adapter) binary() string {
 }
 
 func (a *Adapter) recoveryConfig(target model.RecoveryTarget) (string, error) {
+	if err := target.Validate(); err != nil {
+		return "", err
+	}
 	lines := []string{
 		"restore_command = " + postgresString(shellQuote(a.binary())+` wal-fetch "%f" "%p"`),
 	}

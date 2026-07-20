@@ -37,12 +37,13 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 
 	clock := e.clock()
 	startedAt := clock()
+	recoveryTarget := req.RecoveryTarget.Normalized()
 	result := model.DrillResult{
 		SchemaVersion:  model.CurrentReportSchemaVersion,
 		ID:             drillID(req.ID, startedAt),
 		Provider:       e.Provider.Type(),
 		Target:         req.Target,
-		RecoveryTarget: req.RecoveryTarget,
+		RecoveryTarget: recoveryTarget,
 		StartedAt:      startedAt,
 		Status:         model.DrillStatusUnknown,
 	}
@@ -70,6 +71,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if err := ctx.Err(); err != nil {
 		return fail(fmt.Errorf("start drill: %w", err))
 	}
+	if err := recoveryTarget.Validate(); err != nil {
+		return fail(fmt.Errorf("validate recovery target: %w", err))
+	}
 
 	catalog, err := e.Provider.DiscoverBackups(ctx)
 	result.Evidence = append(result.Evidence, catalog.Evidence...)
@@ -81,13 +85,13 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if selector == nil {
 		selector = LatestAvailableSelector{}
 	}
-	backup, err := selector.Select(catalog, req.RecoveryTarget)
+	backup, err := selector.Select(catalog, recoveryTarget)
 	if err != nil {
 		return fail(fmt.Errorf("select backup: %w", err))
 	}
 	result.Backup = backup
 
-	checkReport, err := e.Provider.ValidateCatalog(ctx, catalog, backup, req.RecoveryTarget)
+	checkReport, err := e.Provider.ValidateCatalog(ctx, catalog, backup, recoveryTarget)
 	result.Checks = append(result.Checks, checkReport.Checks...)
 	result.Evidence = append(result.Evidence, checkReport.Evidence...)
 	if err != nil {
@@ -97,7 +101,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return fail(fmt.Errorf("catalog validation failed"))
 	}
 
-	plan, err := e.Provider.PlanRestore(ctx, backup, req.RecoveryTarget, req.Target)
+	plan, err := e.Provider.PlanRestore(ctx, backup, recoveryTarget, req.Target)
 	result.Evidence = append(result.Evidence, plan.Evidence...)
 	if err != nil {
 		return fail(fmt.Errorf("plan restore: %w", err))

@@ -404,7 +404,7 @@ func TestPlanRestoreBuildsBarmanRestoreStep(t *testing.T) {
 		ClusterName: "main",
 	}, model.RecoveryTarget{
 		Type:      model.RecoveryTargetTimestamp,
-		Value:     "2026-07-06 01:02:03",
+		Value:     "2026-07-06T01:02:03Z",
 		Timeline:  "latest",
 		Inclusive: &inclusive,
 	}, model.TargetSpec{
@@ -439,7 +439,7 @@ func TestPlanRestoreBuildsBarmanRestoreStep(t *testing.T) {
 		"--config", "/etc/barman.conf",
 		"restore",
 		"--get-wal",
-		"--target-time", "2026-07-06 01:02:03",
+		"--target-time", "2026-07-06T01:02:03Z",
 		"--target-tli", "latest",
 		"--exclusive",
 		"--target-action", "promote",
@@ -525,9 +525,9 @@ func TestPlanRestoreRequiresMatchingServer(t *testing.T) {
 	}
 }
 
-func TestPlanRestoreDoesNotUseExclusiveWithoutPITRTarget(t *testing.T) {
+func TestPlanRestoreRejectsInclusiveWithoutPITRTarget(t *testing.T) {
 	inclusive := false
-	plan, err := New(Config{Server: "main"}, nil).PlanRestore(context.Background(), model.Backup{
+	_, err := New(Config{Server: "main"}, nil).PlanRestore(context.Background(), model.Backup{
 		ID:         "barman:main/20240502T030405",
 		Provider:   model.ProviderBarman,
 		ProviderID: "main/20240502T030405",
@@ -535,11 +535,8 @@ func TestPlanRestoreDoesNotUseExclusiveWithoutPITRTarget(t *testing.T) {
 		Type:    model.RestoreTargetLocal,
 		WorkDir: "/tmp/pgdrill/main",
 	})
-	if err != nil {
-		t.Fatalf("plan restore: %v", err)
-	}
-	if contains(plan.Steps[0].Command.Args, "--exclusive") {
-		t.Fatalf("did not expect --exclusive for latest restore args %#v", plan.Steps[0].Command.Args)
+	if err == nil || !strings.Contains(err.Error(), "does not support inclusive") {
+		t.Fatalf("expected inclusive validation error, got %v", err)
 	}
 }
 
@@ -557,15 +554,6 @@ func TestPlanRestoreRequiresRecoveryTargetValue(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "lsn recovery target requires value") {
 		t.Fatalf("expected recovery target validation error, got %v", err)
 	}
-}
-
-func contains(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
 }
 
 type fakeRunner struct {

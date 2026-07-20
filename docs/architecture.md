@@ -66,6 +66,15 @@ The canonical model starts with `BackupCatalog`, `Backup`, `WALRange`,
 `RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`, and
 `EvidenceRecord`.
 
+Recovery targets are normalized and validated before repository access. A
+timestamp target is an RFC3339 value with an explicit timezone; LSN, XID,
+timeline, value, and inclusive semantics are checked once in the canonical
+model rather than interpreted differently by each adapter. For timestamp PITR,
+the default selector considers only available backups with a known
+`finished_at` strictly before the requested stop time. This enforces
+PostgreSQL's base-backup stop-point boundary without pretending that catalog
+metadata alone proves WAL continuity.
+
 Restore plans may contain command steps and file-writing steps. Restore-artifact
 checks such as `pg_verifybackup` are modeled as command steps because they
 validate restored files before PostgreSQL is started. File contents are

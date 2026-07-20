@@ -392,6 +392,9 @@ func showBackupAttributes(data []byte, defaultServer string) (map[string]string,
 }
 
 func barmanRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
 	args := []string{}
 	targeted := false
 	switch target.Type {

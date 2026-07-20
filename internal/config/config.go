@@ -263,9 +263,10 @@ func FormatFromPath(path string) string {
 }
 
 func (c *Config) Normalize() {
-	if c.Recovery.Target == "" {
-		c.Recovery.Target = model.RecoveryTargetLatest
-	}
+	recoveryTarget := c.RecoveryTarget()
+	c.Recovery.Target = recoveryTarget.Type
+	c.Recovery.Value = recoveryTarget.Value
+	c.Recovery.Timeline = recoveryTarget.Timeline
 	if c.Report.Format == "" {
 		c.Report.Format = "json"
 	}
@@ -317,10 +318,8 @@ func (c Config) validateCommon() error {
 		return fmt.Errorf("unsupported target.type %q", c.Target.Type)
 	}
 
-	switch c.Recovery.Target {
-	case model.RecoveryTargetImmediate, model.RecoveryTargetLatest, model.RecoveryTargetTimestamp, model.RecoveryTargetLSN, model.RecoveryTargetXID, model.RecoveryTargetRestorePoint:
-	default:
-		return fmt.Errorf("unsupported recovery.target %q", c.Recovery.Target)
+	if err := c.RecoveryTarget().Validate(); err != nil {
+		return fmt.Errorf("recovery: %w", err)
 	}
 
 	if c.Report.Format != "json" {
@@ -331,12 +330,12 @@ func (c Config) validateCommon() error {
 }
 
 func (c Config) RecoveryTarget() model.RecoveryTarget {
-	return model.RecoveryTarget{
+	return (model.RecoveryTarget{
 		Type:      c.Recovery.Target,
 		Value:     c.Recovery.Value,
 		Timeline:  c.Recovery.Timeline,
 		Inclusive: c.Recovery.Inclusive,
-	}
+	}).Normalized()
 }
 
 func (c Config) TargetSpec() model.TargetSpec {

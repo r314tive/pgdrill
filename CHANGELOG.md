@@ -39,6 +39,9 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- Recovery targets are validated consistently before repository access.
+  Timestamp PITR now requires an explicit RFC3339 timezone and selects only a
+  backup with a known finish time strictly before the requested target.
 - Raised the minimum supported Go toolchain to 1.25 and pinned release builds
   to Go 1.26.5.
 - Made `make check` non-mutating and added `gofmt` and `go mod tidy -diff`

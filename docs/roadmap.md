@@ -10,6 +10,8 @@ Status: complete for the initial CLI engine.
 
 - Canonical model for backups, restore plans, checks, drill results, and
   evidence.
+- Canonical recovery-target validation and timestamp-aware backup eligibility
+  selection before repository mutation or restore planning.
 - Core drill engine: discover, select backup, validate, plan, restore, start
   PostgreSQL, run probes, cleanup, write evidence.
 - Command runner with timeout, raw evidence, redaction, and structured exit

@@ -33,6 +33,12 @@ Before claiming a native version as validated:
 
 Add new output shapes as sanitized fixtures when they change parser behavior.
 
+Timestamp PITR configuration is provider-neutral and must use RFC3339 with an
+explicit timezone. The selector requires a known backup finish time earlier
+than the target, following PostgreSQL's rule that a recovery stop point must be
+after the end of the base backup. This filter does not establish WAL archive
+continuity; retain the provider check and completed restore evidence.
+
 ## Restore Targets
 
 The local target is covered by process, filesystem-boundary, cleanup, and probe
