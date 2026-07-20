@@ -92,9 +92,25 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 	status := exitStatus(cmd.ProcessState, err, timedOut, canceled)
 	result := buildResult(inv, stdout.Bytes(), stderr.Bytes(), status, startedAt, finishedAt, r.effectiveRedactor(inv))
 	if cmd.ProcessState == nil && err != nil {
-		return result, err
+		if runCtx.Err() != nil {
+			return result, runCtx.Err()
+		}
+		return result, redactedError{message: result.Evidence.ExitStatus.Error, cause: err}
 	}
 	return result, nil
+}
+
+type redactedError struct {
+	message string
+	cause   error
+}
+
+func (e redactedError) Error() string {
+	return e.message
+}
+
+func (e redactedError) Unwrap() error {
+	return e.cause
 }
 
 func (r *ExecRunner) effectiveRedactor(inv Invocation) Redactor {

@@ -132,3 +132,25 @@ func TestWriteJSONRejectsUnsupportedSchema(t *testing.T) {
 		t.Fatalf("expected unsupported schema error, got %v", err)
 	}
 }
+
+func TestReadJSONPreservesStructuredFailure(t *testing.T) {
+	result, err := ReadJSON(strings.NewReader(`{
+  "schema_version": "pgdrill.report/v1alpha1",
+  "id": "failed-drill",
+  "status": "failed",
+  "failure": {
+    "stage": "backup_selection",
+    "message": "no eligible backup",
+    "evidence_ids": ["catalog"]
+  }
+}`))
+	if err != nil {
+		t.Fatalf("read failed report: %v", err)
+	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageBackupSelection || result.Failure.Message != "no eligible backup" {
+		t.Fatalf("unexpected structured failure %#v", result.Failure)
+	}
+	if len(result.Failure.EvidenceIDs) != 1 || result.Failure.EvidenceIDs[0] != "catalog" {
+		t.Fatalf("unexpected failure evidence ids %#v", result.Failure.EvidenceIDs)
+	}
+}

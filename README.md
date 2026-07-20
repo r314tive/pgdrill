@@ -58,6 +58,8 @@ Additional providers can be added behind the same internal provider contract.
   dump, row-count sampling, or custom SQL.
 - **Evidence**: immutable facts collected during a drill: versions, commands,
   timings, logs, checks, and final status.
+- **Failure stage**: a stable lifecycle stage and human-readable reason for a
+  failed or aborted drill, linked to the evidence collected before failure.
 
 ## Non-Goals
 

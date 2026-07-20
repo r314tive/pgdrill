@@ -100,6 +100,11 @@ The initial report format is the versioned JSON encoding of
 contract instead of reconstructing drill state from logs. Compatibility rules
 are defined in [report-format.md](report-format.md).
 
+Failed and aborted results carry a structured `DrillFailure`. Its finite
+lifecycle `stage` is suitable for automation and metrics; `message` is
+human-readable context and must not be parsed as a protocol. Failure records
+link the evidence IDs accumulated through that stage.
+
 ## Design Rules
 
 - Provider adapters call external tools and normalize facts into the core model.

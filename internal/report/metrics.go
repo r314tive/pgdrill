@@ -56,6 +56,16 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_failure_info Failure lifecycle stage for the last drill."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_failure_info gauge"); err != nil {
+		return err
+	}
+	failureLabels := appendMetricLabel(baseLabels, "stage", failureStage(result))
+	if err := writeMetric(writer, "pgdrill_failure_info", failureLabels, "1"); err != nil {
+		return err
+	}
 
 	durationLabels := appendMetricLabel(baseLabels, "status", string(normalizeDrillStatus(result.Status)))
 	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_drill_duration_seconds Last drill duration in seconds."); err != nil {
@@ -113,6 +123,21 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 	}
 
 	return nil
+}
+
+func failureStage(result model.DrillResult) string {
+	if result.Failure != nil {
+		if result.Failure.Stage.IsKnown() {
+			return string(result.Failure.Stage)
+		}
+		return "unknown"
+	}
+	switch normalizeDrillStatus(result.Status) {
+	case model.DrillStatusFailed, model.DrillStatusAborted:
+		return "unknown"
+	default:
+		return "none"
+	}
 }
 
 type metricSample struct {

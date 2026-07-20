@@ -56,29 +56,37 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 			sinkErr := e.Sink.Write(sinkCtx, result)
 			cancel()
 			if sinkErr != nil {
-				err = errors.Join(err, fmt.Errorf("write evidence: %w", sinkErr))
+				writeErr := fmt.Errorf("write evidence: %w", sinkErr)
+				err = errors.Join(err, writeErr)
+				if result.Failure == nil {
+					result.Failure = model.NewDrillFailure(model.DrillStageReportWrite, writeErr, result.Evidence)
+				}
+				if result.Status == model.DrillStatusPassed {
+					result.Status = model.DrillStatusFailed
+				}
 			}
 		}
 		return result, err
 	}
 
-	fail := func(err error) (model.DrillResult, error) {
+	fail := func(stage model.DrillStage, err error) (model.DrillResult, error) {
+		result.Failure = model.NewDrillFailure(stage, err, result.Evidence)
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return finish(model.DrillStatusAborted, err)
 		}
 		return finish(model.DrillStatusFailed, err)
 	}
 	if err := ctx.Err(); err != nil {
-		return fail(fmt.Errorf("start drill: %w", err))
+		return fail(model.DrillStageRequestValidation, fmt.Errorf("start drill: %w", err))
 	}
 	if err := recoveryTarget.Validate(); err != nil {
-		return fail(fmt.Errorf("validate recovery target: %w", err))
+		return fail(model.DrillStageRequestValidation, fmt.Errorf("validate recovery target: %w", err))
 	}
 
 	catalog, err := e.Provider.DiscoverBackups(ctx)
 	result.Evidence = append(result.Evidence, catalog.Evidence...)
 	if err != nil {
-		return fail(fmt.Errorf("discover backups: %w", err))
+		return fail(model.DrillStageBackupDiscovery, fmt.Errorf("discover backups: %w", err))
 	}
 
 	selector := req.Selector
@@ -87,7 +95,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 	backup, err := selector.Select(catalog, recoveryTarget)
 	if err != nil {
-		return fail(fmt.Errorf("select backup: %w", err))
+		return fail(model.DrillStageBackupSelection, fmt.Errorf("select backup: %w", err))
 	}
 	result.Backup = backup
 
@@ -95,16 +103,16 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	result.Checks = append(result.Checks, checkReport.Checks...)
 	result.Evidence = append(result.Evidence, checkReport.Evidence...)
 	if err != nil {
-		return fail(fmt.Errorf("validate catalog: %w", err))
+		return fail(model.DrillStageCatalogValidation, fmt.Errorf("validate catalog: %w", err))
 	}
 	if hasFailedChecks(checkReport.Checks) {
-		return fail(fmt.Errorf("catalog validation failed"))
+		return fail(model.DrillStageCatalogValidation, fmt.Errorf("catalog validation failed"))
 	}
 
 	plan, err := e.Provider.PlanRestore(ctx, backup, recoveryTarget, req.Target)
 	result.Evidence = append(result.Evidence, plan.Evidence...)
 	if err != nil {
-		return fail(fmt.Errorf("plan restore: %w", err))
+		return fail(model.DrillStageRestorePlanning, fmt.Errorf("plan restore: %w", err))
 	}
 
 	prepared := false
@@ -126,9 +134,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		prepared = true
 		cleanupErr := cleanup()
 		if cleanupErr != nil {
-			return fail(errors.Join(fmt.Errorf("prepare restore target: %w", err), cleanupErr))
+			return fail(model.DrillStageTargetPreparation, errors.Join(fmt.Errorf("prepare restore target: %w", err), cleanupErr))
 		}
-		return fail(fmt.Errorf("prepare restore target: %w", err))
+		return fail(model.DrillStageTargetPreparation, fmt.Errorf("prepare restore target: %w", err))
 	}
 	prepared = true
 
@@ -138,9 +146,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if err != nil {
 			cleanupErr := cleanup()
 			if cleanupErr != nil {
-				return fail(errors.Join(fmt.Errorf("execute restore step %q: %w", step.Name, err), cleanupErr))
+				return fail(model.DrillStageRestoreExecution, errors.Join(fmt.Errorf("execute restore step %q: %w", step.Name, err), cleanupErr))
 			}
-			return fail(fmt.Errorf("execute restore step %q: %w", step.Name, err))
+			return fail(model.DrillStageRestoreExecution, fmt.Errorf("execute restore step %q: %w", step.Name, err))
 		}
 	}
 
@@ -149,16 +157,16 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if err != nil {
 		cleanupErr := cleanup()
 		if cleanupErr != nil {
-			return fail(errors.Join(fmt.Errorf("start postgres: %w", err), cleanupErr))
+			return fail(model.DrillStagePostgresStart, errors.Join(fmt.Errorf("start postgres: %w", err), cleanupErr))
 		}
-		return fail(fmt.Errorf("start postgres: %w", err))
+		return fail(model.DrillStagePostgresStart, fmt.Errorf("start postgres: %w", err))
 	}
 
 	probeFailed := false
 	for _, probe := range e.Probes {
 		if err := ctx.Err(); err != nil {
 			cleanupErr := cleanup()
-			return fail(errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
+			return fail(model.DrillStageProbeExecution, errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
 		}
 		report, err := probe.Run(ctx, pg)
 		result.Checks = append(result.Checks, report.Checks...)
@@ -166,7 +174,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if err != nil {
 			if ctx.Err() != nil {
 				cleanupErr := cleanup()
-				return fail(errors.Join(fmt.Errorf("run probe %q: %w", probe.Type(), err), cleanupErr))
+				return fail(model.DrillStageProbeExecution, errors.Join(fmt.Errorf("run probe %q: %w", probe.Type(), err), cleanupErr))
 			}
 			probeFailed = true
 			result.Checks = append(result.Checks, model.Check{
@@ -183,15 +191,15 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 	if err := ctx.Err(); err != nil {
 		cleanupErr := cleanup()
-		return fail(errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
+		return fail(model.DrillStageProbeExecution, errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
 	}
 
 	cleanupErr := cleanup()
 	if cleanupErr != nil {
-		return fail(cleanupErr)
+		return fail(model.DrillStageTargetCleanup, cleanupErr)
 	}
 	if probeFailed {
-		return finish(model.DrillStatusFailed, fmt.Errorf("one or more probes failed"))
+		return fail(model.DrillStageProbeExecution, fmt.Errorf("one or more probes failed"))
 	}
 	return finish(model.DrillStatusPassed, nil)
 }

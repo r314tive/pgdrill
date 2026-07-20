@@ -71,6 +71,9 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed status, got %q", result.Status)
 	}
+	if result.Failure != nil {
+		t.Fatalf("passed drill must not have failure %#v", result.Failure)
+	}
 	if result.SchemaVersion != model.CurrentReportSchemaVersion {
 		t.Fatalf("unexpected report schema version %q", result.SchemaVersion)
 	}
@@ -131,6 +134,9 @@ func TestEngineCleansUpAndWritesFailureOnRestoreStepError(t *testing.T) {
 	if result.Status != model.DrillStatusFailed {
 		t.Fatalf("expected failed status, got %q", result.Status)
 	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRestoreExecution {
+		t.Fatalf("expected restore execution failure, got %#v", result.Failure)
+	}
 	if got, want := target.calls, []string{"prepare", "execute:fetch", "execute:recover", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
@@ -178,6 +184,9 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 	if result.Status != model.DrillStatusFailed {
 		t.Fatalf("expected failed status, got %q", result.Status)
 	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
+		t.Fatalf("expected probe execution failure, got %#v", result.Failure)
+	}
 	if got, want := target.calls, []string{"prepare", "start", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
@@ -219,6 +228,9 @@ func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T
 	if result.Status != model.DrillStatusAborted {
 		t.Fatalf("expected aborted status, got %q", result.Status)
 	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRestoreExecution {
+		t.Fatalf("expected restore execution cancellation, got %#v", result.Failure)
+	}
 	if got, want := target.calls, []string{"prepare", "execute:fetch", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
@@ -259,11 +271,44 @@ func TestEngineRejectsInvalidRecoveryTargetBeforeDiscovery(t *testing.T) {
 	if result.Status != model.DrillStatusFailed {
 		t.Fatalf("expected failed result, got %q", result.Status)
 	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("expected request validation failure, got %#v", result.Failure)
+	}
 	if len(provider.calls) != 0 || len(target.calls) != 0 {
 		t.Fatalf("invalid target must fail before external work: provider=%#v target=%#v", provider.calls, target.calls)
 	}
 	if !sink.called || sink.result.Status != model.DrillStatusFailed {
 		t.Fatalf("expected durable failed result, got called=%v result=%#v", sink.called, sink.result)
+	}
+}
+
+func TestEngineReturnsReportWriteFailure(t *testing.T) {
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{{ID: "wal-g:base_1", Status: model.BackupStatusAvailable}},
+		},
+		plan: model.RestorePlan{},
+	}
+	sink := &fakeSink{err: errors.New("disk full")}
+
+	result, err := Engine{
+		Provider: provider,
+		Target:   &fakeTarget{},
+		Sink:     sink,
+	}.Run(context.Background(), DrillRequest{
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "write evidence") {
+		t.Fatalf("expected report write error, got %v", err)
+	}
+	if result.Status != model.DrillStatusFailed {
+		t.Fatalf("report write error must fail returned result, got %q", result.Status)
+	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageReportWrite {
+		t.Fatalf("expected report write failure, got %#v", result.Failure)
 	}
 }
 

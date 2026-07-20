@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -57,5 +59,49 @@ func TestRecoveryTargetTimestamp(t *testing.T) {
 	want := time.Date(2026, 7, 19, 20, 2, 3, 123000000, time.UTC)
 	if !got.Equal(want) {
 		t.Fatalf("unexpected timestamp: got %s want %s", got, want)
+	}
+}
+
+func TestNewDrillFailureCollectsUniqueEvidenceIDs(t *testing.T) {
+	failure := NewDrillFailure(DrillStageBackupSelection, fmt.Errorf("no eligible backup"), []EvidenceRecord{
+		{ID: "catalog"},
+		{ID: "catalog"},
+		{},
+		{ID: "selection"},
+	})
+
+	if failure.Stage != DrillStageBackupSelection || failure.Message != "no eligible backup" {
+		t.Fatalf("unexpected failure %#v", failure)
+	}
+	if got, want := failure.EvidenceIDs, []string{"catalog", "selection"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected evidence ids: got %#v want %#v", got, want)
+	}
+}
+
+func TestDrillStageIsKnown(t *testing.T) {
+	known := []DrillStage{
+		DrillStageRequestValidation,
+		DrillStageBackupDiscovery,
+		DrillStageBackupSelection,
+		DrillStageCatalogValidation,
+		DrillStageRestorePlanning,
+		DrillStageTargetPreparation,
+		DrillStageRestoreExecution,
+		DrillStagePostgresStart,
+		DrillStageProbeExecution,
+		DrillStageTargetDiscovery,
+		DrillStageTargetStart,
+		DrillStageTargetCleanup,
+		DrillStageReportWrite,
+	}
+	for _, stage := range known {
+		if !stage.IsKnown() {
+			t.Errorf("expected stage %q to be known", stage)
+		}
+	}
+	for _, stage := range []DrillStage{"", "future_stage"} {
+		if stage.IsKnown() {
+			t.Errorf("expected stage %q to be unknown", stage)
+		}
 	}
 }

@@ -487,6 +487,7 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 				Message:     runErr.Error(),
 				EvidenceIDs: evidenceRecordIDs(discoveryEvidence),
 			}}
+			result.Failure = model.NewDrillFailure(model.DrillStageTargetDiscovery, runErr, result.Evidence)
 			return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 		}
 	}
@@ -621,12 +622,14 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 		result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusFailed, startErr.Error(), spec, pg))
 		result.FinishedAt = time.Now().UTC()
 		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
+		result.Failure = model.NewDrillFailure(model.DrillStageTargetStart, startErr, result.Evidence)
 		return result, startErr
 	}
 	result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusPassed, "CNPG verify cluster is Ready", spec, pg))
 
 	probeFailed := false
 	var operationErr error
+	operationStage := model.DrillStageProbeExecution
 	for _, probe := range configuredProbes {
 		if err := ctx.Err(); err != nil {
 			operationErr = fmt.Errorf("run probes: %w", err)
@@ -663,21 +666,28 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 	case ctx.Err() != nil:
 		if operationErr == nil {
 			operationErr = fmt.Errorf("target verify: %w", ctx.Err())
+			operationStage = model.DrillStageTargetCleanup
 		}
 		result.Status = model.DrillStatusAborted
 		if destroyErr != nil {
 			operationErr = errors.Join(operationErr, fmt.Errorf("destroy cnpg verify target: %w", destroyErr))
 		}
+		result.Failure = model.NewDrillFailure(operationStage, operationErr, result.Evidence)
 		return result, operationErr
 	case destroyErr != nil:
 		result.Status = model.DrillStatusFailed
-		return result, fmt.Errorf("destroy cnpg verify target: %w", destroyErr)
+		runErr := fmt.Errorf("destroy cnpg verify target: %w", destroyErr)
+		result.Failure = model.NewDrillFailure(model.DrillStageTargetCleanup, runErr, result.Evidence)
+		return result, runErr
 	case operationErr != nil:
 		result.Status = model.DrillStatusFailed
+		result.Failure = model.NewDrillFailure(model.DrillStageProbeExecution, operationErr, result.Evidence)
 		return result, operationErr
 	case probeFailed:
 		result.Status = model.DrillStatusFailed
-		return result, fmt.Errorf("one or more probes failed")
+		runErr := fmt.Errorf("one or more probes failed")
+		result.Failure = model.NewDrillFailure(model.DrillStageProbeExecution, runErr, result.Evidence)
+		return result, runErr
 	default:
 		result.Status = model.DrillStatusPassed
 		return result, nil
@@ -920,10 +930,18 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"ID", valueOrDash(result.ID)},
 		{"Status", string(result.Status)},
-		{"Provider", valueOrDash(string(result.Provider))},
-		{"Backup", valueOrDash(result.Backup.ID)},
-		{"Report", valueOrDash(reportPath)},
 	}
+	if result.Failure != nil {
+		rows = append(rows,
+			[2]string{"Stage", valueOrDash(string(result.Failure.Stage))},
+			[2]string{"Error", valueOrDash(oneLine(result.Failure.Message))},
+		)
+	}
+	rows = append(rows,
+		[2]string{"Provider", valueOrDash(string(result.Provider))},
+		[2]string{"Backup", valueOrDash(result.Backup.ID)},
+		[2]string{"Report", valueOrDash(reportPath)},
+	)
 	for _, row := range rows {
 		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
 			return err
@@ -962,15 +980,23 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"ID", valueOrDash(result.ID)},
 		{"Status", string(result.Status)},
-		{"Provider", valueOrDash(string(result.Provider))},
-		{"Backup", valueOrDash(result.Backup.ID)},
-		{"Target", targetSummary(result.Target)},
-		{"Recovery", recoveryTargetSummary(result.RecoveryTarget)},
-		{"Started", timeValue(result.StartedAt)},
-		{"Finished", timeValue(result.FinishedAt)},
-		{"Checks", fmt.Sprintf("%d passed, %d failed, %d warnings, %d skipped", statusCounts.passed, statusCounts.failed, statusCounts.warning, statusCounts.skipped)},
-		{"Evidence", fmt.Sprintf("%d records", len(result.Evidence))},
 	}
+	if result.Failure != nil {
+		rows = append(rows,
+			[2]string{"Stage", valueOrDash(string(result.Failure.Stage))},
+			[2]string{"Error", valueOrDash(oneLine(result.Failure.Message))},
+		)
+	}
+	rows = append(rows,
+		[2]string{"Provider", valueOrDash(string(result.Provider))},
+		[2]string{"Backup", valueOrDash(result.Backup.ID)},
+		[2]string{"Target", targetSummary(result.Target)},
+		[2]string{"Recovery", recoveryTargetSummary(result.RecoveryTarget)},
+		[2]string{"Started", timeValue(result.StartedAt)},
+		[2]string{"Finished", timeValue(result.FinishedAt)},
+		[2]string{"Checks", fmt.Sprintf("%d passed, %d failed, %d warnings, %d skipped", statusCounts.passed, statusCounts.failed, statusCounts.warning, statusCounts.skipped)},
+		[2]string{"Evidence", fmt.Sprintf("%d records", len(result.Evidence))},
+	)
 	for _, row := range rows {
 		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
 			return err

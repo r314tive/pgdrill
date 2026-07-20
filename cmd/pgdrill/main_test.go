@@ -577,6 +577,9 @@ report:
 	if result.ID != "cnpg-discovery-failure" || result.Status != model.DrillStatusFailed {
 		t.Fatalf("unexpected failure result %#v", result)
 	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageTargetDiscovery {
+		t.Fatalf("expected target discovery failure, got %#v", result.Failure)
+	}
 	if !hasCheckNamed(result.Checks, "cnpg-input-discovery", model.CheckStatusFailed) {
 		t.Fatalf("expected failed discovery check, got %#v", result.Checks)
 	}
@@ -623,6 +626,9 @@ report:
 	}
 	if result.Status != model.DrillStatusAborted {
 		t.Fatalf("expected aborted report, got %#v", result)
+	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageTargetDiscovery {
+		t.Fatalf("expected aborted target discovery failure, got %#v", result.Failure)
 	}
 	if len(result.Evidence) != 1 || result.Evidence[0].Command == nil || !result.Evidence[0].Command.ExitStatus.Canceled {
 		t.Fatalf("expected canceled command evidence, got %#v", result.Evidence)
@@ -1205,6 +1211,9 @@ report:
 	if result.Status != model.DrillStatusAborted {
 		t.Fatalf("expected aborted report, got %#v", result)
 	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("expected request validation failure, got %#v", result.Failure)
+	}
 }
 
 func TestReportShowCommandText(t *testing.T) {
@@ -1222,6 +1231,10 @@ func TestReportShowCommandText(t *testing.T) {
 		StartedAt:      mustTime(t, "2026-07-06T01:02:03Z"),
 		FinishedAt:     mustTime(t, "2026-07-06T01:03:03Z"),
 		Status:         model.DrillStatusFailed,
+		Failure: &model.DrillFailure{
+			Stage:   model.DrillStageProbeExecution,
+			Message: "one or more probes failed",
+		},
 		Checks: []model.Check{
 			{Name: "catalog", Status: model.CheckStatusPassed},
 			{Name: "select_1", Probe: model.ProbeSQL, Status: model.CheckStatusFailed, Message: "query failed\nconnection closed"},
@@ -1240,6 +1253,8 @@ func TestReportShowCommandText(t *testing.T) {
 		model.CurrentReportSchemaVersion,
 		"ID        drill-1",
 		"Status    failed",
+		"Stage     probe_execution",
+		"Error     one or more probes failed",
 		"Backup    wal-g:base_1",
 		"Checks    1 passed, 1 failed",
 		"select_1",

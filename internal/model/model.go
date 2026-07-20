@@ -354,6 +354,70 @@ const (
 
 const CurrentReportSchemaVersion = "pgdrill.report/v1alpha1"
 
+type DrillStage string
+
+const (
+	DrillStageRequestValidation DrillStage = "request_validation"
+	DrillStageBackupDiscovery   DrillStage = "backup_discovery"
+	DrillStageBackupSelection   DrillStage = "backup_selection"
+	DrillStageCatalogValidation DrillStage = "catalog_validation"
+	DrillStageRestorePlanning   DrillStage = "restore_planning"
+	DrillStageTargetPreparation DrillStage = "target_preparation"
+	DrillStageRestoreExecution  DrillStage = "restore_execution"
+	DrillStagePostgresStart     DrillStage = "postgres_start"
+	DrillStageProbeExecution    DrillStage = "probe_execution"
+	DrillStageTargetDiscovery   DrillStage = "target_discovery"
+	DrillStageTargetStart       DrillStage = "target_start"
+	DrillStageTargetCleanup     DrillStage = "target_cleanup"
+	DrillStageReportWrite       DrillStage = "report_write"
+)
+
+func (s DrillStage) IsKnown() bool {
+	switch s {
+	case DrillStageRequestValidation,
+		DrillStageBackupDiscovery,
+		DrillStageBackupSelection,
+		DrillStageCatalogValidation,
+		DrillStageRestorePlanning,
+		DrillStageTargetPreparation,
+		DrillStageRestoreExecution,
+		DrillStagePostgresStart,
+		DrillStageProbeExecution,
+		DrillStageTargetDiscovery,
+		DrillStageTargetStart,
+		DrillStageTargetCleanup,
+		DrillStageReportWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+type DrillFailure struct {
+	Stage       DrillStage `json:"stage"`
+	Message     string     `json:"message"`
+	EvidenceIDs []string   `json:"evidence_ids,omitempty"`
+}
+
+func NewDrillFailure(stage DrillStage, err error, evidence []EvidenceRecord) *DrillFailure {
+	failure := &DrillFailure{Stage: stage}
+	if err != nil {
+		failure.Message = err.Error()
+	}
+	seen := map[string]struct{}{}
+	for _, record := range evidence {
+		if record.ID == "" {
+			continue
+		}
+		if _, ok := seen[record.ID]; ok {
+			continue
+		}
+		seen[record.ID] = struct{}{}
+		failure.EvidenceIDs = append(failure.EvidenceIDs, record.ID)
+	}
+	return failure
+}
+
 type DrillResult struct {
 	SchemaVersion  string           `json:"schema_version"`
 	ID             string           `json:"id"`
@@ -364,6 +428,7 @@ type DrillResult struct {
 	StartedAt      time.Time        `json:"started_at"`
 	FinishedAt     time.Time        `json:"finished_at"`
 	Status         DrillStatus      `json:"status"`
+	Failure        *DrillFailure    `json:"failure,omitempty"`
 	Checks         []Check          `json:"checks,omitempty"`
 	Evidence       []EvidenceRecord `json:"evidence,omitempty"`
 }

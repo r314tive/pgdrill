@@ -59,6 +59,8 @@ Status: usable for local-target smoke drills.
 - JSON evidence report written to disk.
 - Versioned `pgdrill.report/v1alpha1` contract shared by CLI and metrics
   consumers.
+- Structured lifecycle failure stage and evidence links shared by JSON, text
+  output, and Prometheus metrics.
 - More probe ergonomics.
 
 The CLI should become usable here:

@@ -173,6 +173,26 @@ func TestRunnerMarksParentCancellation(t *testing.T) {
 	}
 }
 
+func TestRunnerRedactsStartError(t *testing.T) {
+	const secret = "binary-secret"
+	runner := NewRunner(Options{})
+
+	result, err := runner.Run(context.Background(), Invocation{
+		Path:         "/definitely/missing/" + secret,
+		RedactValues: []string{secret},
+	})
+
+	if err == nil {
+		t.Fatal("expected command start error")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(result.Evidence.ExitStatus.Error, secret) {
+		t.Fatalf("start error leaked redacted value: err=%q evidence=%#v", err, result.Evidence.ExitStatus)
+	}
+	if result.Evidence.ExitStatus.Started || !strings.Contains(err.Error(), defaultReplacement) {
+		t.Fatalf("unexpected start error result: err=%q evidence=%#v", err, result.Evidence.ExitStatus)
+	}
+}
+
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("PGDRILL_COMMAND_HELPER") != "1" {
 		return

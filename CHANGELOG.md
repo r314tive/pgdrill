@@ -10,6 +10,9 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Structured drill failures with stable lifecycle stages, diagnostic messages,
+  evidence links, text rendering, and bounded-cardinality Prometheus export.
+- Redaction-safe command start errors for durable failure reporting.
 - Signal-aware cancellation for long-running CLI operations, with bounded
   cleanup and report finalization, `aborted` drill reports, exit code 130, and
   structured `exit_status.canceled` command evidence.

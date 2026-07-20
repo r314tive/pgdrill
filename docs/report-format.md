@@ -31,6 +31,8 @@ The top-level object is `model.DrillResult` and contains:
 - restore target and recovery target
 - start and finish timestamps
 - final drill status
+- structured failure stage, message, and related evidence IDs for failed or
+  aborted drills
 - normalized checks and evidence records
 
 Target-only drills may have an empty `provider` and `backup.provider`. Consumers
@@ -47,6 +49,45 @@ should use `timed_out` and `canceled` instead of matching platform-specific
 error strings. A drill canceled by the operator or its parent scheduler has
 top-level status `aborted`; it is distinct from a completed verification with
 status `failed`.
+
+## Failure Contract
+
+New failed and aborted reports include a `failure` object:
+
+```json
+{
+  "stage": "backup_selection",
+  "message": "select backup: no eligible backup",
+  "evidence_ids": ["wal-g:backup-list:..."]
+}
+```
+
+`stage` is the machine-readable contract. Current stages are:
+
+- `request_validation`
+- `backup_discovery`
+- `backup_selection`
+- `catalog_validation`
+- `restore_planning`
+- `target_preparation`
+- `restore_execution`
+- `postgres_start`
+- `probe_execution`
+- `target_discovery`
+- `target_start`
+- `target_cleanup`
+- `report_write`
+
+`message` is diagnostic text and may change; consumers must not parse it. The
+optional `evidence_ids` list links records already present in top-level
+`evidence`. Legacy reports can have `status: failed` or `status: aborted`
+without `failure`; readers preserve compatibility and metrics expose their
+failure stage as `unknown`.
+
+Prometheus output includes one `pgdrill_failure_info` sample with a bounded
+`stage` label. Successful reports use `stage="none"`; the diagnostic message is
+never used as a metric label. Missing or unrecognized stage values are exported
+as `stage="unknown"`.
 
 ## Consumer Rules
 

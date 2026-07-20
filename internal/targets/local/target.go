@@ -183,15 +183,30 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 		"port":           strconv.Itoa(port),
 	}, startedAt)
 
-	select {
-	case err := <-process.done:
+	startupTimer := time.NewTimer(t.startupTimeout())
+	defer startupTimer.Stop()
+
+	handleEarlyExit := func(err error) (model.RunningPostgres, []model.EvidenceRecord, error) {
 		t.postgres = nil
 		evidence.Attributes["exit_error"] = errorString(err)
 		if err != nil {
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres exited during startup: %w", err)
 		}
 		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres exited during startup")
-	case <-time.After(t.startupTimeout()):
+	}
+
+	select {
+	case err := <-process.done:
+		return handleEarlyExit(err)
+	case <-startupTimer.C:
+		// When both cases are ready, select may choose the timer even though the
+		// process has already exited. Give process completion priority at the
+		// startup boundary before reporting success.
+		select {
+		case err := <-process.done:
+			return handleEarlyExit(err)
+		default:
+		}
 	case <-ctx.Done():
 		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, ctx.Err()
 	}
