@@ -90,6 +90,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           assets=(dist/*.tar.gz dist/*_checksums.txt)

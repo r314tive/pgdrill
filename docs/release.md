@@ -124,8 +124,10 @@ publication it verifies that:
 
 The build job has read-only repository permissions. A separate job receives
 only the verified bundle and gets `contents: write` solely to create the GitHub
-release. Prerelease tags are published as prereleases and are not marked
-latest.
+release. The publish job deliberately does not check out the repository; it
+passes `github.repository` to GitHub CLI through `GH_REPO` instead of relying
+on local Git metadata. Prerelease tags are published as prereleases and are not
+marked latest.
 
 If a pushed tag fails before publication, fix the source and use the next
 prerelease identifier. Do not silently retarget the failed tag.
