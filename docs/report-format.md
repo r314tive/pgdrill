@@ -68,6 +68,12 @@ truncation explicit. A successful native exit can therefore coexist with a
 failed capture contract; consumers must not use `exit_status.success` alone as
 the drill verdict.
 
+Long CNPG readiness waits retain each distinct raw command state without
+duplicating unchanged snapshots on every poll. Compacted records expose
+`poll_observations`, `poll_first_observed_at`, and `poll_last_observed_at` in
+their attributes, so consumers can distinguish one observation from a stable
+state seen repeatedly over a time range.
+
 The structured exit status distinguishes successful execution, ordinary
 non-zero exit codes, timeouts, cancellation, and failure to start. Consumers
 should use `timed_out` and `canceled` instead of matching platform-specific

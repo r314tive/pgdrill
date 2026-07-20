@@ -8,6 +8,12 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Changed
+
+- CNPG readiness evidence now compacts repeated identical polling states while
+  retaining each raw state transition, observation count, and first/last
+  observation timestamps.
+
 ## [0.1.0-alpha.9] - 2026-07-20
 
 ### Fixed

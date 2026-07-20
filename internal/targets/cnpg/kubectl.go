@@ -54,21 +54,21 @@ func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClu
 	}
 
 	deadline := time.Now().Add(timeout)
-	evidence := []model.EvidenceRecord{}
+	pollEvidence := newPollEvidence()
 	for {
 		failed, reason, recoveryEvidence, err := c.fullRecoveryFailed(ctx, spec)
-		evidence = append(evidence, recoveryEvidence...)
+		pollEvidence.Add(recoveryEvidence...)
 		if err != nil {
-			return Instance{}, evidence, err
+			return Instance{}, pollEvidence.Records(), err
 		}
 		if failed {
-			return Instance{}, evidence, fmt.Errorf("CNPG full-recovery failed before instance pod became Ready: %s", reason)
+			return Instance{}, pollEvidence.Records(), fmt.Errorf("CNPG full-recovery failed before instance pod became Ready: %s", reason)
 		}
 
 		ready, podEvidence, err := c.instancePodReady(ctx, spec)
-		evidence = append(evidence, podEvidence...)
+		pollEvidence.Add(podEvidence...)
 		if err != nil {
-			return Instance{}, evidence, err
+			return Instance{}, pollEvidence.Records(), err
 		}
 		if ready {
 			host := serviceHost(spec)
@@ -78,18 +78,18 @@ func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClu
 				Port:       DefaultPostgresPort,
 				Database:   "postgres",
 				ConnString: DefaultPodConnString,
-			}, evidence, nil
+			}, pollEvidence.Records(), nil
 		}
 
 		if time.Now().After(deadline) {
-			return Instance{}, evidence, fmt.Errorf("timeout waiting for CNPG instance pod %q to become Ready", spec.InstancePodName)
+			return Instance{}, pollEvidence.Records(), fmt.Errorf("timeout waiting for CNPG instance pod %q to become Ready", spec.InstancePodName)
 		}
 
 		timer := time.NewTimer(pollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return Instance{}, evidence, ctx.Err()
+			return Instance{}, pollEvidence.Records(), ctx.Err()
 		case <-timer.C:
 		}
 	}

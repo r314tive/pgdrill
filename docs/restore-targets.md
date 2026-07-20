@@ -89,6 +89,8 @@ Implemented lifecycle contract:
   scope Cluster/PVC cleanup to that label, including for explicit names
 - poll full-recovery pods and fail fast if any of them enters `Failed`
 - wait for the instance pod to become Ready
+- retain raw polling state transitions while compacting identical repeated
+  observations with a count and first/last timestamps
 - after confirmed creation, capture diagnostics on failure before cleanup when
   configured: cluster YAML, pod/PVC state, events, pod descriptions,
   full-recovery logs, bootstrap-controller logs, and postgres logs
