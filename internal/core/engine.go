@@ -85,6 +85,11 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if err := recoveryTarget.Validate(); err != nil {
 		return fail(model.DrillStageRequestValidation, fmt.Errorf("validate recovery target: %w", err))
 	}
+	if validator, ok := e.Target.(TargetValidator); ok {
+		if err := validator.Validate(ctx, req.Target); err != nil {
+			return fail(model.DrillStageRequestValidation, fmt.Errorf("validate restore target: %w", err))
+		}
+	}
 	if e.Preflight != nil {
 		preflightReport, err := e.Preflight.Check(ctx)
 		result.Checks = append(result.Checks, preflightReport.Checks...)

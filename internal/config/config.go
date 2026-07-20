@@ -375,7 +375,35 @@ func (c Config) validateCommon() error {
 	if err := c.validateDurations(); err != nil {
 		return err
 	}
+	if err := c.validatePaths(); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (c Config) validatePaths() error {
+	if c.Target.Type != model.RestoreTargetLocal || strings.TrimSpace(c.Target.WorkDir) == "" || strings.TrimSpace(c.Report.Path) == "" {
+		return nil
+	}
+	workDir, err := filepath.Abs(c.Target.WorkDir)
+	if err != nil {
+		return fmt.Errorf("resolve target.work_dir %s: %w", c.Target.WorkDir, err)
+	}
+	reportPath, err := filepath.Abs(c.Report.Path)
+	if err != nil {
+		return fmt.Errorf("resolve report.path %s: %w", c.Report.Path, err)
+	}
+	if !strings.EqualFold(filepath.VolumeName(workDir), filepath.VolumeName(reportPath)) {
+		return nil
+	}
+	rel, err := filepath.Rel(workDir, reportPath)
+	if err != nil {
+		return fmt.Errorf("check report.path %s against target.work_dir %s: %w", reportPath, workDir, err)
+	}
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)) {
+		return fmt.Errorf("report.path must be outside local target.work_dir")
+	}
 	return nil
 }
 

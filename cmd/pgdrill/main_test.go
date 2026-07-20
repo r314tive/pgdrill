@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1377,6 +1378,59 @@ report:
 	}
 	if strings.Contains(string(encoded), secret) {
 		t.Fatalf("preflight report leaked redacted value:\n%s", encoded)
+	}
+}
+
+func TestRunCommandRejectsNonEmptyWorkDirBeforeNativePreflight(t *testing.T) {
+	dir := t.TempDir()
+	workDir := filepath.Join(dir, "restore")
+	if err := os.Mkdir(workDir, 0o700); err != nil {
+		t.Fatalf("create existing workdir: %v", err)
+	}
+	importantPath := filepath.Join(workDir, "important.txt")
+	writeFile(t, importantPath, "keep\n")
+	invokedPath := filepath.Join(dir, "wal-g-invoked")
+	walgPath := filepath.Join(dir, "wal-g")
+	writeExecutable(t, walgPath, `#!/bin/sh
+printf 'invoked\n' > "`+invokedPath+`"
+exit 0
+`)
+	reportPath := filepath.Join(dir, "report.json")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeFile(t, configPath, `
+provider:
+  type: wal-g
+  binary: `+walgPath+`
+target:
+  type: local
+  work_dir: `+workDir+`
+  remove_work_dir: true
+report:
+  format: json
+  path: `+reportPath+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "-f", configPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read target validation report: %v", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("unexpected target validation report %#v", result)
+	}
+	if !strings.Contains(result.Failure.Message, "work_dir must be empty") {
+		t.Fatalf("unexpected target validation failure %#v", result.Failure)
+	}
+	if _, err := os.Stat(invokedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("native preflight ran before target validation, stat err=%v", err)
+	}
+	data, err := os.ReadFile(importantPath)
+	if err != nil || string(data) != "keep\n" {
+		t.Fatalf("existing workdir data changed: data=%q err=%v", data, err)
 	}
 }
 

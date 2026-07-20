@@ -253,6 +253,21 @@ func TestValidateRejectsKubernetesPollIntervalBeyondWaitTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsReportInsideLocalWorkDir(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+provider:
+  type: wal-g
+target:
+  type: local
+  work_dir: /var/tmp/pgdrill/main
+report:
+  path: /var/tmp/pgdrill/main/report.json
+`), "yaml")
+	if err == nil || !strings.Contains(err.Error(), "report.path must be outside local target.work_dir") {
+		t.Fatalf("expected report/workdir boundary error, got %v", err)
+	}
+}
+
 func TestLoadConfigRejectsAmbiguousRecoveryTimestamp(t *testing.T) {
 	_, err := Load(strings.NewReader(`
 provider:

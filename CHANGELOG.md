@@ -24,6 +24,10 @@ called out explicitly even while the major version is `0`.
   restore validation, probes, and Kubernetes commands/readiness polling.
 - A dedicated `restore.timeout` shared by all provider restore plans, separate
   from the shorter `provider.timeout` used for catalog and provider commands.
+- Read-only restore-target validation before native preflight or repository
+  access, with local work directory ownership and symlink-boundary checks.
+- Per-run random local-target ownership markers verified before recursive
+  cleanup.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
 - Redaction-safe command start errors for durable failure reporting.
@@ -61,6 +65,11 @@ called out explicitly even while the major version is `0`.
   provider, nested validation, probe, and Kubernetes timeouts remain supported.
 - Negative durations and Kubernetes poll intervals longer than the overall
   readiness timeout are rejected during strict config loading.
+- Local drills now require a missing or empty, non-symlink `target.work_dir`.
+  File restore steps reject existing symlink components, and cleanup refuses a
+  missing or mismatched ownership marker. `report.path` must remain outside the
+  local work directory; runtime PGDATA and the exclusive PostgreSQL log also
+  stay inside the owned boundary.
 - CNPG target-only reports no longer claim a configured provider that the
   target verification path did not invoke.
 - `pg_dump` probes discard the generated dump payload after validating it;

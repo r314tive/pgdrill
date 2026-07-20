@@ -2,6 +2,9 @@ package local
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,7 +19,10 @@ import (
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
-const markerFile = ".pgdrill-target"
+const (
+	markerFile   = ".pgdrill-target"
+	markerHeader = "pgdrill local restore target\n"
+)
 
 type Config struct {
 	DefaultTimeout  time.Duration
@@ -34,6 +40,7 @@ type Target struct {
 	runner   command.Runner
 	workDir  string
 	prepared bool
+	ownerID  string
 	postgres *postgresProcess
 }
 
@@ -58,24 +65,71 @@ func (t *Target) Type() model.RestoreTargetType {
 	return model.RestoreTargetLocal
 }
 
-func (t *Target) Prepare(_ context.Context, spec model.TargetSpec) error {
+func (t *Target) Validate(ctx context.Context, spec model.TargetSpec) error {
+	if err := validateTargetSpec(spec); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := inspectEmptyWorkDir(filepath.Clean(spec.WorkDir))
+	return err
+}
+
+func (t *Target) Prepare(ctx context.Context, spec model.TargetSpec) error {
+	if err := validateTargetSpec(spec); err != nil {
+		return err
+	}
+	if t.prepared {
+		return fmt.Errorf("local target is already prepared")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	ownerID, err := newOwnerID()
+	if err != nil {
+		return fmt.Errorf("create local target ownership id: %w", err)
+	}
+	workDir := filepath.Clean(spec.WorkDir)
+	created, err := prepareEmptyWorkDir(workDir)
+	if err != nil {
+		return err
+	}
+	cleanupCreated := func() {
+		if created {
+			_ = os.Remove(workDir)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		cleanupCreated()
+		return err
+	}
+
+	markerPath := filepath.Join(workDir, markerFile)
+	if err := writeOwnershipMarker(markerPath, ownerID); err != nil {
+		cleanupCreated()
+		return fmt.Errorf("write local target marker %s: %w", markerPath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(markerPath)
+		cleanupCreated()
+		return err
+	}
+
+	t.workDir = workDir
+	t.ownerID = ownerID
+	t.prepared = true
+	return nil
+}
+
+func validateTargetSpec(spec model.TargetSpec) error {
 	if spec.WorkDir == "" {
 		return fmt.Errorf("local target work_dir is required")
 	}
 	if spec.Type != "" && spec.Type != model.RestoreTargetLocal {
 		return fmt.Errorf("local target cannot prepare target type %q", spec.Type)
 	}
-
-	if err := os.MkdirAll(spec.WorkDir, 0o700); err != nil {
-		return fmt.Errorf("create local target work_dir %s: %w", spec.WorkDir, err)
-	}
-	markerPath := filepath.Join(spec.WorkDir, markerFile)
-	if err := os.WriteFile(markerPath, []byte("pgdrill local restore target\n"), 0o600); err != nil {
-		return fmt.Errorf("write local target marker %s: %w", markerPath, err)
-	}
-
-	t.workDir = spec.WorkDir
-	t.prepared = true
 	return nil
 }
 
@@ -121,6 +175,9 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 	if cfg.DataDirectory == "" {
 		return model.RunningPostgres{}, nil, fmt.Errorf("runtime data_directory is required")
 	}
+	if err := t.validateRuntimeDataDirectory(cfg.DataDirectory); err != nil {
+		return model.RunningPostgres{}, nil, err
+	}
 	if t.postgres != nil {
 		return model.RunningPostgres{}, nil, fmt.Errorf("postgres is already running")
 	}
@@ -132,7 +189,10 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 	}
 
 	logPath := filepath.Join(t.workDir, "postgres.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err := t.ensurePathHasNoSymlinks(logPath); err != nil {
+		return model.RunningPostgres{}, nil, fmt.Errorf("validate postgres log path: %w", err)
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return model.RunningPostgres{}, nil, fmt.Errorf("open postgres log %s: %w", logPath, err)
 	}
@@ -237,12 +297,28 @@ func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
 	if !t.cfg.RemoveWorkDir {
 		attributes["cleanup"] = "skipped"
 		t.prepared = false
+		t.ownerID = ""
 		return append(evidence, targetEvidence(attributes)), nil
 	}
 
 	markerPath := filepath.Join(t.workDir, markerFile)
-	if _, err := os.Stat(markerPath); err != nil {
+	workDirInfo, err := os.Lstat(t.workDir)
+	if err != nil {
+		attributes["cleanup"] = "refused"
+		return append(evidence, targetEvidence(attributes)), fmt.Errorf("inspect local target work_dir %s: %w", t.workDir, err)
+	}
+	if workDirInfo.Mode()&os.ModeSymlink != 0 || !workDirInfo.IsDir() {
+		attributes["cleanup"] = "refused"
+		return append(evidence, targetEvidence(attributes)), fmt.Errorf("refuse to remove local target work_dir that is not a real directory: %s", t.workDir)
+	}
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		attributes["cleanup"] = "refused"
 		return append(evidence, targetEvidence(attributes)), fmt.Errorf("refuse to remove local target work_dir without marker %s: %w", markerPath, err)
+	}
+	if t.ownerID == "" || string(marker) != ownershipMarker(t.ownerID) {
+		attributes["cleanup"] = "refused"
+		return append(evidence, targetEvidence(attributes)), fmt.Errorf("refuse to remove local target work_dir with mismatched ownership marker %s", markerPath)
 	}
 	if err := os.RemoveAll(t.workDir); err != nil {
 		return append(evidence, targetEvidence(attributes)), fmt.Errorf("remove local target work_dir %s: %w", t.workDir, err)
@@ -250,6 +326,7 @@ func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
 
 	attributes["cleanup"] = "removed"
 	t.prepared = false
+	t.ownerID = ""
 	return append(evidence, targetEvidence(attributes)), nil
 }
 
@@ -294,6 +371,9 @@ func (t *Target) writeFile(stepName string, spec model.FileSpec) (model.Evidence
 	if err := t.ensurePathInWorkDir(spec.Path); err != nil {
 		return record, err
 	}
+	if err := t.ensurePathHasNoSymlinks(spec.Path); err != nil {
+		return record, err
+	}
 
 	mode := os.FileMode(0o600)
 	if spec.Mode != "" {
@@ -305,6 +385,9 @@ func (t *Target) writeFile(stepName string, spec model.FileSpec) (model.Evidence
 	}
 	if err := os.MkdirAll(filepath.Dir(spec.Path), 0o700); err != nil {
 		return record, fmt.Errorf("create parent directory for %s: %w", spec.Path, err)
+	}
+	if err := t.ensurePathHasNoSymlinks(spec.Path); err != nil {
+		return record, err
 	}
 
 	flags := os.O_CREATE | os.O_WRONLY
@@ -347,6 +430,137 @@ func (t *Target) ensurePathInWorkDir(path string) error {
 	}
 	if rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." || filepath.IsAbs(rel) {
 		return fmt.Errorf("file path %s is outside local target work_dir %s", targetPath, workDir)
+	}
+	return nil
+}
+
+func (t *Target) ensurePathHasNoSymlinks(path string) error {
+	workDir, err := filepath.Abs(t.workDir)
+	if err != nil {
+		return fmt.Errorf("resolve work_dir %s: %w", t.workDir, err)
+	}
+	targetPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve file path %s: %w", path, err)
+	}
+	rel, err := filepath.Rel(workDir, targetPath)
+	if err != nil {
+		return fmt.Errorf("check file path %s against work_dir %s: %w", targetPath, workDir, err)
+	}
+
+	paths := []string{workDir}
+	current := workDir
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		paths = append(paths, current)
+	}
+	for i, currentPath := range paths {
+		info, err := os.Lstat(currentPath)
+		if errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("inspect local target path %s: %w", currentPath, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("file path %s traverses symbolic link %s", targetPath, currentPath)
+		}
+		if i < len(paths)-1 && !info.IsDir() {
+			return fmt.Errorf("file path %s traverses non-directory %s", targetPath, currentPath)
+		}
+	}
+	return nil
+}
+
+func (t *Target) validateRuntimeDataDirectory(path string) error {
+	if err := t.ensurePathInWorkDir(path); err != nil {
+		return fmt.Errorf("validate runtime data_directory: %w", err)
+	}
+	if err := t.ensurePathHasNoSymlinks(path); err != nil {
+		return fmt.Errorf("validate runtime data_directory: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect runtime data_directory %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("runtime data_directory must be a real directory: %s", path)
+	}
+	return nil
+}
+
+func prepareEmptyWorkDir(path string) (bool, error) {
+	exists, err := inspectEmptyWorkDir(path)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return false, fmt.Errorf("create local target work_dir %s: %w", path, err)
+	}
+	if _, err := inspectEmptyWorkDir(path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func inspectEmptyWorkDir(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect local target work_dir %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return false, fmt.Errorf("local target work_dir must be a real directory: %s", path)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, fmt.Errorf("read local target work_dir %s: %w", path, err)
+	}
+	if len(entries) != 0 {
+		return false, fmt.Errorf("local target work_dir must be empty before a drill: %s", path)
+	}
+	return true, nil
+}
+
+func newOwnerID() (string, error) {
+	data := make([]byte, 16)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(data), nil
+}
+
+func ownershipMarker(ownerID string) string {
+	return markerHeader + "owner=" + ownerID + "\n"
+}
+
+func writeOwnershipMarker(path, ownerID string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	payload := ownershipMarker(ownerID)
+	written, writeErr := file.WriteString(payload)
+	closeErr := file.Close()
+	if writeErr != nil {
+		_ = os.Remove(path)
+		return writeErr
+	}
+	if written != len(payload) {
+		_ = os.Remove(path)
+		return fmt.Errorf("short marker write: wrote %d of %d bytes", written, len(payload))
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return closeErr
 	}
 	return nil
 }

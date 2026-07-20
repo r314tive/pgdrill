@@ -26,8 +26,80 @@ func TestPrepareCreatesWorkDirAndMarker(t *testing.T) {
 		t.Fatalf("prepare local target: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(workDir, markerFile)); err != nil {
-		t.Fatalf("expected marker file: %v", err)
+	markerPath := filepath.Join(workDir, markerFile)
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("read marker file: %v", err)
+	}
+	if target.ownerID == "" || string(marker) != ownershipMarker(target.ownerID) {
+		t.Fatalf("unexpected ownership marker %q", marker)
+	}
+	info, err := os.Stat(markerPath)
+	if err != nil {
+		t.Fatalf("stat marker file: %v", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("ownership marker must not be group/world accessible: %s", info.Mode().Perm())
+	}
+}
+
+func TestPrepareRejectsNonEmptyExistingWorkDir(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	if err := os.Mkdir(workDir, 0o700); err != nil {
+		t.Fatalf("create existing workdir: %v", err)
+	}
+	importantPath := filepath.Join(workDir, "important.txt")
+	if err := os.WriteFile(importantPath, []byte("keep\n"), 0o600); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+	target := New(Config{RemoveWorkDir: true}, nil)
+
+	validateErr := target.Validate(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir})
+	if validateErr == nil || !strings.Contains(validateErr.Error(), "must be empty") {
+		t.Fatalf("expected read-only non-empty workdir rejection, got %v", validateErr)
+	}
+	if _, markerErr := os.Stat(filepath.Join(workDir, markerFile)); !errors.Is(markerErr, os.ErrNotExist) {
+		t.Fatalf("validation must not create ownership marker, stat err=%v", markerErr)
+	}
+	err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir})
+	if err == nil || !strings.Contains(err.Error(), "must be empty") {
+		t.Fatalf("expected non-empty workdir rejection, got %v", err)
+	}
+	if _, destroyErr := target.Destroy(context.Background()); destroyErr != nil {
+		t.Fatalf("destroy after rejected prepare: %v", destroyErr)
+	}
+	data, readErr := os.ReadFile(importantPath)
+	if readErr != nil || string(data) != "keep\n" {
+		t.Fatalf("existing data changed after rejected prepare: data=%q err=%v", data, readErr)
+	}
+}
+
+func TestValidateMissingWorkDirIsReadOnly(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	target := New(Config{}, nil)
+
+	if err := target.Validate(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+		t.Fatalf("validate missing workdir: %v", err)
+	}
+	if _, err := os.Stat(workDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("validation created workdir, stat err=%v", err)
+	}
+}
+
+func TestPrepareRejectsSymlinkWorkDir(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatalf("create real workdir: %v", err)
+	}
+	workDir := filepath.Join(root, "restore")
+	if err := os.Symlink(realDir, workDir); err != nil {
+		t.Skipf("create workdir symlink: %v", err)
+	}
+
+	err := New(Config{}, nil).Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir})
+	if err == nil || !strings.Contains(err.Error(), "must be a real directory") {
+		t.Fatalf("expected symlink workdir rejection, got %v", err)
 	}
 }
 
@@ -139,6 +211,37 @@ func TestExecuteRejectsFileOutsideWorkDir(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "outside local target work_dir") {
 		t.Fatalf("expected outside workdir error, got %v", err)
+	}
+}
+
+func TestExecuteRejectsFileThroughSymlink(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "restore")
+	outsideDir := filepath.Join(root, "outside")
+	if err := os.Mkdir(outsideDir, 0o700); err != nil {
+		t.Fatalf("create outside directory: %v", err)
+	}
+	target := New(Config{}, nil)
+	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(workDir, "data")); err != nil {
+		t.Skipf("create target symlink: %v", err)
+	}
+
+	outsidePath := filepath.Join(outsideDir, "postgresql.auto.conf")
+	_, err := target.Execute(context.Background(), model.RestoreStep{
+		Name: "unsafe-symlink-file",
+		Files: []model.FileSpec{{
+			Path:    filepath.Join(workDir, "data", "postgresql.auto.conf"),
+			Content: "unsafe\n",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "traverses symbolic link") {
+		t.Fatalf("expected symlink traversal error, got %v", err)
+	}
+	if _, statErr := os.Stat(outsidePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("file step escaped through symlink, stat err=%v", statErr)
 	}
 }
 
@@ -257,6 +360,50 @@ exit 42
 	}
 }
 
+func TestStartPostgresRejectsDataDirectoryOutsideWorkDir(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "restore")
+	outsideDataDir := filepath.Join(root, "outside-data")
+	if err := os.Mkdir(outsideDataDir, 0o700); err != nil {
+		t.Fatalf("create outside data directory: %v", err)
+	}
+	target := New(Config{}, nil)
+	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+
+	_, _, err := target.StartPostgres(context.Background(), model.RuntimeConfig{DataDirectory: outsideDataDir})
+	if err == nil || !strings.Contains(err.Error(), "outside local target work_dir") {
+		t.Fatalf("expected outside data directory rejection, got %v", err)
+	}
+}
+
+func TestStartPostgresRejectsExistingLogPath(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "restore")
+	dataDir := filepath.Join(workDir, "data")
+	target := New(Config{}, nil)
+	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatalf("create data directory: %v", err)
+	}
+	logPath := filepath.Join(workDir, "postgres.log")
+	if err := os.WriteFile(logPath, []byte("do not replace\n"), 0o600); err != nil {
+		t.Fatalf("create existing log: %v", err)
+	}
+
+	_, _, err := target.StartPostgres(context.Background(), model.RuntimeConfig{DataDirectory: dataDir, Port: 15434})
+	if err == nil || !strings.Contains(err.Error(), "file exists") {
+		t.Fatalf("expected exclusive log creation failure, got %v", err)
+	}
+	data, readErr := os.ReadFile(logPath)
+	if readErr != nil || string(data) != "do not replace\n" {
+		t.Fatalf("existing log changed: data=%q err=%v", data, readErr)
+	}
+}
+
 func TestDestroyRemovesWorkDirOnlyWhenConfigured(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	target := New(Config{RemoveWorkDir: true}, nil)
@@ -273,6 +420,28 @@ func TestDestroyRemovesWorkDirOnlyWhenConfigured(t *testing.T) {
 	}
 	if len(evidence) != 1 || evidence[0].Attributes["cleanup"] != "removed" {
 		t.Fatalf("unexpected cleanup evidence %#v", evidence)
+	}
+}
+
+func TestDestroyRejectsMismatchedOwnershipMarker(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	target := New(Config{RemoveWorkDir: true}, nil)
+	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, markerFile), []byte("forged\n"), 0o600); err != nil {
+		t.Fatalf("replace ownership marker: %v", err)
+	}
+
+	evidence, err := target.Destroy(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "mismatched ownership marker") {
+		t.Fatalf("expected ownership mismatch error, got %v", err)
+	}
+	if _, statErr := os.Stat(workDir); statErr != nil {
+		t.Fatalf("mismatched marker must preserve workdir: %v", statErr)
+	}
+	if len(evidence) != 1 || evidence[0].Attributes["cleanup"] != "refused" {
+		t.Fatalf("expected refused cleanup evidence, got %#v", evidence)
 	}
 }
 

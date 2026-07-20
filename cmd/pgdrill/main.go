@@ -1286,6 +1286,7 @@ provider:
 target:
   type: local
   work_dir: /var/tmp/pgdrill/production-main
+  remove_work_dir: true
 
 restore:
   timeout: 6h

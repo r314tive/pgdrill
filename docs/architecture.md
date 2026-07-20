@@ -52,6 +52,10 @@ type RestoreTarget interface {
     Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
 }
 
+type TargetValidator interface {
+    Validate(ctx context.Context, spec model.TargetSpec) error
+}
+
 type Probe interface {
     Type() model.ProbeType
     Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error)
@@ -109,9 +113,11 @@ The initial report format is the versioned JSON encoding of
 contract instead of reconstructing drill state from logs. Compatibility rules
 are defined in [report-format.md](report-format.md).
 
-CLI execution injects a config-derived `Preflight` into the engine. It records
-the pgdrill build and native client versions, and stops before provider
-discovery or target mutation when a required executable cannot be started.
+CLI execution injects a config-derived `Preflight` into the engine. Before that
+native-tool preflight, an optional read-only `TargetValidator` rejects invalid
+local ownership or target preconditions. The native preflight then records the
+pgdrill build and client versions and stops before provider discovery or target
+mutation when a required executable cannot be started.
 
 Failed and aborted results carry a structured `DrillFailure`. Its finite
 lifecycle `stage` is suitable for automation and metrics; `message` is
@@ -122,7 +128,8 @@ link the evidence IDs accumulated through that stage.
 
 - Provider adapters call external tools and normalize facts into the core model.
 - Restore targets own storage and runtime lifecycle.
-- Destructive cleanup must be opt-in or guarded by target ownership markers.
+- Destructive cleanup must be opt-in and guarded by per-run target ownership
+  markers.
 - Probes only inspect a running restored PostgreSQL instance.
 - Evidence keeps bounded redacted command output previews, byte counts,
   truncation state, and normalized status.

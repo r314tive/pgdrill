@@ -21,6 +21,13 @@ type RestoreTarget interface {
 	Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
 }
 
+// TargetValidator performs read-only target precondition checks before native
+// tool preflight or backup repository access. Prepare must still recheck any
+// mutable filesystem or remote-state assumptions.
+type TargetValidator interface {
+	Validate(ctx context.Context, spec model.TargetSpec) error
+}
+
 type Probe interface {
 	Type() model.ProbeType
 	Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error)

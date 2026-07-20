@@ -55,3 +55,21 @@ probes:
 Choose explicit values from measured repository size and drill history. A
 timeout is an operational guard, not an RTO assertion; the report's measured
 timestamps are the evidence used to evaluate RTO.
+
+## Local Work Directory
+
+For `target.type: local`, `target.work_dir` must be missing or an empty real
+directory when a drill starts. Validation is read-only and runs before native
+tool preflight or backup repository access; `Prepare` repeats the check before
+writing anything.
+
+Set `target.remove_work_dir: true` for recurring automation. pgdrill writes a
+random per-run ownership marker and verifies the exact marker before recursive
+cleanup. When removal is disabled, choose a fresh path for the next drill or
+archive/remove the retained directory explicitly. Existing non-empty paths,
+symlink work directories, mismatched markers, and file-step paths that traverse
+symlinks are refused.
+
+`report.path` must be outside the local work directory. Cleanup happens before
+the final report write, so placing the report below `work_dir` would otherwise
+recreate a directory that no longer has pgdrill's ownership marker.

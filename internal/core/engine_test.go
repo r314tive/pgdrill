@@ -324,6 +324,40 @@ func TestEngineRejectsInvalidRecoveryTargetBeforeDiscovery(t *testing.T) {
 	}
 }
 
+func TestEngineRejectsInvalidTargetBeforePreflightAndDiscovery(t *testing.T) {
+	provider := &fakeProvider{catalog: model.BackupCatalog{Provider: model.ProviderWALG}}
+	baseTarget := &fakeTarget{}
+	target := &validatingTarget{fakeTarget: baseTarget, err: errors.New("work_dir is not empty")}
+	preflight := &fakePreflight{}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Provider:  provider,
+		Target:    target,
+		Preflight: preflight,
+		Sink:      sink,
+	}.Run(context.Background(), DrillRequest{
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/existing"},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "validate restore target") {
+		t.Fatalf("expected target validation error, got %v", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("unexpected target validation result %#v", result)
+	}
+	if target.validateCalls != 1 || len(baseTarget.calls) != 0 {
+		t.Fatalf("unexpected target calls: validate=%d lifecycle=%#v", target.validateCalls, baseTarget.calls)
+	}
+	if preflight.called || len(provider.calls) != 0 {
+		t.Fatalf("invalid target must fail before external work: preflight=%v provider=%#v", preflight.called, provider.calls)
+	}
+	if !sink.called || sink.result.Status != model.DrillStatusFailed {
+		t.Fatalf("expected durable failed result, got called=%v result=%#v", sink.called, sink.result)
+	}
+}
+
 func TestEngineReturnsReportWriteFailure(t *testing.T) {
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
@@ -367,9 +401,11 @@ type fakeProvider struct {
 type fakePreflight struct {
 	report model.CheckReport
 	err    error
+	called bool
 }
 
 func (p *fakePreflight) Check(context.Context) (model.CheckReport, error) {
+	p.called = true
 	return p.report, p.err
 }
 
@@ -401,6 +437,17 @@ type fakeTarget struct {
 	destroyErr        error
 	destroyContextErr error
 	destroyEvidence   []model.EvidenceRecord
+}
+
+type validatingTarget struct {
+	*fakeTarget
+	err           error
+	validateCalls int
+}
+
+func (t *validatingTarget) Validate(context.Context, model.TargetSpec) error {
+	t.validateCalls++
+	return t.err
 }
 
 func (t *fakeTarget) Type() model.RestoreTargetType {

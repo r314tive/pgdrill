@@ -23,8 +23,8 @@ Status: complete for the initial CLI engine.
 - JSON report file sink.
 - First CLI report surface: `pgdrill report show`.
 - Prometheus metrics export from JSON reports: `pgdrill report metrics`.
-- Local restore target workdir preparation, command-step execution, and guarded
-  cleanup.
+- Local restore target workdir preparation, read-only ownership validation,
+  symlink-safe file steps, command execution, and per-run guarded cleanup.
 - Local restore target PostgreSQL startup/shutdown lifecycle.
 - `pg_isready` probe.
 - SQL probe through `psql`.

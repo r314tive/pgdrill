@@ -191,7 +191,19 @@ disposable work directory, runs command-based restore steps, starts a restored
 PostgreSQL process on `127.0.0.1`, records runtime evidence with pid, port, and
 log path, and stops the process during cleanup.
 
-The target does not remove `work_dir` by default. Removal must be explicitly
-enabled and is guarded by a pgdrill-owned marker file.
+The work directory must be missing or empty and must not itself be a symlink.
+This is checked read-only before native preflight and repository access, then
+checked again during preparation. A non-empty path is never adopted by writing
+a marker into it.
 
-File-writing restore steps are limited to the target `work_dir`.
+The target does not remove `work_dir` by default. Removal must be explicitly
+enabled and is guarded by a random per-run ownership marker whose exact value
+is verified before recursive cleanup. When retained artifacts are required,
+use a fresh path for the next drill. Recurring automation should normally set
+`remove_work_dir: true`.
+
+File-writing restore steps are lexically limited to `work_dir` and reject
+existing symlink path components before and after parent-directory creation.
+The PostgreSQL runtime data directory must be a real directory inside the same
+boundary, and `postgres.log` is created exclusively so restore output cannot
+pre-place a path that pgdrill would overwrite or follow.
