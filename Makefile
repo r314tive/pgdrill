@@ -56,6 +56,7 @@ smoke: build
 	$(BINDIR)/$(BINARY) version
 	$(BINDIR)/$(BINARY) explain -format json >/dev/null
 	$(BINDIR)/$(BINARY) sample-config >/dev/null
+	$(BINDIR)/$(BINARY) doctor -h >/dev/null
 	$(BINDIR)/$(BINARY) catalog help >/dev/null
 	$(BINDIR)/$(BINARY) target help >/dev/null
 	$(BINDIR)/$(BINARY) target manifest -h >/dev/null
@@ -91,6 +92,7 @@ release-snapshot: toolchain-check check
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) version
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) explain -format json >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) sample-config >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) doctor -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) catalog help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target manifest -h >/dev/null

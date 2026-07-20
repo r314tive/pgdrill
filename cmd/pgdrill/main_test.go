@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/preflight"
 	"github.com/r314tive/pgdrill/internal/report"
 	"gopkg.in/yaml.v3"
 )
@@ -64,6 +65,108 @@ func TestSubcommandHelpReturnsSuccess(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "Usage of run") {
 		t.Fatalf("expected run help output, got: %s", got)
+	}
+}
+
+func TestDoctorCommandJSONChecksKubernetesClientWithoutServer(t *testing.T) {
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeExecutable(t, kubectlPath, `#!/bin/sh
+if [ "$1" != "version" ] || [ "$2" != "--client" ] || [ "$3" != "--output=json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 64
+fi
+printf '%s\n' '{"clientVersion":{"gitVersion":"v1.34.1"}}'
+`)
+	writeFile(t, configPath, `
+target:
+  type: kubernetes
+  kubernetes:
+    kubectl_binary: `+kubectlPath+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"doctor", "-f", configPath, "-format", "json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+	var result preflight.Result
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("parse doctor output: %v\n%s", err, stdout.String())
+	}
+	if result.SchemaVersion != preflight.CurrentSchemaVersion || result.Status != model.DrillStatusPassed {
+		t.Fatalf("unexpected doctor result %#v", result)
+	}
+	if result.PGDrillVersion == "" || result.Target != model.RestoreTargetKubernetes || result.Provider != "" {
+		t.Fatalf("unexpected doctor subject %#v", result)
+	}
+	if len(result.Checks) != 1 || result.Checks[0].Attributes["version"] != "v1.34.1" {
+		t.Fatalf("unexpected doctor checks %#v", result.Checks)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].Command == nil || result.Evidence[0].Command.ResolvedPath == "" {
+		t.Fatalf("expected resolved command evidence, got %#v", result.Evidence)
+	}
+}
+
+func TestDoctorCommandReportsMissingTool(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "pgdrill.yaml")
+	writeFile(t, configPath, `
+target:
+  type: kubernetes
+  kubernetes:
+    kubectl_binary: /definitely/missing/kubectl
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"doctor", "-f", configPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Status    failed") || !strings.Contains(stdout.String(), "kubectl") {
+		t.Fatalf("unexpected doctor output:\n%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "1 unavailable tool") {
+		t.Fatalf("unexpected doctor error: %s", stderr.String())
+	}
+}
+
+func TestDoctorCommandRequiresProviderForLocalDrill(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "pgdrill.yaml")
+	writeFile(t, configPath, `
+target:
+  type: local
+  work_dir: /tmp/pgdrill
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"doctor", "-f", configPath}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "provider.type is required") {
+		t.Fatalf("expected local provider validation, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestDoctorCommandReturnsInterruptedExitCode(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeFile(t, configPath, `
+target:
+  type: kubernetes
+`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var stdout, stderr bytes.Buffer
+	code := runContext(ctx, []string{"doctor", "-f", configPath, "-format", "json"}, &stdout, &stderr)
+	if code != exitCodeInterrupted {
+		t.Fatalf("expected interrupted exit code, got %d: %s", code, stderr.String())
+	}
+	var result preflight.Result
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("parse doctor output: %v\n%s", err, stdout.String())
+	}
+	if result.Status != model.DrillStatusAborted || len(result.Checks) != 0 {
+		t.Fatalf("unexpected aborted doctor result %#v", result)
 	}
 }
 

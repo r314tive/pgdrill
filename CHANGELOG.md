@@ -10,6 +10,10 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Read-only `pgdrill doctor` preflight for strict config validation, required
+  executable discovery, native version capture, structured checks, redacted
+  command evidence, and text/JSON output.
+- Requested and resolved executable paths in durable command evidence.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
 - Redaction-safe command start errors for durable failure reporting.

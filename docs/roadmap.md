@@ -35,6 +35,8 @@ Status: complete for the initial CLI engine.
 - Strict `pg_verifybackup` profile.
 - Optional WAL-G `wal-verify` provider check.
 - First CLI drill surface: `pgdrill run`.
+- Read-only `pgdrill doctor` preflight with config-aware executable discovery,
+  native version capture, and redacted structured evidence.
 - Signal-aware CLI cancellation with `aborted` reports, structured canceled
   command evidence, bounded cleanup, and stable automation exit codes.
 - WAL-G local restore planning for `backup-fetch` and `wal-fetch` recovery
@@ -67,6 +69,7 @@ The CLI should become usable here:
 
 ```sh
 pgdrill run -f pgdrill.yaml
+pgdrill doctor -f pgdrill.yaml
 pgdrill report show path/to/report.json
 pgdrill report metrics path/to/report.json
 pgdrill catalog list -f pgdrill.yaml

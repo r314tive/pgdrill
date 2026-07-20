@@ -56,6 +56,8 @@ const (
 	ToolPGDump         ToolType = "pg_dump"
 	ToolPGIsReady      ToolType = "pg_isready"
 	ToolPSQL           ToolType = "psql"
+	ToolPostgres       ToolType = "postgres"
+	ToolKubectl        ToolType = "kubectl"
 )
 
 type Overview struct {
@@ -103,6 +105,8 @@ func ProjectOverview() Overview {
 			ToolPGDump,
 			ToolPGIsReady,
 			ToolPSQL,
+			ToolPostgres,
+			ToolKubectl,
 		},
 	}
 }
@@ -454,6 +458,7 @@ type EvidenceRecord struct {
 
 type CommandEvidence struct {
 	Path           string            `json:"path"`
+	ResolvedPath   string            `json:"resolved_path,omitempty"`
 	Args           []string          `json:"args,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	WorkDir        string            `json:"work_dir,omitempty"`

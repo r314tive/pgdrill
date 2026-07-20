@@ -27,11 +27,12 @@ type Invocation struct {
 }
 
 type RawEvidence struct {
-	Path   string
-	Args   []string
-	Env    map[string]string
-	Stdout []byte
-	Stderr []byte
+	Path         string
+	ResolvedPath string
+	Args         []string
+	Env          map[string]string
+	Stdout       []byte
+	Stderr       []byte
 }
 
 type Result struct {
@@ -90,7 +91,7 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 	canceled := errors.Is(runCtx.Err(), context.Canceled)
 
 	status := exitStatus(cmd.ProcessState, err, timedOut, canceled)
-	result := buildResult(inv, stdout.Bytes(), stderr.Bytes(), status, startedAt, finishedAt, r.effectiveRedactor(inv))
+	result := buildResult(inv, cmd.Path, stdout.Bytes(), stderr.Bytes(), status, startedAt, finishedAt, r.effectiveRedactor(inv))
 	if cmd.ProcessState == nil && err != nil {
 		if runCtx.Err() != nil {
 			return result, runCtx.Err()
@@ -141,7 +142,7 @@ func exitStatus(state *os.ProcessState, err error, timedOut, canceled bool) mode
 	return status
 }
 
-func buildResult(inv Invocation, stdout, stderr []byte, status model.ExitStatus, startedAt, finishedAt time.Time, redactor Redactor) Result {
+func buildResult(inv Invocation, resolvedPath string, stdout, stderr []byte, status model.ExitStatus, startedAt, finishedAt time.Time, redactor Redactor) Result {
 	args := append([]string{}, inv.Args...)
 	env := copyEnv(inv.Env)
 	rawStdout := append([]byte{}, stdout...)
@@ -152,6 +153,7 @@ func buildResult(inv Invocation, stdout, stderr []byte, status model.ExitStatus,
 	duration := finishedAt.Sub(startedAt)
 	evidence := model.CommandEvidence{
 		Path:           redactor.RedactString(inv.Path),
+		ResolvedPath:   redactor.RedactString(resolvedPath),
 		Args:           redactStrings(args, redactor),
 		Env:            redactEnv(env, redactor),
 		WorkDir:        redactor.RedactString(inv.WorkDir),
@@ -165,11 +167,12 @@ func buildResult(inv Invocation, stdout, stderr []byte, status model.ExitStatus,
 
 	return Result{
 		Raw: RawEvidence{
-			Path:   inv.Path,
-			Args:   args,
-			Env:    env,
-			Stdout: rawStdout,
-			Stderr: rawStderr,
+			Path:         inv.Path,
+			ResolvedPath: resolvedPath,
+			Args:         args,
+			Env:          env,
+			Stdout:       rawStdout,
+			Stderr:       rawStderr,
 		},
 		Evidence: evidence,
 	}

@@ -34,6 +34,9 @@ func TestRunnerCapturesRawAndRedactedEvidence(t *testing.T) {
 	if !result.Evidence.ExitStatus.Success {
 		t.Fatalf("expected success status, got %#v", result.Evidence.ExitStatus)
 	}
+	if result.Raw.ResolvedPath == "" || result.Evidence.ResolvedPath == "" {
+		t.Fatalf("expected resolved executable path, got raw=%q durable=%q", result.Raw.ResolvedPath, result.Evidence.ResolvedPath)
+	}
 	if got := string(result.Raw.Stdout); !strings.Contains(got, "arg-secret") || !strings.Contains(got, "env-secret") {
 		t.Fatalf("expected raw stdout to retain evidence, got %q", got)
 	}
@@ -185,7 +188,7 @@ func TestRunnerRedactsStartError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected command start error")
 	}
-	if strings.Contains(err.Error(), secret) || strings.Contains(result.Evidence.ExitStatus.Error, secret) {
+	if strings.Contains(err.Error(), secret) || strings.Contains(result.Evidence.ExitStatus.Error, secret) || strings.Contains(result.Evidence.ResolvedPath, secret) {
 		t.Fatalf("start error leaked redacted value: err=%q evidence=%#v", err, result.Evidence.ExitStatus)
 	}
 	if result.Evidence.ExitStatus.Started || !strings.Contains(err.Error(), defaultReplacement) {

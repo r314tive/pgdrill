@@ -39,9 +39,12 @@ Target-only drills may have an empty `provider` and `backup.provider`. Consumers
 must not infer a provider from the restore target or a CNPG `Backup` reference.
 
 Command evidence contains redacted arguments, environment values, output, and a
-structured exit status. Raw command output is available only to in-process
-adapters while a command is being normalized and must not be reconstructed from
-the durable report.
+structured exit status. `path` is the configured executable name or path;
+`resolved_path`, when present, is the executable selected by the operating
+system's process runner. Bare command names are resolved through `PATH`; an
+explicit path can remain explicit. Raw command output is available only to
+in-process adapters while a command is being normalized and must not be
+reconstructed from the durable report.
 
 The structured exit status distinguishes successful execution, ordinary
 non-zero exit codes, timeouts, cancellation, and failure to start. Consumers

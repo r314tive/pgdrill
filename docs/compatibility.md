@@ -25,13 +25,19 @@ version.
 
 Before claiming a native version as validated:
 
-1. capture `pgdrill version` and the native tool version
+1. capture `pgdrill version` and `pgdrill doctor -f <config> -format json`
 2. run catalog discovery against a disposable or read-only repository
 3. run the provider check profile used in production
 4. complete a real restore and the required probes
 5. retain the JSON report with secrets redacted
 
 Add new output shapes as sanitized fixtures when they change parser behavior.
+
+`pgdrill doctor` proves that the config is structurally valid for its target,
+that each required executable starts, and that its bounded version command
+succeeds. It deliberately does not access repositories, database servers, or
+the Kubernetes API and therefore does not replace catalog discovery, provider
+checks, or a restore drill.
 
 Timestamp PITR configuration is provider-neutral and must use RFC3339 with an
 explicit timezone. The selector requires a known backup finish time earlier

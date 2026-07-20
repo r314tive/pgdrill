@@ -16,6 +16,8 @@ probes, and evidence, not in terms of one provider's command output.
   selection, and the drill engine lifecycle.
 - `internal/command`: direct command runner with timeout, raw stdout/stderr, safe
   redacted evidence, and structured exit status.
+- `internal/preflight`: config-derived executable requirements and read-only
+  native version checks used by `pgdrill doctor`.
 - `internal/adapters/*`: provider registry, provider-specific command
   orchestration, and output normalization.
 - `internal/restorechecks/*`: restore-artifact checks that run after provider
@@ -91,9 +93,10 @@ pgbackrest:<stanza>/<backup-label>
 pg_probackup:<instance>/<backup-id>
 ```
 
-Raw command stdout/stderr stay available to adapter code as `command.RawEvidence`.
-Reports and logs should use `model.CommandEvidence`, where arguments,
-environment values, stdout, stderr, and exit errors are redacted.
+Raw command stdout/stderr stay available to adapter code as
+`command.RawEvidence`. Reports and logs should use `model.CommandEvidence`,
+where arguments, environment values, stdout, stderr, exit errors, and the
+requested and resolved executable paths are redacted.
 
 The initial report format is the versioned JSON encoding of
 `model.DrillResult`. CLI, TUI, and future UI surfaces should consume this report

@@ -12,8 +12,9 @@ operational question:
 ## Status
 
 Pre-alpha. The repository has the first canonical model, core interfaces,
-command runner, strict configuration loading, initial catalog discovery adapters
-for WAL-G, Barman, pgBackRest, and pg_probackup, provider-side checks for Barman
+command runner, strict configuration loading, read-only native-tool preflight,
+initial catalog discovery adapters for WAL-G, Barman, pgBackRest, and
+pg_probackup, provider-side checks for Barman
 and optional WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
 `generate-manifest` and `verify-backup`, optional pgBackRest `check` and
 `verify`, optional pg_probackup `validate`, pgBackRest and pg_probackup local
@@ -87,6 +88,17 @@ selected provider, target, and probes must also be installed in the execution
 environment. See [docs/compatibility.md](docs/compatibility.md) for the current
 validation boundary.
 
+Validate the config and capture the required client versions without touching a
+backup repository, PostgreSQL server, or Kubernetes API:
+
+```sh
+pgdrill doctor -f pgdrill.yaml
+pgdrill doctor -f pgdrill.yaml -format json
+```
+
+The exact scope and JSON contract are documented in
+[docs/preflight.md](docs/preflight.md).
+
 ## Development
 
 ```sh
@@ -103,6 +115,7 @@ make -s release-check VERSION=v0.0.0-dev
 go run ./cmd/pgdrill version
 go run ./cmd/pgdrill sample-config
 go run ./cmd/pgdrill explain
+go run ./cmd/pgdrill doctor -f examples/pgdrill.yaml
 go run ./cmd/pgdrill catalog list -f examples/pgdrill.yaml
 go run ./cmd/pgdrill run -f examples/pgdrill.yaml
 go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml

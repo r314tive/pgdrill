@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/adapters"
+	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
 	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/preflight"
 	"github.com/r314tive/pgdrill/internal/probes"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/targets"
@@ -58,6 +60,8 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return runSampleConfig(args[1:], stdout, stderr)
 	case "explain":
 		return runExplain(args[1:], stdout, stderr)
+	case "doctor":
+		return runDoctor(ctx, args[1:], stdout, stderr)
 	case "catalog":
 		return runCatalog(ctx, args[1:], stdout, stderr)
 	case "target":
@@ -852,6 +856,95 @@ func runExplain(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var configPath string
+	var configPathLong string
+	var format string
+	var timeout time.Duration
+	fs.StringVar(&configPath, "f", "", "configuration file")
+	fs.StringVar(&configPathLong, "config", "", "configuration file")
+	fs.StringVar(&format, "format", "text", "output format: text or json")
+	fs.DurationVar(&timeout, "timeout", preflight.DefaultTimeout, "timeout for each version command")
+	if ok, code := parseFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "doctor does not accept positional arguments")
+		return 2
+	}
+	if configPath == "" {
+		configPath = configPathLong
+	}
+	if configPath == "" {
+		fmt.Fprintln(stderr, "doctor requires -f or -config")
+		return 2
+	}
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format != "text" && format != "json" {
+		fmt.Fprintf(stderr, "unsupported format: %s\n", format)
+		return 2
+	}
+	if timeout <= 0 {
+		fmt.Fprintln(stderr, "doctor timeout must be positive")
+		return 2
+	}
+
+	cfg, err := config.LoadTargetFile(configPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load config: %v\n", err)
+		return 1
+	}
+	if cfg.Target.Type == model.RestoreTargetLocal {
+		if err := cfg.Validate(); err != nil {
+			fmt.Fprintf(stderr, "validate local drill config: %v\n", err)
+			return 1
+		}
+	}
+	requirements, err := preflight.Requirements(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "build preflight requirements: %v\n", err)
+		return 1
+	}
+
+	result, checkErr := preflight.NewChecker(command.NewRunner(command.Options{}), timeout).Run(ctx, requirements)
+	result.PGDrillVersion = version.String()
+	result.Cluster = cfg.Cluster.Name
+	result.Target = cfg.Target.Type
+	if cfg.Target.Type == model.RestoreTargetLocal {
+		result.Provider = cfg.Provider.Type
+	}
+	switch format {
+	case "text":
+		if err := writeDoctorText(stdout, result); err != nil {
+			fmt.Fprintf(stderr, "write doctor output: %v\n", err)
+			return 1
+		}
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			fmt.Fprintf(stderr, "write doctor output: %v\n", err)
+			return 1
+		}
+	}
+
+	if checkErr != nil && preflight.IsInterrupted(checkErr) {
+		fmt.Fprintf(stderr, "doctor aborted: %v\n", checkErr)
+		return exitCodeInterrupted
+	}
+	if checkErr != nil {
+		fmt.Fprintf(stderr, "doctor failed: %v\n", checkErr)
+		return 1
+	}
+	if result.Status != model.DrillStatusPassed {
+		fmt.Fprintf(stderr, "doctor found %d unavailable tool(s)\n", preflight.FailedCount(result))
+		return 1
+	}
+	return 0
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, `pgdrill verifies PostgreSQL recovery readiness.
 
@@ -860,6 +953,7 @@ Usage:
 
 Commands:
   run              Execute a restore drill.
+  doctor           Validate config and required executable versions.
   version          Print the pgdrill version.
   sample-config    Print a starter configuration.
   explain          Explain the project model.
@@ -944,6 +1038,45 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 	)
 	for _, row := range rows {
 		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
+			return err
+		}
+	}
+	return table.Flush()
+}
+
+func writeDoctorText(w io.Writer, result preflight.Result) error {
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintf(
+		table,
+		"Schema\t%s\npgdrill\t%s\nCluster\t%s\nProvider\t%s\nTarget\t%s\nStatus\t%s\nTools\t%d checked, %d failed\n",
+		result.SchemaVersion,
+		valueOrDash(result.PGDrillVersion),
+		valueOrDash(result.Cluster),
+		valueOrDash(string(result.Provider)),
+		valueOrDash(string(result.Target)),
+		result.Status,
+		len(result.Checks),
+		preflight.FailedCount(result),
+	); err != nil {
+		return err
+	}
+	if len(result.Checks) == 0 {
+		return table.Flush()
+	}
+	if _, err := fmt.Fprintln(table, "\nTOOL\tCOMPONENTS\tSTATUS\tBINARY\tRESOLVED\tVERSION / ERROR"); err != nil {
+		return err
+	}
+	for _, check := range result.Checks {
+		if _, err := fmt.Fprintf(
+			table,
+			"%s\t%s\t%s\t%s\t%s\t%s\n",
+			valueOrDash(check.Attributes["tool"]),
+			valueOrDash(check.Attributes["components"]),
+			check.Status,
+			valueOrDash(check.Attributes["binary"]),
+			valueOrDash(check.Attributes["resolved_path"]),
+			oneLine(check.Message),
+		); err != nil {
 			return err
 		}
 	}
