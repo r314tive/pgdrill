@@ -69,6 +69,9 @@ called out explicitly even while the major version is `0`.
   preflight, catalog discovery, restore, or Kubernetes resource creation.
 - Optional `pg_verifybackup` restore step for pg_probackup plans, bringing the
   generic restored-artifact check to every implemented physical adapter.
+- A shared core probe executor for local and CNPG drills, preserving partial
+  evidence and treating an empty configured-probe report as a failed protocol
+  response on both paths.
 
 ### Changed
 
@@ -98,6 +101,11 @@ called out explicitly even while the major version is `0`.
 - The `strict` `pg_verifybackup` profile now enables fail-fast verification
   without emitting the invalid `--format=json` argument. Explicit backup
   formats are restricted to PostgreSQL's `p`, `plain`, `t`, and `tar` values.
+- CNPG verify targets now use create-only semantics instead of adopting an
+  existing object through `kubectl apply`. Each verify run adds a random
+  ownership label to the `Cluster` and its inherited resources; ambiguous
+  create failures and normal teardown delete only resources selected by that
+  ownership ID, including when an explicit cluster name is configured.
 
 ## [0.1.0-alpha.5] - 2026-07-20
 

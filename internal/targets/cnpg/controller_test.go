@@ -11,7 +11,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
-func TestControllerStartAppliesClusterAndWaitsForInstance(t *testing.T) {
+func TestControllerStartCreatesClusterAndWaitsForInstance(t *testing.T) {
 	client := &fakeLifecycleClient{
 		instance: Instance{
 			PodName:    "verify-altbox-abc12345-1",
@@ -35,7 +35,7 @@ func TestControllerStartAppliesClusterAndWaitsForInstance(t *testing.T) {
 		t.Fatalf("start controller: %v", err)
 	}
 
-	if got, want := client.calls, []string{"apply", "wait"}; !reflect.DeepEqual(got, want) {
+	if got, want := client.calls, []string{"create", "wait"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected calls: got %#v want %#v", got, want)
 	}
 	if !strings.Contains(string(client.manifest), "bootstrap:") || !strings.Contains(string(client.manifest), "altbox-backup-20260707") {
@@ -47,7 +47,7 @@ func TestControllerStartAppliesClusterAndWaitsForInstance(t *testing.T) {
 	if pg.ConnString != client.instance.ConnString || pg.Host != client.instance.Host || pg.Port != 5432 {
 		t.Fatalf("unexpected running postgres %#v", pg)
 	}
-	if !hasOperation(evidence, "cnpg-manifest-render") || !hasOperation(evidence, "apply") || !hasOperation(evidence, "wait") {
+	if !hasOperation(evidence, "cnpg-manifest-render") || !hasOperation(evidence, "create") || !hasOperation(evidence, "wait") {
 		t.Fatalf("missing expected evidence operations %#v", evidence)
 	}
 }
@@ -70,7 +70,7 @@ func TestControllerStartFailureCapturesAndCleansUp(t *testing.T) {
 		t.Fatalf("expected wait failure, got %v", err)
 	}
 
-	if got, want := client.calls, []string{"apply", "wait", "capture:start-failed", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
+	if got, want := client.calls, []string{"create", "wait", "capture:start-failed", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected calls: got %#v want %#v", got, want)
 	}
 	if client.captureOptions.Reason != "start-failed" || client.captureOptions.EventsTail != 200 {
@@ -81,6 +81,168 @@ func TestControllerStartFailureCapturesAndCleansUp(t *testing.T) {
 	}
 	if !hasOperation(evidence, "capture:start-failed") || !hasOperation(evidence, "delete-cluster") || !hasOperation(evidence, "delete-pvcs") {
 		t.Fatalf("missing cleanup evidence %#v", evidence)
+	}
+}
+
+func TestControllerAmbiguousCreateFailureCleansUpByOwnership(t *testing.T) {
+	client := &fakeLifecycleClient{createErr: errors.New("create response lost")}
+	controller := Controller{
+		Spec:   testVerifyClusterSpec(t),
+		Client: client,
+		Options: LifecycleOptions{
+			CaptureLogs:   true,
+			CleanupOnFail: true,
+			CleanupPVC:    true,
+		},
+	}
+
+	_, evidence, err := controller.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "create response lost") {
+		t.Fatalf("expected create failure, got %v", err)
+	}
+	if got, want := client.calls, []string{"create", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected calls: got %#v want %#v", got, want)
+	}
+	if controller.created {
+		t.Fatal("expected successful uncertain-create cleanup to release ownership")
+	}
+	if !hasOperation(evidence, "create") || !hasOperation(evidence, "delete-cluster") || !hasOperation(evidence, "delete-pvcs") {
+		t.Fatalf("missing create failure evidence %#v", evidence)
+	}
+}
+
+func TestControllerCreateStartFailureDoesNotDelete(t *testing.T) {
+	client := &fakeLifecycleClient{
+		createErr: errors.New("executable not found"),
+		createEvidence: []model.EvidenceRecord{{
+			ID:      "test:create",
+			Command: &model.CommandEvidence{},
+		}},
+	}
+	controller := Controller{
+		Spec:   testVerifyClusterSpec(t),
+		Client: client,
+		Options: LifecycleOptions{
+			CaptureLogs:   true,
+			CleanupOnFail: true,
+			CleanupPVC:    true,
+		},
+	}
+
+	_, _, err := controller.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "executable not found") {
+		t.Fatalf("expected create start failure, got %v", err)
+	}
+	if got, want := client.calls, []string{"create"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("command start failure must not trigger cleanup: got %#v want %#v", got, want)
+	}
+	if controller.created {
+		t.Fatal("command start failure must not claim possible target ownership")
+	}
+}
+
+func TestControllerAmbiguousCreateWithExplicitNameUsesOwnershipCleanup(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	client := &fakeLifecycleClient{createErr: errors.New("request timed out")}
+	controller := Controller{
+		Spec:   spec,
+		Client: client,
+		Options: LifecycleOptions{
+			CleanupOnFail: true,
+			CleanupPVC:    true,
+		},
+	}
+
+	_, _, err := controller.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "request timed out") {
+		t.Fatalf("expected ambiguous create error, got %v", err)
+	}
+	if got, want := client.calls, []string{"create", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("explicit-name cleanup must remain ownership-scoped: got %#v want %#v", got, want)
+	}
+	if controller.created {
+		t.Fatal("successful ownership cleanup must release possible ownership state")
+	}
+}
+
+func TestControllerAmbiguousCreateRespectsDisabledFailureCleanup(t *testing.T) {
+	client := &fakeLifecycleClient{createErr: errors.New("request timed out")}
+	controller := Controller{
+		Spec:   testVerifyClusterSpec(t),
+		Client: client,
+		Options: LifecycleOptions{
+			CleanupOnFail: false,
+			CleanupPVC:    true,
+		},
+	}
+
+	_, _, err := controller.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "request timed out") {
+		t.Fatalf("expected ambiguous create error, got %v", err)
+	}
+	if got, want := client.calls, []string{"create"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("disabled failure cleanup invoked extra operations: got %#v want %#v", got, want)
+	}
+	if !controller.created {
+		t.Fatal("ambiguous create must retain possible ownership when cleanup is disabled")
+	}
+}
+
+func TestCreateMayHaveSucceededClassifiesCommandEvidence(t *testing.T) {
+	tests := []struct {
+		name     string
+		evidence []model.EvidenceRecord
+		want     bool
+	}{
+		{name: "missing command evidence is ambiguous", want: true},
+		{
+			name:     "command did not start",
+			evidence: []model.EvidenceRecord{{Command: &model.CommandEvidence{}}},
+			want:     false,
+		},
+		{
+			name: "nonzero exit after start is ambiguous",
+			evidence: []model.EvidenceRecord{{Command: &model.CommandEvidence{ExitStatus: model.ExitStatus{
+				Started: true,
+				Exited:  true,
+			}}}},
+			want: true,
+		},
+		{
+			name: "timeout is ambiguous",
+			evidence: []model.EvidenceRecord{{Command: &model.CommandEvidence{ExitStatus: model.ExitStatus{
+				Started:  true,
+				Exited:   true,
+				TimedOut: true,
+			}}}},
+			want: true,
+		},
+		{
+			name: "cancellation is ambiguous",
+			evidence: []model.EvidenceRecord{{Command: &model.CommandEvidence{ExitStatus: model.ExitStatus{
+				Started:  true,
+				Exited:   true,
+				Canceled: true,
+			}}}},
+			want: true,
+		},
+		{
+			name: "success followed by client error is ambiguous",
+			evidence: []model.EvidenceRecord{{Command: &model.CommandEvidence{ExitStatus: model.ExitStatus{
+				Started: true,
+				Exited:  true,
+				Success: true,
+			}}}},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := createMayHaveSucceeded(tt.evidence); got != tt.want {
+				t.Fatalf("createMayHaveSucceeded() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -112,7 +274,7 @@ func TestControllerStartCancellationFinalizesWithLiveContexts(t *testing.T) {
 	if client.deleteContextErr != nil {
 		t.Fatalf("cleanup inherited canceled context: %v", client.deleteContextErr)
 	}
-	if got, want := client.calls, []string{"apply", "wait", "capture:start-failed", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
+	if got, want := client.calls, []string{"create", "wait", "capture:start-failed", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected calls: got %#v want %#v", got, want)
 	}
 }
@@ -143,7 +305,7 @@ func TestControllerDestroyCapturesAndDeletesCluster(t *testing.T) {
 		t.Fatalf("destroy controller: %v", err)
 	}
 
-	if got, want := client.calls, []string{"apply", "wait", "capture:destroy", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
+	if got, want := client.calls, []string{"create", "wait", "capture:destroy", "delete-cluster", "delete-pvcs"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected calls: got %#v want %#v", got, want)
 	}
 	if client.captureOptions.Reason != "destroy" || client.captureOptions.PostgresLogTail != 5000 {
@@ -172,16 +334,21 @@ type fakeLifecycleClient struct {
 	waitOptions       WaitOptions
 	captureOptions    CaptureOptions
 	instance          Instance
+	createErr         error
+	createEvidence    []model.EvidenceRecord
 	waitErr           error
 	waitHook          func() error
 	captureContextErr error
 	deleteContextErr  error
 }
 
-func (c *fakeLifecycleClient) ApplyCluster(_ context.Context, _ VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error) {
-	c.calls = append(c.calls, "apply")
+func (c *fakeLifecycleClient) CreateCluster(_ context.Context, _ VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error) {
+	c.calls = append(c.calls, "create")
 	c.manifest = append([]byte{}, manifest...)
-	return []model.EvidenceRecord{testEvidence("apply")}, nil
+	if c.createEvidence != nil {
+		return c.createEvidence, c.createErr
+	}
+	return []model.EvidenceRecord{testEvidence("create")}, c.createErr
 }
 
 func (c *fakeLifecycleClient) WaitForInstanceReady(_ context.Context, _ VerifyClusterSpec, opts WaitOptions) (Instance, []model.EvidenceRecord, error) {

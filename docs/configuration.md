@@ -85,6 +85,19 @@ Choose explicit values from measured repository size and drill history. A
 timeout is an operational guard, not an RTO assertion; the report's measured
 timestamps are the evidence used to evaluate RTO.
 
+## Kubernetes Target Ownership
+
+`pgdrill target verify` uses `kubectl create`, never `apply`, so an existing
+`target.cnpg.verify_cluster_name` is not adopted. Every verification run adds a
+random ownership label to the CNPG `Cluster` and propagates it to related
+objects through `spec.inheritedMetadata`. Cluster and PVC cleanup uses that
+label selector in addition to idempotent delete flags; an unqualified resource
+name is not sufficient authority for deletion.
+
+`target.kubernetes.cleanup_on_fail` controls cleanup after startup failures and
+ambiguous create outcomes. Once a verify cluster reaches Ready, teardown is
+always attempted. `cleanup_pvc` independently controls deletion of owned PVCs.
+
 ## Local Work Directory
 
 For `target.type: local`, `target.work_dir` must be missing or an empty real

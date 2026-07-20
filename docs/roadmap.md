@@ -89,7 +89,7 @@ still required before calling it production-ready.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
-- CNPG lifecycle controller boundary with apply, wait, capture, and cleanup
+- CNPG lifecycle controller boundary with create, wait, capture, and cleanup
   semantics.
 - `kubectl` compatibility client behind the CNPG lifecycle interface.
 - CNPG `kubectl` discovery for latest completed `Backup` and source image.
@@ -101,10 +101,14 @@ still required before calling it production-ready.
 - Temporary CNPG cluster restore target with standard JSON reports.
 - Source image reuse for verify clusters.
 - Probe execution against the restored CNPG service.
+- Shared local/CNPG probe-report and cancellation semantics.
 - Full-recovery fail-fast handling.
 - Kubernetes events, pod descriptions, logs, and PVC state as evidence.
 - Bounded Kubernetes event evidence through `events_tail`.
 - Explicit cluster/PVC cleanup evidence.
+- Create-only target ownership with random labels inherited by CNPG resources,
+  plus idempotent selector-scoped cleanup after ambiguous `kubectl create`
+  failures.
 - Cancellation-safe CNPG diagnostics, cleanup, and report persistence.
 - CronJob-friendly examples.
 

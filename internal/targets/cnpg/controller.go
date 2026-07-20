@@ -18,7 +18,7 @@ const (
 )
 
 type Client interface {
-	ApplyCluster(ctx context.Context, spec VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error)
+	CreateCluster(ctx context.Context, spec VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error)
 	WaitForInstanceReady(ctx context.Context, spec VerifyClusterSpec, opts WaitOptions) (Instance, []model.EvidenceRecord, error)
 	CaptureEvidence(ctx context.Context, spec VerifyClusterSpec, instance Instance, opts CaptureOptions) ([]model.EvidenceRecord, error)
 	DeleteCluster(ctx context.Context, spec VerifyClusterSpec) ([]model.EvidenceRecord, error)
@@ -81,6 +81,7 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		"full_recovery_job":  c.Spec.FullRecoveryJob,
 		"instance_pod":       c.Spec.InstancePodName,
 		"namespace":          c.Spec.Namespace,
+		"ownership_id":       c.Spec.OwnershipID,
 		"source_cluster":     c.Spec.SourceCluster,
 		"storage_size":       c.Spec.StorageSize,
 		"postgres_image":     c.Spec.ImageName,
@@ -88,33 +89,22 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		"verify_cluster_uid": c.Spec.Name,
 	})}
 
-	applyEvidence, err := c.Client.ApplyCluster(ctx, c.Spec, manifest)
-	evidence = append(evidence, applyEvidence...)
+	createEvidence, err := c.Client.CreateCluster(ctx, c.Spec, manifest)
+	evidence = append(evidence, createEvidence...)
 	if err != nil {
-		return model.RunningPostgres{}, evidence, fmt.Errorf("apply cnpg verify cluster: %w", err)
+		c.created = createMayHaveSucceeded(createEvidence)
+		if !c.created {
+			return model.RunningPostgres{}, evidence, fmt.Errorf("create cnpg verify cluster: %w", err)
+		}
+		evidence, err = c.finalizeCreateFailure(ctx, evidence, err)
+		return model.RunningPostgres{}, evidence, fmt.Errorf("create cnpg verify cluster: %w", err)
 	}
 	c.created = true
 
 	instance, waitEvidence, err := c.Client.WaitForInstanceReady(ctx, c.Spec, c.waitOptions())
 	evidence = append(evidence, waitEvidence...)
 	if err != nil {
-		if c.Options.CaptureLogs {
-			captureCtx, cancel := finalize.Context(ctx, c.Options.FinalizationTimeout)
-			captureEvidence, captureErr := c.Client.CaptureEvidence(captureCtx, c.Spec, Instance{
-				PodName: c.Spec.InstancePodName,
-				Port:    DefaultPostgresPort,
-			}, c.captureOptions("start-failed"))
-			cancel()
-			evidence = append(evidence, captureEvidence...)
-			err = errors.Join(err, captureErr)
-		}
-		if c.Options.CleanupOnFail {
-			cleanupCtx, cancel := finalize.Context(ctx, c.Options.FinalizationTimeout)
-			cleanupEvidence, cleanupErr := c.cleanup(cleanupCtx)
-			cancel()
-			evidence = append(evidence, cleanupEvidence...)
-			err = errors.Join(err, cleanupErr)
-		}
+		evidence, err = c.finalizeStartFailure(ctx, evidence, err, "start-failed")
 		return model.RunningPostgres{}, evidence, fmt.Errorf("wait for cnpg verify cluster: %w", err)
 	}
 
@@ -131,6 +121,51 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		Host:       instance.Host,
 		Port:       instance.Port,
 	}, evidence, nil
+}
+
+func createMayHaveSucceeded(evidence []model.EvidenceRecord) bool {
+	for i := len(evidence) - 1; i >= 0; i-- {
+		if evidence[i].Command == nil {
+			continue
+		}
+		status := evidence[i].Command.ExitStatus
+		if !status.Started {
+			return false
+		}
+		return true
+	}
+	return true
+}
+
+func (c *Controller) finalizeCreateFailure(ctx context.Context, evidence []model.EvidenceRecord, failure error) ([]model.EvidenceRecord, error) {
+	if !c.Options.CleanupOnFail {
+		return evidence, failure
+	}
+	cleanupCtx, cancel := finalize.Context(ctx, c.Options.FinalizationTimeout)
+	cleanupEvidence, cleanupErr := c.cleanup(cleanupCtx)
+	cancel()
+	return append(evidence, cleanupEvidence...), errors.Join(failure, cleanupErr)
+}
+
+func (c *Controller) finalizeStartFailure(ctx context.Context, evidence []model.EvidenceRecord, failure error, reason string) ([]model.EvidenceRecord, error) {
+	if c.Options.CaptureLogs {
+		captureCtx, cancel := finalize.Context(ctx, c.Options.FinalizationTimeout)
+		captureEvidence, captureErr := c.Client.CaptureEvidence(captureCtx, c.Spec, Instance{
+			PodName: c.Spec.InstancePodName,
+			Port:    DefaultPostgresPort,
+		}, c.captureOptions(reason))
+		cancel()
+		evidence = append(evidence, captureEvidence...)
+		failure = errors.Join(failure, captureErr)
+	}
+	if c.Options.CleanupOnFail {
+		cleanupCtx, cancel := finalize.Context(ctx, c.Options.FinalizationTimeout)
+		cleanupEvidence, cleanupErr := c.cleanup(cleanupCtx)
+		cancel()
+		evidence = append(evidence, cleanupEvidence...)
+		failure = errors.Join(failure, cleanupErr)
+	}
+	return evidence, failure
 }
 
 func (c *Controller) Destroy(ctx context.Context) ([]model.EvidenceRecord, error) {

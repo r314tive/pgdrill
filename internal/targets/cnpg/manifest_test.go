@@ -16,6 +16,7 @@ func TestBuildVerifyClusterSpecDefaults(t *testing.T) {
 		Labels: map[string]string{
 			"team":             "dba",
 			labelManagedBy:     "user-value",
+			labelOwnershipID:   "user-value",
 			"empty-is-skipped": "",
 		},
 	}, "drill-20260707T081615Z")
@@ -53,8 +54,68 @@ func TestBuildVerifyClusterSpecDefaults(t *testing.T) {
 	if spec.Labels[labelSourceCluster] != "altbox-main" {
 		t.Fatalf("unexpected source cluster label %q", spec.Labels[labelSourceCluster])
 	}
+	if spec.Labels[labelDrillID] != "drill-20260707t081615z" {
+		t.Fatalf("unexpected drill label %q", spec.Labels[labelDrillID])
+	}
+	if spec.OwnershipID == "" || spec.Labels[labelOwnershipID] != spec.OwnershipID {
+		t.Fatalf("missing ownership metadata: spec=%#v labels=%#v", spec, spec.Labels)
+	}
 	if _, ok := spec.Labels["empty-is-skipped"]; ok {
 		t.Fatalf("empty custom label should be skipped, labels=%#v", spec.Labels)
+	}
+}
+
+func TestBuildVerifyClusterSpecUsesPerRunSeedOnlyForGeneratedNames(t *testing.T) {
+	base := Config{
+		Namespace:     "d003-db",
+		SourceCluster: "altbox",
+		BackupName:    "altbox-backup-20260707",
+		ImageName:     "ghcr.io/cloudnative-pg/postgresql:16",
+	}
+
+	firstConfig := base
+	firstConfig.NameSeed = "run-1"
+	first, err := BuildVerifyClusterSpec(firstConfig, "stable-drill-id")
+	if err != nil {
+		t.Fatalf("build first generated spec: %v", err)
+	}
+	secondConfig := base
+	secondConfig.NameSeed = "run-2"
+	second, err := BuildVerifyClusterSpec(secondConfig, "stable-drill-id")
+	if err != nil {
+		t.Fatalf("build second generated spec: %v", err)
+	}
+	if first.Name == second.Name {
+		t.Fatalf("per-run seeds must produce distinct generated names, both were %q", first.Name)
+	}
+	if first.Labels[labelDrillID] != "stable-drill-id" || second.Labels[labelDrillID] != "stable-drill-id" {
+		t.Fatalf("name seed must not alter drill labels: first=%#v second=%#v", first.Labels, second.Labels)
+	}
+	if first.OwnershipID == second.OwnershipID {
+		t.Fatalf("per-run seeds must produce distinct fallback ownership ids, both were %q", first.OwnershipID)
+	}
+
+	explicitConfig := base
+	explicitConfig.VerifyClusterName = "verify-altbox-explicit"
+	explicitConfig.NameSeed = "run-1"
+	explicit, err := BuildVerifyClusterSpec(explicitConfig, "stable-drill-id")
+	if err != nil {
+		t.Fatalf("build explicit-name spec: %v", err)
+	}
+	if explicit.Name != "verify-altbox-explicit" {
+		t.Fatalf("explicit name must remain caller-owned, got %#v", explicit)
+	}
+}
+
+func TestBuildVerifyClusterSpecRejectsUnsafeOwnershipID(t *testing.T) {
+	_, err := BuildVerifyClusterSpec(Config{
+		SourceCluster: "altbox",
+		BackupName:    "backup",
+		ImageName:     "postgres:16",
+		OwnershipID:   "owner,team=other",
+	}, "drill")
+	if err == nil || !strings.Contains(err.Error(), "safe label value") {
+		t.Fatalf("expected unsafe ownership id error, got %v", err)
 	}
 }
 
@@ -116,6 +177,9 @@ func TestManifestYAMLRendersCNPGRecoveryCluster(t *testing.T) {
 	}
 	if manifest.Spec.Instances != 1 {
 		t.Fatalf("unexpected instances %d", manifest.Spec.Instances)
+	}
+	if manifest.Spec.InheritedMetadata.Labels[labelOwnershipID] != spec.OwnershipID {
+		t.Fatalf("ownership label must be inherited by CNPG resources: %#v", manifest.Spec.InheritedMetadata)
 	}
 	if manifest.Spec.Storage.Size != "20Gi" || manifest.Spec.Storage.StorageClass != "fast" {
 		t.Fatalf("unexpected storage %#v", manifest.Spec.Storage)

@@ -419,7 +419,7 @@ func runTargetManifest(ctx context.Context, args []string, stdout, stderr io.Wri
 		}
 	}
 
-	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID)
+	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID, "", "")
 	if err != nil {
 		fmt.Fprintf(stderr, "build target manifest: %v\n", err)
 		return 1
@@ -485,6 +485,7 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 
 	startedAt := time.Now().UTC()
+	effectiveDrillID := targetVerifyID(drillID, startedAt)
 	cnpgTarget := cfg.Target.CNPG
 	configuredProbes, err := probes.NewProbes(cfg.Probes)
 	if err != nil {
@@ -504,7 +505,7 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 		} else {
 			runErr = fmt.Errorf("target preflight failed")
 		}
-		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, drillID, startedAt)
+		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
 		result.FinishedAt = time.Now().UTC()
 		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
 		result.Checks = append(result.Checks, preflightReport.Checks...)
@@ -519,7 +520,7 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 		discoveryEvidence, err = discoverCNPGManifestInputs(ctx, cfg, &cnpgTarget)
 		if err != nil {
 			runErr := fmt.Errorf("discover target verify inputs: %w", err)
-			result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, drillID, startedAt)
+			result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
 			result.FinishedAt = time.Now().UTC()
 			result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
 			result.Evidence = append(initialEvidence, discoveryEvidence...)
@@ -533,13 +534,31 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 			return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 		}
 	}
-	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID)
-	if err != nil {
-		fmt.Fprintf(stderr, "build target verify spec: %v\n", err)
-		return 1
-	}
 	initialEvidence = append(initialEvidence, discoveryEvidence...)
-	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, configuredProbes, drillID, startedAt, initialChecks, initialEvidence)
+	ownershipID, err := cnpg.NewOwnershipID()
+	if err != nil {
+		runErr := fmt.Errorf("create CNPG target ownership id: %w", err)
+		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
+		result.FinishedAt = time.Now().UTC()
+		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
+		result.Checks = append(result.Checks, initialChecks...)
+		result.Evidence = append(result.Evidence, initialEvidence...)
+		result.Failure = model.NewDrillFailure(model.DrillStageTargetStart, runErr, result.Evidence)
+		return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
+	}
+	nameSeed := effectiveDrillID + ":" + ownershipID
+	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, effectiveDrillID, nameSeed, ownershipID)
+	if err != nil {
+		runErr := fmt.Errorf("build target verify spec: %w", err)
+		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
+		result.FinishedAt = time.Now().UTC()
+		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
+		result.Checks = append(result.Checks, initialChecks...)
+		result.Evidence = append(result.Evidence, initialEvidence...)
+		result.Failure = model.NewDrillFailure(model.DrillStageRequestValidation, runErr, result.Evidence)
+		return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
+	}
+	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, configuredProbes, effectiveDrillID, startedAt, initialChecks, initialEvidence)
 	return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 }
 
@@ -608,11 +627,13 @@ func discoverCNPGManifestInputs(ctx context.Context, cfg config.Config, target *
 	return evidence, nil
 }
 
-func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfig, drillID string) (cnpg.VerifyClusterSpec, error) {
+func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameSeed, ownershipID string) (cnpg.VerifyClusterSpec, error) {
 	return cnpg.BuildVerifyClusterSpec(cnpg.Config{
 		Namespace:         cfg.Target.Kubernetes.Namespace,
 		SourceCluster:     target.SourceCluster,
 		VerifyClusterName: target.VerifyClusterName,
+		NameSeed:          nameSeed,
+		OwnershipID:       ownershipID,
 		BackupName:        target.BackupName,
 		ImageName:         target.ImageName,
 		StorageSize:       target.StorageSize,
@@ -665,41 +686,18 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 	}
 	result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusPassed, "CNPG verify cluster is Ready", spec, pg))
 
-	probeFailed := false
-	var operationErr error
+	probeReport, operationErr := core.RunProbes(ctx, configuredProbes, pg)
+	result.Checks = append(result.Checks, probeReport.Checks...)
+	result.Evidence = append(result.Evidence, probeReport.Evidence...)
 	operationStage := model.DrillStageProbeExecution
-	for _, probe := range configuredProbes {
-		if err := ctx.Err(); err != nil {
-			operationErr = fmt.Errorf("run probes: %w", err)
-			break
-		}
-		report, err := probe.Run(ctx, pg)
-		result.Checks = append(result.Checks, report.Checks...)
-		result.Evidence = append(result.Evidence, report.Evidence...)
-		if err != nil {
-			if ctx.Err() != nil {
-				operationErr = fmt.Errorf("run probe %q: %w", probe.Type(), err)
-				break
-			}
-			probeFailed = true
-			result.Checks = append(result.Checks, model.Check{
-				Name:    string(probe.Type()),
-				Probe:   probe.Type(),
-				Status:  model.CheckStatusFailed,
-				Message: err.Error(),
-			})
-			continue
-		}
-		if hasFailedChecks(report.Checks) {
-			probeFailed = true
-		}
-	}
 
 	destroyCtx, cancel := finalize.Context(ctx, 0)
 	destroyEvidence, destroyErr := controller.Destroy(destroyCtx)
 	cancel()
 	result.Evidence = append(result.Evidence, destroyEvidence...)
 	result.FinishedAt = time.Now().UTC()
+	operationStage, operationErr = mergeCNPGCleanupFailure(operationStage, operationErr, destroyErr)
+
 	switch {
 	case ctx.Err() != nil:
 		if operationErr == nil {
@@ -707,29 +705,27 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 			operationStage = model.DrillStageTargetCleanup
 		}
 		result.Status = model.DrillStatusAborted
-		if destroyErr != nil {
-			operationErr = errors.Join(operationErr, fmt.Errorf("destroy cnpg verify target: %w", destroyErr))
-		}
 		result.Failure = model.NewDrillFailure(operationStage, operationErr, result.Evidence)
 		return result, operationErr
-	case destroyErr != nil:
-		result.Status = model.DrillStatusFailed
-		runErr := fmt.Errorf("destroy cnpg verify target: %w", destroyErr)
-		result.Failure = model.NewDrillFailure(model.DrillStageTargetCleanup, runErr, result.Evidence)
-		return result, runErr
 	case operationErr != nil:
 		result.Status = model.DrillStatusFailed
-		result.Failure = model.NewDrillFailure(model.DrillStageProbeExecution, operationErr, result.Evidence)
+		result.Failure = model.NewDrillFailure(operationStage, operationErr, result.Evidence)
 		return result, operationErr
-	case probeFailed:
-		result.Status = model.DrillStatusFailed
-		runErr := fmt.Errorf("one or more probes failed")
-		result.Failure = model.NewDrillFailure(model.DrillStageProbeExecution, runErr, result.Evidence)
-		return result, runErr
 	default:
 		result.Status = model.DrillStatusPassed
 		return result, nil
 	}
+}
+
+func mergeCNPGCleanupFailure(operationStage model.DrillStage, operationErr, destroyErr error) (model.DrillStage, error) {
+	if destroyErr == nil {
+		return operationStage, operationErr
+	}
+	cleanupErr := fmt.Errorf("destroy cnpg verify target: %w", destroyErr)
+	if operationErr == nil {
+		return model.DrillStageTargetCleanup, cleanupErr
+	}
+	return operationStage, errors.Join(operationErr, cleanupErr)
 }
 
 func newCNPGTargetVerifyResult(cfg config.Config, sourceCluster, backupName, verifyCluster, drillID string, startedAt time.Time) model.DrillResult {
@@ -785,10 +781,10 @@ func evidenceRecordIDs(records []model.EvidenceRecord) []string {
 }
 
 func targetVerifyID(id string, startedAt time.Time) string {
-	if strings.TrimSpace(id) != "" {
-		return id
+	if trimmed := strings.TrimSpace(id); trimmed != "" {
+		return trimmed
 	}
-	return "target-verify-" + startedAt.UTC().Format("20060102T150405Z")
+	return "target-verify-" + startedAt.UTC().Format("20060102T150405.000000000Z")
 }
 
 func cnpgReadyCheck(status model.CheckStatus, message string, spec cnpg.VerifyClusterSpec, pg model.RunningPostgres) model.Check {

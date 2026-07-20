@@ -39,8 +39,8 @@ func NewKubectlClient(cfg KubectlConfig, runner command.Runner) *KubectlClient {
 	}
 }
 
-func (c *KubectlClient) ApplyCluster(ctx context.Context, spec VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error) {
-	return c.strictRun(ctx, "kubectl-apply-cluster", c.args(spec, "apply", "-f", "-"), manifest, c.cfg.Timeout)
+func (c *KubectlClient) CreateCluster(ctx context.Context, spec VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error) {
+	return c.strictRun(ctx, "kubectl-create-cluster", c.args(spec, "create", "-f", "-"), manifest, c.cfg.Timeout)
 }
 
 func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClusterSpec, opts WaitOptions) (Instance, []model.EvidenceRecord, error) {
@@ -200,11 +200,33 @@ func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterS
 }
 
 func (c *KubectlClient) DeleteCluster(ctx context.Context, spec VerifyClusterSpec) ([]model.EvidenceRecord, error) {
-	return c.strictRun(ctx, "kubectl-delete-cluster", c.args(spec, "delete", "cluster.postgresql.cnpg.io", spec.Name, "--wait=true", "--timeout="+durationSeconds(c.deleteTimeout())), nil, c.deleteTimeout())
+	selector, err := ownershipSelector(spec, false)
+	if err != nil {
+		return nil, err
+	}
+	return c.strictRun(ctx, "kubectl-delete-cluster", c.args(spec, "delete", "cluster.postgresql.cnpg.io", "-l", selector, "--ignore-not-found=true", "--wait=true", "--timeout="+durationSeconds(c.deleteTimeout())), nil, c.deleteTimeout())
 }
 
 func (c *KubectlClient) DeletePVCs(ctx context.Context, spec VerifyClusterSpec) ([]model.EvidenceRecord, error) {
-	return c.strictRun(ctx, "kubectl-delete-pvcs", c.args(spec, "delete", "pvc", "-l", "cnpg.io/cluster="+spec.Name, "--wait=true", "--timeout="+durationSeconds(c.deleteTimeout())), nil, c.deleteTimeout())
+	selector, err := ownershipSelector(spec, true)
+	if err != nil {
+		return nil, err
+	}
+	return c.strictRun(ctx, "kubectl-delete-pvcs", c.args(spec, "delete", "pvc", "-l", selector, "--ignore-not-found=true", "--wait=true", "--timeout="+durationSeconds(c.deleteTimeout())), nil, c.deleteTimeout())
+}
+
+func ownershipSelector(spec VerifyClusterSpec, includeCluster bool) (string, error) {
+	if err := validateOwnershipID(spec.OwnershipID); err != nil {
+		return "", fmt.Errorf("cleanup: %w", err)
+	}
+	selector := labelOwnershipID + "=" + spec.OwnershipID
+	if includeCluster {
+		if spec.Name == "" || sanitizeDNSLabel(spec.Name) != spec.Name {
+			return "", fmt.Errorf("cleanup: cnpg verify cluster name %q is not a safe label value", spec.Name)
+		}
+		selector = "cnpg.io/cluster=" + spec.Name + "," + selector
+	}
+	return selector, nil
 }
 
 func (c *KubectlClient) strictRun(ctx context.Context, operation string, args []string, stdin []byte, timeout time.Duration) ([]model.EvidenceRecord, error) {

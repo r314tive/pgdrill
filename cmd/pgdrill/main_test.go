@@ -561,6 +561,43 @@ func TestTargetVerifyRequiresCreateConfirmation(t *testing.T) {
 	}
 }
 
+func TestTargetVerifyIDIsTrimmedAndNanosecondUnique(t *testing.T) {
+	startedAt := time.Date(2026, 7, 20, 12, 34, 56, 123456789, time.UTC)
+
+	if got, want := targetVerifyID("  explicit-id  ", startedAt), "explicit-id"; got != want {
+		t.Fatalf("targetVerifyID() = %q, want %q", got, want)
+	}
+	if got, want := targetVerifyID("", startedAt), "target-verify-20260720T123456.123456789Z"; got != want {
+		t.Fatalf("targetVerifyID() = %q, want %q", got, want)
+	}
+	if first, second := targetVerifyID("", startedAt), targetVerifyID("", startedAt.Add(time.Nanosecond)); first == second {
+		t.Fatalf("generated target verify IDs must distinguish concurrent starts, both were %q", first)
+	}
+}
+
+func TestMergeCNPGCleanupFailurePreservesPrimaryStage(t *testing.T) {
+	probeErr := errors.New("probe failed")
+	cleanupErr := errors.New("delete failed")
+
+	stage, err := mergeCNPGCleanupFailure(model.DrillStageProbeExecution, probeErr, cleanupErr)
+	if stage != model.DrillStageProbeExecution {
+		t.Fatalf("cleanup changed primary failure stage to %q", stage)
+	}
+	if !errors.Is(err, probeErr) || !errors.Is(err, cleanupErr) || !strings.Contains(err.Error(), "destroy cnpg verify target") {
+		t.Fatalf("expected joined probe and cleanup errors, got %v", err)
+	}
+
+	stage, err = mergeCNPGCleanupFailure(model.DrillStageProbeExecution, nil, cleanupErr)
+	if stage != model.DrillStageTargetCleanup || !errors.Is(err, cleanupErr) {
+		t.Fatalf("cleanup-only failure = (%q, %v), want target cleanup", stage, err)
+	}
+
+	stage, err = mergeCNPGCleanupFailure(model.DrillStageProbeExecution, probeErr, nil)
+	if stage != model.DrillStageProbeExecution || !errors.Is(err, probeErr) {
+		t.Fatalf("nil cleanup changed operation failure: (%q, %v)", stage, err)
+	}
+}
+
 func TestTargetVerifyCommandRunsCNPGLifecycleAndProbes(t *testing.T) {
 	dir := t.TempDir()
 	kubectlPath := filepath.Join(dir, "kubectl")
@@ -581,7 +618,7 @@ JSON
   *" get cluster.postgresql.cnpg.io altbox -o json"*)
     echo '{"spec":{"imageName":"ghcr.io/cloudnative-pg/postgresql:16"}}'
     ;;
-  *" apply -f -"*)
+  *" create -f -"*)
     manifest="$(cat)"
     case "$manifest" in
       *"name: altbox-backup-20260707"*) exit 0 ;;
@@ -628,10 +665,10 @@ JSON
   *" logs verify-altbox-test-1 -c bootstrap-controller --timestamps --tail=25"*)
     echo "postgres bootstrap ready"
     ;;
-  *" delete cluster.postgresql.cnpg.io verify-altbox-test --wait=true --timeout=5s"*)
+  *" delete cluster.postgresql.cnpg.io -l pgdrill.io/ownership-id="*" --ignore-not-found=true --wait=true --timeout=5s"*)
     echo "cluster deleted"
     ;;
-  *" delete pvc -l cnpg.io/cluster=verify-altbox-test --wait=true --timeout=5s"*)
+  *" delete pvc -l cnpg.io/cluster=verify-altbox-test,pgdrill.io/ownership-id="*" --ignore-not-found=true --wait=true --timeout=5s"*)
     echo "pvc deleted"
     ;;
   *)
@@ -719,7 +756,7 @@ report:
 		"kubectl-discover-cnpg-backups",
 		"kubectl-discover-cnpg-source-image",
 		"cnpg-manifest-render",
-		"kubectl-apply-cluster",
+		"kubectl-create-cluster",
 		"kubectl-check-full-recovery",
 		"kubectl-check-instance-ready",
 		"kubectl-capture-instance-describe",

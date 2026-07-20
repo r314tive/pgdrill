@@ -21,12 +21,15 @@ const (
 	labelComponent     = "app.kubernetes.io/component"
 	labelSourceCluster = "pgdrill.io/source-cluster"
 	labelDrillID       = "pgdrill.io/drill-id"
+	labelOwnershipID   = "pgdrill.io/ownership-id"
 )
 
 type Config struct {
 	Namespace         string
 	SourceCluster     string
 	VerifyClusterName string
+	NameSeed          string
+	OwnershipID       string
 	BackupName        string
 	ImageName         string
 	StorageSize       string
@@ -43,6 +46,7 @@ type Config struct {
 type VerifyClusterSpec struct {
 	Namespace       string
 	Name            string
+	OwnershipID     string
 	SourceCluster   string
 	BackupName      string
 	ImageName       string
@@ -74,7 +78,7 @@ func BuildVerifyClusterSpec(cfg Config, drillID string) (VerifyClusterSpec, erro
 
 	name := strings.TrimSpace(cfg.VerifyClusterName)
 	if name == "" {
-		name = BuildVerifyClusterName(cfg.SourceCluster, drillID)
+		name = BuildVerifyClusterName(cfg.SourceCluster, firstNonEmpty(cfg.NameSeed, drillID))
 	} else {
 		name = sanitizeDNSLabel(name)
 		name = truncateDNSLabel(name, VerifyClusterNameMax)
@@ -82,12 +86,20 @@ func BuildVerifyClusterSpec(cfg Config, drillID string) (VerifyClusterSpec, erro
 	if name == "" {
 		return VerifyClusterSpec{}, fmt.Errorf("cnpg verify cluster name is empty after normalization")
 	}
+	ownershipID := strings.TrimSpace(cfg.OwnershipID)
+	if ownershipID == "" {
+		ownershipID = shortHash(strings.Join([]string{cfg.SourceCluster, name, drillID, cfg.NameSeed}, ":"))
+	}
+	if err := validateOwnershipID(ownershipID); err != nil {
+		return VerifyClusterSpec{}, err
+	}
 
 	labels := mergeLabels(cfg.Labels, map[string]string{
 		labelManagedBy:     "pgdrill",
 		labelComponent:     "recovery-drill",
 		labelSourceCluster: sanitizeLabelValue(cfg.SourceCluster),
 		labelDrillID:       sanitizeLabelValue(drillID),
+		labelOwnershipID:   ownershipID,
 	})
 
 	var nodeSelector map[string]string
@@ -98,6 +110,7 @@ func BuildVerifyClusterSpec(cfg Config, drillID string) (VerifyClusterSpec, erro
 	spec := VerifyClusterSpec{
 		Namespace:       strings.TrimSpace(cfg.Namespace),
 		Name:            name,
+		OwnershipID:     ownershipID,
 		SourceCluster:   strings.TrimSpace(cfg.SourceCluster),
 		BackupName:      strings.TrimSpace(cfg.BackupName),
 		ImageName:       strings.TrimSpace(cfg.ImageName),
@@ -148,6 +161,9 @@ func (s VerifyClusterSpec) ManifestYAML() ([]byte, error) {
 	if s.StorageSize == "" {
 		return nil, fmt.Errorf("cnpg storage size is required")
 	}
+	if err := validateOwnershipID(s.OwnershipID); err != nil {
+		return nil, err
+	}
 
 	manifest := clusterManifest{
 		APIVersion: "postgresql.cnpg.io/v1",
@@ -160,6 +176,9 @@ func (s VerifyClusterSpec) ManifestYAML() ([]byte, error) {
 		Spec: clusterSpec{
 			ImageName: s.ImageName,
 			Instances: 1,
+			InheritedMetadata: embeddedObjectMeta{
+				Labels: map[string]string{labelOwnershipID: s.OwnershipID},
+			},
 			Storage: storageSpec{
 				Size:         s.StorageSize,
 				StorageClass: s.StorageClass,
@@ -209,12 +228,17 @@ type objectMeta struct {
 }
 
 type clusterSpec struct {
-	ImageName string        `yaml:"imageName"`
-	Instances int           `yaml:"instances"`
-	Storage   storageSpec   `yaml:"storage"`
-	Resources resourceSpec  `yaml:"resources,omitempty"`
-	Bootstrap bootstrapSpec `yaml:"bootstrap"`
-	Affinity  *affinitySpec `yaml:"affinity,omitempty"`
+	ImageName         string             `yaml:"imageName"`
+	Instances         int                `yaml:"instances"`
+	InheritedMetadata embeddedObjectMeta `yaml:"inheritedMetadata"`
+	Storage           storageSpec        `yaml:"storage"`
+	Resources         resourceSpec       `yaml:"resources,omitempty"`
+	Bootstrap         bootstrapSpec      `yaml:"bootstrap"`
+	Affinity          *affinitySpec      `yaml:"affinity,omitempty"`
+}
+
+type embeddedObjectMeta struct {
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 type storageSpec struct {
@@ -330,6 +354,16 @@ func sanitizeDNSLabel(value string) string {
 func sanitizeLabelValue(value string) string {
 	value = sanitizeDNSLabel(value)
 	return truncateDNSLabel(value, 63)
+}
+
+func validateOwnershipID(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("cnpg ownership id is required")
+	}
+	if value != sanitizeLabelValue(value) {
+		return fmt.Errorf("cnpg ownership id %q is not a safe label value", value)
+	}
+	return nil
 }
 
 func truncateDNSLabel(value string, maxLen int) string {

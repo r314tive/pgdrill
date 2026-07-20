@@ -41,7 +41,7 @@ not become the control plane.
 
 The first CNPG implementation step is a typed manifest builder, not a shell
 controller. It builds the temporary `Cluster` resource that a future Kubernetes
-target executor can apply, watch, inspect, and delete through the Kubernetes
+target executor can create, watch, inspect, and delete through the Kubernetes
 API.
 
 Implemented primitives:
@@ -51,7 +51,9 @@ Implemented primitives:
 - strict config parsing for `target.kubernetes` and `target.cnpg`
 - source image, backup name, storage size/class, resource requests/limits, and
   optional node affinity in the generated CNPG `Cluster`
-- stable pgdrill labels for ownership, drill ID, and source cluster
+- stable pgdrill labels for ownership, drill ID, and source cluster; target
+  verification replaces the deterministic manifest ownership value with a
+  random per-run ID
 - derived instance pod and full-recovery job names for future evidence
   collection
 
@@ -81,13 +83,16 @@ controller owns the ordered drill lifecycle.
 Implemented lifecycle contract:
 
 - render the verified CNPG `Cluster` manifest and record manifest evidence
-- apply the temporary verify cluster
+- create the temporary verify cluster without adopting an existing object
+- treat every create error after process start as potentially mutating
+- propagate a random per-run ownership label through `inheritedMetadata` and
+  scope Cluster/PVC cleanup to that label, including for explicit names
 - poll full-recovery pods and fail fast if any of them enters `Failed`
 - wait for the instance pod to become Ready
-- capture diagnostics on failure before cleanup when configured: cluster YAML,
-  pod/PVC state, events, pod descriptions, full-recovery logs,
-  bootstrap-controller logs, and postgres logs
-- delete the verify cluster and optional PVCs with cleanup evidence
+- after confirmed creation, capture diagnostics on failure before cleanup when
+  configured: cluster YAML, pod/PVC state, events, pod descriptions,
+  full-recovery logs, bootstrap-controller logs, and postgres logs
+- delete the verify cluster and optional PVCs idempotently with cleanup evidence
 - capture diagnostics on successful destroy when configured
 - bound captured event output with `target.kubernetes.events_tail`
 
@@ -97,7 +102,7 @@ the core control plane.
 
 The repository also includes a `kubectl` compatibility client behind the same
 interface. It executes `kubectl` directly from Go, passes manifests through
-stdin for `apply -f -`, records structured command evidence, and keeps log
+stdin for `create -f -`, records structured command evidence, and keeps log
 capture best-effort so missing debug artifacts do not mask the original restore
 failure.
 
@@ -129,7 +134,15 @@ including when discovery itself fails.
 an `aborted` report. If cancellation happens while the cluster is starting,
 automatic cleanup follows `target.kubernetes.cleanup_on_fail`; after a cluster
 has become Ready, target destruction is always attempted with a bounded
-finalization context.
+finalization context. Generated verify-cluster names include a random per-run
+seed, and every verify manifest carries a separate random ownership ID on the
+Cluster and in `spec.inheritedMetadata` for related CNPG resources. Any create
+error after process start uses the same finalization path because a client-side
+error cannot prove that the API server did not create the object. Cleanup uses
+that ownership label rather than an unqualified resource name, so an existing
+explicit-name Cluster is not adopted or deleted. A command that never started
+does not trigger cleanup. The compatibility client also passes
+`--ignore-not-found=true`, making ownership-scoped cleanup safe to retry.
 
 See [../examples/cnpg-target-verify.yaml](../examples/cnpg-target-verify.yaml)
 for a local CLI config example and

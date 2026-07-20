@@ -12,7 +12,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
-func TestKubectlClientApplyUsesManifestStdin(t *testing.T) {
+func TestKubectlClientCreateUsesManifestStdin(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	client := NewKubectlClient(KubectlConfig{
 		Binary:     "/usr/local/bin/kubectl",
@@ -23,9 +23,9 @@ func TestKubectlClientApplyUsesManifestStdin(t *testing.T) {
 	}, runner)
 	spec := testVerifyClusterSpec(t)
 
-	evidence, err := client.ApplyCluster(context.Background(), spec, []byte("cluster-yaml"))
+	evidence, err := client.CreateCluster(context.Background(), spec, []byte("cluster-yaml"))
 	if err != nil {
-		t.Fatalf("apply cluster: %v", err)
+		t.Fatalf("create cluster: %v", err)
 	}
 
 	if len(runner.invocations) != 1 {
@@ -35,7 +35,7 @@ func TestKubectlClientApplyUsesManifestStdin(t *testing.T) {
 	if inv.Path != "/usr/local/bin/kubectl" {
 		t.Fatalf("unexpected kubectl path %q", inv.Path)
 	}
-	wantArgs := []string{"--kubeconfig", "/tmp/kubeconfig", "--context", "d003", "-n", "override-ns", "apply", "-f", "-"}
+	wantArgs := []string{"--kubeconfig", "/tmp/kubeconfig", "--context", "d003", "-n", "override-ns", "create", "-f", "-"}
 	if !reflect.DeepEqual(inv.Args, wantArgs) {
 		t.Fatalf("unexpected args: got %#v want %#v", inv.Args, wantArgs)
 	}
@@ -45,8 +45,8 @@ func TestKubectlClientApplyUsesManifestStdin(t *testing.T) {
 	if inv.Timeout != 2*time.Minute {
 		t.Fatalf("unexpected timeout %s", inv.Timeout)
 	}
-	if !hasOperation(evidence, "kubectl-apply-cluster") {
-		t.Fatalf("missing apply evidence %#v", evidence)
+	if !hasOperation(evidence, "kubectl-create-cluster") {
+		t.Fatalf("missing create evidence %#v", evidence)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestKubectlClientCaptureEvidenceIsBestEffort(t *testing.T) {
 	}
 }
 
-func TestKubectlClientDeletePVCsUsesClusterLabel(t *testing.T) {
+func TestKubectlClientDeletePVCsUsesClusterAndOwnershipLabels(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	client := NewKubectlClient(KubectlConfig{Timeout: 10 * time.Minute}, runner)
 	spec := testVerifyClusterSpec(t)
@@ -174,12 +174,55 @@ func TestKubectlClientDeletePVCsUsesClusterLabel(t *testing.T) {
 		t.Fatalf("expected one invocation, got %d", len(runner.invocations))
 	}
 	args := runner.invocations[0].Args
-	wantArgs := []string{"-n", "d003-db", "delete", "pvc", "-l", "cnpg.io/cluster=" + spec.Name, "--wait=true", "--timeout=600s"}
+	wantArgs := []string{"-n", "d003-db", "delete", "pvc", "-l", "cnpg.io/cluster=" + spec.Name + "," + labelOwnershipID + "=" + spec.OwnershipID, "--ignore-not-found=true", "--wait=true", "--timeout=600s"}
 	if !reflect.DeepEqual(args, wantArgs) {
 		t.Fatalf("unexpected args: got %#v want %#v", args, wantArgs)
 	}
 	if !hasOperation(evidence, "kubectl-delete-pvcs") {
 		t.Fatalf("missing delete pvcs evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientDeleteClusterUsesOwnershipLabelAndIsIdempotent(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	client := NewKubectlClient(KubectlConfig{Timeout: 10 * time.Minute}, runner)
+	spec := testVerifyClusterSpec(t)
+
+	evidence, err := client.DeleteCluster(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("delete cluster: %v", err)
+	}
+	wantArgs := []string{"-n", "d003-db", "delete", "cluster.postgresql.cnpg.io", "-l", labelOwnershipID + "=" + spec.OwnershipID, "--ignore-not-found=true", "--wait=true", "--timeout=600s"}
+	if len(runner.invocations) != 1 || !reflect.DeepEqual(runner.invocations[0].Args, wantArgs) {
+		t.Fatalf("unexpected delete invocation %#v", runner.invocations)
+	}
+	if !hasOperation(evidence, "kubectl-delete-cluster") {
+		t.Fatalf("missing delete cluster evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientCleanupRequiresOwnershipID(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+	spec.OwnershipID = ""
+
+	if _, err := client.DeleteCluster(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "ownership id is required") {
+		t.Fatalf("expected cluster ownership guard, got %v", err)
+	}
+	if _, err := client.DeletePVCs(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "ownership id is required") {
+		t.Fatalf("expected PVC ownership guard, got %v", err)
+	}
+	if len(runner.invocations) != 0 {
+		t.Fatalf("ownership guard must fail before kubectl, got %#v", runner.invocations)
+	}
+
+	spec.OwnershipID = "owner,team=other"
+	if _, err := client.DeleteCluster(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "safe label value") {
+		t.Fatalf("expected selector injection guard, got %v", err)
+	}
+	if len(runner.invocations) != 0 {
+		t.Fatalf("selector injection guard must fail before kubectl, got %#v", runner.invocations)
 	}
 }
 

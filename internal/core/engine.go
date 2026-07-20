@@ -189,54 +189,17 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return fail(model.DrillStagePostgresStart, fmt.Errorf("start postgres: %w", err))
 	}
 
-	probeFailed := false
-	for _, probe := range e.Probes {
-		if err := ctx.Err(); err != nil {
-			cleanupErr := cleanup()
-			return fail(model.DrillStageProbeExecution, errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
-		}
-		report, err := probe.Run(ctx, pg)
-		result.Checks = append(result.Checks, report.Checks...)
-		result.Evidence = append(result.Evidence, report.Evidence...)
-		if err != nil {
-			if ctx.Err() != nil {
-				cleanupErr := cleanup()
-				return fail(model.DrillStageProbeExecution, errors.Join(fmt.Errorf("run probe %q: %w", probe.Type(), err), cleanupErr))
-			}
-			probeFailed = true
-			result.Checks = append(result.Checks, model.Check{
-				Name:    string(probe.Type()),
-				Probe:   probe.Type(),
-				Status:  model.CheckStatusFailed,
-				Message: err.Error(),
-			})
-			continue
-		}
-		if len(report.Checks) == 0 {
-			probeFailed = true
-			result.Checks = append(result.Checks, model.Check{
-				Name:    string(probe.Type()),
-				Probe:   probe.Type(),
-				Status:  model.CheckStatusFailed,
-				Message: "probe returned no checks",
-			})
-			continue
-		}
-		if hasFailedChecks(report.Checks) {
-			probeFailed = true
-		}
-	}
-	if err := ctx.Err(); err != nil {
+	probeReport, probeErr := RunProbes(ctx, e.Probes, pg)
+	result.Checks = append(result.Checks, probeReport.Checks...)
+	result.Evidence = append(result.Evidence, probeReport.Evidence...)
+	if probeErr != nil {
 		cleanupErr := cleanup()
-		return fail(model.DrillStageProbeExecution, errors.Join(fmt.Errorf("run probes: %w", err), cleanupErr))
+		return fail(model.DrillStageProbeExecution, errors.Join(probeErr, cleanupErr))
 	}
 
 	cleanupErr := cleanup()
 	if cleanupErr != nil {
 		return fail(model.DrillStageTargetCleanup, cleanupErr)
-	}
-	if probeFailed {
-		return fail(model.DrillStageProbeExecution, fmt.Errorf("one or more probes failed"))
 	}
 	return finish(model.DrillStatusPassed, nil)
 }

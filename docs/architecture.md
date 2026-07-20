@@ -13,7 +13,7 @@ probes, and evidence, not in terms of one provider's command output.
 - `internal/config`: strict YAML/JSON shape, common value, duration, and path
   validation plus conversion into canonical runtime specs.
 - `internal/core`: provider, target, probe, evidence sink interfaces, backup
-  selection, and the drill engine lifecycle.
+  selection, shared probe execution semantics, and the drill engine lifecycle.
 - `internal/command`: direct command runner with timeout, bounded raw
   stdout/stderr, bounded redacted evidence, and structured exit status.
 - `internal/preflight`: config-derived executable requirements and read-only
@@ -143,6 +143,9 @@ link the evidence IDs accumulated through that stage.
 - Evidence keeps bounded redacted command output previews, byte counts,
   truncation state, and normalized status.
 - Cleanup must be explicit and observable.
+- A mutating command error is an uncertain outcome, not proof that no resource
+  exists; cleanup after such commands must be idempotent, retryable, and scoped
+  to a random per-run ownership identity.
 - Cancellation stops active provider, target, and probe work. Cleanup and report
   persistence run on separate bounded finalization contexts so a canceled
   operation can still produce an `aborted` report.
