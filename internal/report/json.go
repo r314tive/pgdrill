@@ -24,7 +24,7 @@ func (s JSONFileSink) Write(ctx context.Context, result model.DrillResult) error
 	}
 
 	dir := filepath.Dir(s.Path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create report directory %s: %w", dir, err)
 	}
 
@@ -58,9 +58,20 @@ func (s JSONFileSink) Write(ctx context.Context, result model.DrillResult) error
 	if err := os.Rename(tmpPath, s.Path); err != nil {
 		return fmt.Errorf("replace report file %s: %w", s.Path, err)
 	}
-
 	keepTemp = true
+	if err := syncDirectory(dir); err != nil {
+		return fmt.Errorf("sync report directory %s: %w", dir, err)
+	}
 	return nil
+}
+
+func syncDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func ReadJSONFile(path string) (model.DrillResult, error) {

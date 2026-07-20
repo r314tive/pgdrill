@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -285,6 +286,31 @@ report:
 `), "yaml")
 	if err == nil || !strings.Contains(err.Error(), "report.path must be outside local target.work_dir") {
 		t.Fatalf("expected report/workdir boundary error, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsReportInsideLocalWorkDirThroughSymlinkAlias(t *testing.T) {
+	root := t.TempDir()
+	realParent := filepath.Join(root, "real")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatalf("create real parent: %v", err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(realParent, alias); err != nil {
+		t.Skipf("create report path alias: %v", err)
+	}
+
+	_, err := Load(strings.NewReader(`
+provider:
+  type: wal-g
+target:
+  type: local
+  work_dir: `+filepath.Join(realParent, "restore")+`
+report:
+  path: `+filepath.Join(alias, "restore", "report.json")+`
+`), "yaml")
+	if err == nil || !strings.Contains(err.Error(), "report.path must be outside local target.work_dir") {
+		t.Fatalf("expected canonical report/workdir boundary error, got %v", err)
 	}
 }
 

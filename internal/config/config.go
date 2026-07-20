@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -396,14 +397,15 @@ func (c Config) validatePaths() error {
 	if c.Target.Type != model.RestoreTargetLocal || strings.TrimSpace(c.Target.WorkDir) == "" || strings.TrimSpace(c.Report.Path) == "" {
 		return nil
 	}
-	workDir, err := filepath.Abs(c.Target.WorkDir)
+	workDir, err := canonicalExistingPrefix(c.Target.WorkDir)
 	if err != nil {
 		return fmt.Errorf("resolve target.work_dir %s: %w", c.Target.WorkDir, err)
 	}
-	reportPath, err := filepath.Abs(c.Report.Path)
+	reportDir, err := canonicalExistingPrefix(filepath.Dir(c.Report.Path))
 	if err != nil {
 		return fmt.Errorf("resolve report.path %s: %w", c.Report.Path, err)
 	}
+	reportPath := filepath.Join(reportDir, filepath.Base(filepath.Clean(c.Report.Path)))
 	if !strings.EqualFold(filepath.VolumeName(workDir), filepath.VolumeName(reportPath)) {
 		return nil
 	}
@@ -415,6 +417,40 @@ func (c Config) validatePaths() error {
 		return fmt.Errorf("report.path must be outside local target.work_dir")
 	}
 	return nil
+}
+
+func canonicalExistingPrefix(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	absPath = filepath.Clean(absPath)
+
+	missing := []string{}
+	current := absPath
+	for {
+		_, err := os.Lstat(current)
+		switch {
+		case err == nil:
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		case errors.Is(err, os.ErrNotExist):
+			parent := filepath.Dir(current)
+			if parent == current {
+				return absPath, nil
+			}
+			missing = append(missing, filepath.Base(current))
+			current = parent
+		default:
+			return "", err
+		}
+	}
 }
 
 func (c Config) validateDurations() error {

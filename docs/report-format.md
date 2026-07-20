@@ -67,6 +67,12 @@ error strings. A drill canceled by the operator or its parent scheduler has
 top-level status `aborted`; it is distinct from a completed verification with
 status `failed`.
 
+The JSON file sink writes a private temporary file, syncs it, atomically
+replaces the configured report path, and syncs the parent directory. Newly
+created report directories and files are owner-only by default. Replacing a
+final symlink does not follow it; existing parent-directory aliases remain an
+operator-controlled path choice.
+
 ## Failure Contract
 
 New failed and aborted reports include a `failure` object:

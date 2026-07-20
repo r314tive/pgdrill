@@ -72,4 +72,6 @@ symlinks are refused.
 
 `report.path` must be outside the local work directory. Cleanup happens before
 the final report write, so placing the report below `work_dir` would otherwise
-recreate a directory that no longer has pgdrill's ownership marker.
+recreate a directory that no longer has pgdrill's ownership marker. Existing
+parent-directory symlinks are resolved for this boundary check, so an alias
+cannot place the report back inside the restore directory.

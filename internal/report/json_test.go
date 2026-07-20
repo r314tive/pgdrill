@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,12 +64,40 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 	if len(loaded.Checks) != 1 || loaded.Checks[0].Name != "select_1" {
 		t.Fatalf("unexpected checks %#v", loaded.Checks)
 	}
+	dirInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("stat report directory: %v", err)
+	}
+	if dirInfo.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("new report directory must be private, got %s", dirInfo.Mode().Perm())
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat report file: %v", err)
+	}
+	if fileInfo.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("report file must be private, got %s", fileInfo.Mode().Perm())
+	}
 }
 
 func TestJSONFileSinkRequiresPath(t *testing.T) {
 	err := (JSONFileSink{}).Write(context.Background(), model.DrillResult{})
 	if err == nil {
 		t.Fatal("expected missing path error")
+	}
+}
+
+func TestJSONFileSinkCanceledBeforeWriteDoesNotCreateDirectory(t *testing.T) {
+	reportDir := filepath.Join(t.TempDir(), "reports")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := (JSONFileSink{Path: filepath.Join(reportDir, "drill.json")}).Write(ctx, model.DrillResult{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected canceled write, got %v", err)
+	}
+	if _, statErr := os.Stat(reportDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("canceled write created report directory, stat err=%v", statErr)
 	}
 }
 
@@ -92,6 +121,61 @@ func TestJSONFileSinkReplacesExistingFile(t *testing.T) {
 	}
 	if loaded.ID != "new" {
 		t.Fatalf("expected replacement report, got %#v", loaded)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat replacement report: %v", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("replacement report must be private, got %s", info.Mode().Perm())
+	}
+}
+
+func TestJSONFileSinkEncodingFailurePreservesExistingReport(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "drill.json")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatalf("seed report file: %v", err)
+	}
+
+	err := (JSONFileSink{Path: path}).Write(context.Background(), model.DrillResult{SchemaVersion: "pgdrill.report/v99"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported report schema_version") {
+		t.Fatalf("expected schema error, got %v", err)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil || string(data) != "old\n" {
+		t.Fatalf("failed write replaced existing report: data=%q err=%v", data, readErr)
+	}
+	temps, globErr := filepath.Glob(filepath.Join(dir, ".drill.json.*.tmp"))
+	if globErr != nil || len(temps) != 0 {
+		t.Fatalf("failed write left temporary files: paths=%#v err=%v", temps, globErr)
+	}
+}
+
+func TestJSONFileSinkReplacesFinalSymlinkWithoutFollowingIt(t *testing.T) {
+	root := t.TempDir()
+	outsidePath := filepath.Join(root, "outside.json")
+	if err := os.WriteFile(outsidePath, []byte("keep\n"), 0o600); err != nil {
+		t.Fatalf("seed outside file: %v", err)
+	}
+	reportPath := filepath.Join(root, "report.json")
+	if err := os.Symlink(outsidePath, reportPath); err != nil {
+		t.Skipf("create report symlink: %v", err)
+	}
+
+	if err := (JSONFileSink{Path: reportPath}).Write(context.Background(), model.DrillResult{ID: "safe", Status: model.DrillStatusPassed}); err != nil {
+		t.Fatalf("write report over symlink: %v", err)
+	}
+	outside, err := os.ReadFile(outsidePath)
+	if err != nil || string(outside) != "keep\n" {
+		t.Fatalf("report sink followed final symlink: data=%q err=%v", outside, err)
+	}
+	info, err := os.Lstat(reportPath)
+	if err != nil {
+		t.Fatalf("lstat report path: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		t.Fatalf("expected regular replacement report, got %s", info.Mode())
 	}
 }
 

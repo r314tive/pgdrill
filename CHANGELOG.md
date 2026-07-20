@@ -32,6 +32,8 @@ called out explicitly even while the major version is `0`.
   command evidence and errors.
 - Required post-restore probes for full drills and bounded `pg_isready`
   retries with per-attempt evidence for startup transitions.
+- Private, directory-synced atomic JSON report persistence plus canonical
+  report/workdir boundary validation through existing symlink aliases.
 - Structured drill failures with stable lifecycle stages, diagnostic messages,
   evidence links, text rendering, and bounded-cardinality Prometheus export.
 - Redaction-safe command start errors for durable failure reporting.
