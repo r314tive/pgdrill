@@ -12,6 +12,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
 
 const defaultBinary = "pg_probackup"
@@ -26,6 +27,7 @@ type Config struct {
 	RestoreTimeout time.Duration
 	RedactValues   []string
 	Validate       ValidateConfig
+	VerifyBackup   pgverifybackup.Config
 }
 
 type ValidateConfig struct {
@@ -169,12 +171,21 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 		},
 	}
 
+	steps := []model.RestoreStep{step}
+	verifyStep, err := a.cfg.VerifyBackup.Step(dataDir)
+	if err != nil {
+		return model.RestorePlan{}, err
+	}
+	if verifyStep != nil {
+		steps = append(steps, *verifyStep)
+	}
+
 	return model.RestorePlan{
 		Provider:       model.ProviderPGProbackup,
 		BackupID:       backup.ID,
 		Target:         spec,
 		RecoveryTarget: target,
-		Steps:          []model.RestoreStep{step},
+		Steps:          steps,
 		Runtime: model.RuntimeConfig{
 			DataDirectory: dataDir,
 			Environment:   copyStringMap(a.cfg.Env),

@@ -5,6 +5,11 @@ YAML or JSON config as the execution commands, derives the external executables
 that the selected target will use, and runs a bounded native version command for
 each distinct binary.
 
+Provider, restore-check, and expanded probe semantics are validated while the
+requirements are built. Invalid required fields, profiles, modes, or named args
+therefore fail before any version command is started. This is the same
+construction contract used by catalog and drill execution.
+
 `pgdrill run` and `pgdrill target verify` execute the same checks automatically
 and retain them in the standard drill report. Doctor is the standalone,
 non-mutating way to inspect that preflight before scheduling a drill.
@@ -34,7 +39,8 @@ verification path and checks:
 Provider configuration is not checked for the Kubernetes target because
 `pgdrill target verify` restores from a CNPG `Backup` resource and does not call
 the configured provider adapter. The unimplemented `container` target fails
-preflight explicitly.
+preflight explicitly. Probe semantics are still validated for Kubernetes before
+the client-only `kubectl` check.
 
 Probe presets are expanded before requirements are calculated. Repeated uses of
 the same tool and binary are merged into one command while preserving the list

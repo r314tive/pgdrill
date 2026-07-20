@@ -475,7 +475,7 @@ func TestPlanRestoreIncludesPgVerifyBackupWhenEnabled(t *testing.T) {
 			Enabled: true,
 			Binary:  "/usr/local/bin/pg_verifybackup",
 			Timeout: time.Minute,
-			Format:  "json",
+			Format:  "plain",
 		},
 	}, nil)
 
@@ -504,7 +504,7 @@ func TestPlanRestoreIncludesPgVerifyBackupWhenEnabled(t *testing.T) {
 	if verifyStep.Command.Path != "/usr/local/bin/pg_verifybackup" {
 		t.Fatalf("unexpected verify path %q", verifyStep.Command.Path)
 	}
-	wantArgs := []string{"--format=json", "/tmp/pgdrill/main/data"}
+	wantArgs := []string{"--format=plain", "/tmp/pgdrill/main/data"}
 	if !reflect.DeepEqual(verifyStep.Command.Args, wantArgs) {
 		t.Fatalf("unexpected verify args:\ngot  %#v\nwant %#v", verifyStep.Command.Args, wantArgs)
 	}

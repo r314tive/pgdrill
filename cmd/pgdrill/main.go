@@ -114,12 +114,6 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "validate drill config: %v\n", err)
 		return 1
 	}
-	preflightRequirements, err := preflight.Requirements(cfg)
-	if err != nil {
-		fmt.Fprintf(stderr, "create preflight: %v\n", err)
-		return 1
-	}
-
 	provider, err := adapters.NewProvider(cfg.Provider, cfg.Restore)
 	if err != nil {
 		fmt.Fprintf(stderr, "create provider: %v\n", err)
@@ -133,6 +127,11 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	configuredProbes, err := probes.NewProbes(cfg.Probes)
 	if err != nil {
 		fmt.Fprintf(stderr, "create probes: %v\n", err)
+		return 1
+	}
+	preflightRequirements, err := preflight.Requirements(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "create preflight: %v\n", err)
 		return 1
 	}
 

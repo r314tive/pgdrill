@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/r314tive/pgdrill/internal/adapters/barman"
 	"github.com/r314tive/pgdrill/internal/adapters/pgbackrest"
@@ -14,10 +15,10 @@ import (
 )
 
 func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig) (core.BackupProvider, error) {
-	restoreCfg := config.RestoreConfig{}
-	if len(restoreCfgs) > 0 {
-		restoreCfg = restoreCfgs[0]
+	if err := ValidateConfig(cfg, restoreCfgs...); err != nil {
+		return nil, err
 	}
+	restoreCfg := firstRestoreConfig(restoreCfgs)
 	verifyBackup := verifyBackupConfig(restoreCfg.VerifyBackup, cfg.RedactValues)
 
 	switch cfg.Type {
@@ -72,10 +73,50 @@ func NewProvider(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig)
 			RestoreTimeout: restoreCfg.Timeout.Duration,
 			RedactValues:   cfg.RedactValues,
 			Validate:       pgProbackupValidateConfig(cfg.PGProbackupValidate),
+			VerifyBackup:   verifyBackup,
 		}, nil), nil
 	default:
 		return nil, fmt.Errorf("provider %q is not implemented", cfg.Type)
 	}
+}
+
+func ValidateConfig(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConfig) error {
+	switch cfg.Type {
+	case model.ProviderWALG:
+	case model.ProviderBarman:
+		if strings.TrimSpace(cfg.Server) == "" {
+			return fmt.Errorf("provider.server is required for barman")
+		}
+	case model.ProviderPGBackRest:
+		output := strings.TrimSpace(cfg.PGBackRestVerify.Output)
+		switch output {
+		case "", "none", "text":
+		default:
+			return fmt.Errorf("unsupported provider.pgbackrest_verify.output %q", output)
+		}
+	case model.ProviderPGProbackup:
+		if strings.TrimSpace(cfg.BackupDir) == "" {
+			return fmt.Errorf("provider.backup_dir is required for pg_probackup")
+		}
+		if cfg.PGProbackupValidate.Threads < 0 {
+			return fmt.Errorf("provider.pg_probackup_validate.threads must not be negative")
+		}
+	default:
+		return fmt.Errorf("provider %q is not implemented", cfg.Type)
+	}
+
+	restoreCfg := firstRestoreConfig(restoreCfgs)
+	if err := verifyBackupConfig(restoreCfg.VerifyBackup, cfg.RedactValues).Validate(); err != nil {
+		return fmt.Errorf("restore.verify_backup: %w", err)
+	}
+	return nil
+}
+
+func firstRestoreConfig(cfgs []config.RestoreConfig) config.RestoreConfig {
+	if len(cfgs) == 0 {
+		return config.RestoreConfig{}
+	}
+	return cfgs[0]
 }
 
 func pgProbackupValidateConfig(cfg config.PGProbackupValidateConfig) pgprobackup.ValidateConfig {

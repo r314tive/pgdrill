@@ -35,6 +35,11 @@ func New(cfg Config, runner command.Runner) *Probe {
 	return &Probe{cfg: cfg, runner: runner}
 }
 
+func ValidateConfig(cfg Config) error {
+	_, err := (&Probe{cfg: cfg}).args("postgresql://pgdrill-validation")
+	return err
+}
+
 func (p *Probe) Type() model.ProbeType {
 	return model.ProbePGDump
 }

@@ -65,6 +65,10 @@ called out explicitly even while the major version is `0`.
   options.
 - Initial `pg_probackup` local restore planning for `pg_probackup restore` with
   provider instance checks and canonical PITR target mapping.
+- Semantic provider, restore-check, and probe validation before native
+  preflight, catalog discovery, restore, or Kubernetes resource creation.
+- Optional `pg_verifybackup` restore step for pg_probackup plans, bringing the
+  generic restored-artifact check to every implemented physical adapter.
 
 ### Changed
 
@@ -91,6 +95,9 @@ called out explicitly even while the major version is `0`.
   enforcement.
 - CNPG target-only commands now validate target configuration independently of
   backup providers and no longer require or report a synthetic provider.
+- The `strict` `pg_verifybackup` profile now enables fail-fast verification
+  without emitting the invalid `--format=json` argument. Explicit backup
+  formats are restricted to PostgreSQL's `p`, `plain`, `t`, and `tar` values.
 
 ## [0.1.0-alpha.5] - 2026-07-20
 

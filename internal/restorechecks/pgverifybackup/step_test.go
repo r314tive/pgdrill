@@ -83,7 +83,7 @@ func TestStepAppliesStrictProfile(t *testing.T) {
 	if step == nil || step.Command == nil {
 		t.Fatalf("expected command step, got %#v", step)
 	}
-	wantArgs := []string{"--exit-on-error", "--format=json", "/tmp/data"}
+	wantArgs := []string{"--exit-on-error", "/tmp/data"}
 	if !reflect.DeepEqual(step.Command.Args, wantArgs) {
 		t.Fatalf("unexpected args:\ngot  %#v\nwant %#v", step.Command.Args, wantArgs)
 	}
@@ -108,6 +108,28 @@ func TestStepRejectsUnknownProfile(t *testing.T) {
 	_, err := Config{Enabled: true, Profile: "fast"}.Step("/tmp/data")
 	if err == nil {
 		t.Fatal("expected unsupported profile error")
+	}
+}
+
+func TestValidateAcceptsPostgreSQLBackupFormats(t *testing.T) {
+	for _, format := range []string{"", "p", "plain", "t", "tar"} {
+		t.Run(format, func(t *testing.T) {
+			if err := (Config{Format: format}).Validate(); err != nil {
+				t.Fatalf("validate format %q: %v", format, err)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsUnsupportedFormatEvenWhenDisabled(t *testing.T) {
+	err := (Config{Format: "json"}).Validate()
+	if err == nil {
+		t.Fatal("expected unsupported format error")
+	}
+
+	_, err = (Config{Profile: "future"}).Step("/tmp/data")
+	if err == nil {
+		t.Fatal("expected disabled step to reject unsupported profile")
 	}
 }
 

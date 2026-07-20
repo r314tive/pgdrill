@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/r314tive/pgdrill/internal/adapters"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/probes"
@@ -24,6 +25,9 @@ func Requirements(cfg config.Config) ([]Requirement, error) {
 
 	switch cfg.Target.Type {
 	case model.RestoreTargetLocal:
+		if err := adapters.ValidateConfig(cfg.Provider, cfg.Restore); err != nil {
+			return nil, fmt.Errorf("validate provider config: %w", err)
+		}
 		provider, err := providerRequirement(cfg.Provider)
 		if err != nil {
 			return nil, err
@@ -66,9 +70,9 @@ func Requirements(cfg config.Config) ([]Requirement, error) {
 		return nil, fmt.Errorf("unsupported restore target %q", cfg.Target.Type)
 	}
 
-	expandedProbes, err := probes.ExpandConfigs(cfg.Probes)
+	expandedProbes, err := probes.ResolveConfigs(cfg.Probes)
 	if err != nil {
-		return nil, fmt.Errorf("expand probes: %w", err)
+		return nil, fmt.Errorf("validate probes: %w", err)
 	}
 	for _, probe := range expandedProbes {
 		requirement, err := probeRequirement(probe)

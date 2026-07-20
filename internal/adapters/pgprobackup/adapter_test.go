@@ -11,6 +11,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
 
 func TestParseShow(t *testing.T) {
@@ -261,6 +262,42 @@ func TestPlanRestoreBuildsLocalRestore(t *testing.T) {
 	}
 	if plan.Runtime.DataDirectory != "/var/tmp/pgdrill/main/data" || plan.Runtime.Environment["PGPROBACKUP_SSH_REMOTE_PATH"] != "/opt/pg/bin" {
 		t.Fatalf("unexpected runtime %#v", plan.Runtime)
+	}
+}
+
+func TestPlanRestoreIncludesPgVerifyBackupWhenEnabled(t *testing.T) {
+	adapter := New(Config{
+		BackupDir: "/backups",
+		Instance:  "main",
+		VerifyBackup: pgverifybackup.Config{
+			Enabled: true,
+			Binary:  "/usr/local/bin/pg_verifybackup",
+			Profile: "strict",
+			Timeout: time.Minute,
+		},
+	}, &fakeRunner{})
+	plan, err := adapter.PlanRestore(context.Background(), model.Backup{
+		ID:          "pg_probackup:main/SBOL94",
+		Provider:    model.ProviderPGProbackup,
+		ProviderID:  "main/SBOL94",
+		ClusterName: "main",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill/main",
+	})
+	if err != nil {
+		t.Fatalf("plan restore: %v", err)
+	}
+	if len(plan.Steps) != 2 {
+		t.Fatalf("expected restore and verify steps, got %#v", plan.Steps)
+	}
+	verifyStep := plan.Steps[1]
+	if verifyStep.Name != "pg-verifybackup" || verifyStep.Command == nil {
+		t.Fatalf("unexpected verify step %#v", verifyStep)
+	}
+	wantArgs := []string{"--exit-on-error", "/tmp/pgdrill/main/data"}
+	if verifyStep.Command.Path != "/usr/local/bin/pg_verifybackup" || !reflect.DeepEqual(verifyStep.Command.Args, wantArgs) {
+		t.Fatalf("unexpected verify command %#v", verifyStep.Command)
 	}
 }
 

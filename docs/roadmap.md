@@ -69,6 +69,8 @@ Status: usable for local-target smoke drills.
   restore timeout policies plus guarded Kubernetes polling.
 - Required post-restore proof plus bounded `pg_isready` retry semantics with
   per-attempt evidence.
+- Semantic provider, restore-check, and expanded-probe validation before any
+  native preflight or repository access.
 
 The CLI should become usable here:
 
@@ -108,12 +110,14 @@ still required before calling it production-ready.
 
 ## Phase 4: More Providers And Probes
 
-Status: initial four-provider surface implemented; field validation and targeted
-depth remain in progress.
+Status: initial four-provider surface and semantic config validation
+implemented; validation against real repositories and targeted depth remain in
+progress.
 
 - pg_probackup catalog discovery through `show --format=json`.
 - Optional pg_probackup selected-backup and recovery-target validation.
 - pg_probackup local restore planning with canonical PITR target mapping.
+- Optional generic `pg_verifybackup` restore check in pg_probackup plans.
 - Richer Barman manifest handling if real repositories expose more cases than
   `generate-manifest`.
 - Additional `pg_verifybackup` profiles, if real drills prove they are useful.

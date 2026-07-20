@@ -10,8 +10,8 @@ probes, and evidence, not in terms of one provider's command output.
 
 - `internal/model`: canonical data model shared by the engine, adapters, probes,
   restore targets, and report sinks.
-- `internal/config`: strict YAML/JSON configuration loader and conversion into
-  canonical runtime specs.
+- `internal/config`: strict YAML/JSON shape, common value, duration, and path
+  validation plus conversion into canonical runtime specs.
 - `internal/core`: provider, target, probe, evidence sink interfaces, backup
   selection, and the drill engine lifecycle.
 - `internal/command`: direct command runner with timeout, bounded raw
@@ -19,13 +19,14 @@ probes, and evidence, not in terms of one provider's command output.
 - `internal/preflight`: config-derived executable requirements and read-only
   native version checks used by `pgdrill doctor`.
 - `internal/adapters/*`: provider registry, provider-specific command
-  orchestration, and output normalization.
+  orchestration, semantic provider/restore-check validation, and output
+  normalization.
 - `internal/restorechecks/*`: restore-artifact checks that run after provider
   restore/fetch steps and before PostgreSQL startup.
 - `internal/targets/*`: restore target registry and disposable restore
   environment implementations.
 - `internal/probes/*`: probe registry and post-restore checks over a running
-  PostgreSQL instance.
+  PostgreSQL instance, including type-specific semantic config validation.
 - `internal/report`: report readers and evidence sinks for durable drill
   results.
 - `docs/report-format.md`: versioning and compatibility contract for durable
@@ -84,6 +85,11 @@ the default selector considers only available backups with a known
 `finished_at` strictly before the requested stop time. This enforces
 PostgreSQL's base-backup stop-point boundary without pretending that catalog
 metadata alone proves WAL continuity.
+
+Strict decoding rejects unknown field names. Provider and probe registries then
+validate type-specific required fields, modes, profiles, and named arguments
+before native preflight. This keeps package dependencies acyclic while ensuring
+that a known but inapplicable field cannot become a silent no-op.
 
 Restore plans may contain command steps and file-writing steps. Restore-artifact
 checks such as `pg_verifybackup` are modeled as command steps because they

@@ -100,8 +100,10 @@ The exact scope and JSON contract are documented in
 [docs/preflight.md](docs/preflight.md).
 
 Configuration is strict and all external operations have bounded deadline
-defaults. The provider/catalog deadline is separate from the physical restore
-deadline; see [docs/configuration.md](docs/configuration.md).
+defaults. Known fields are also validated against provider and probe semantics
+before external commands start. The provider/catalog deadline is separate from
+the physical restore deadline; see
+[docs/configuration.md](docs/configuration.md).
 
 ## Development
 

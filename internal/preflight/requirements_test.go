@@ -2,6 +2,7 @@ package preflight
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/r314tive/pgdrill/internal/config"
@@ -84,14 +85,17 @@ func TestProviderVersionCommands(t *testing.T) {
 
 func TestRequirementsForKubernetesTargetIgnoreConfiguredProvider(t *testing.T) {
 	cfg := config.Config{
-		Provider: config.ProviderConfig{Type: model.ProviderWALG},
+		Provider: config.ProviderConfig{
+			Type:             model.ProviderBarman,
+			PGBackRestVerify: config.PGBackRestVerifyConfig{Output: "invalid-and-unused"},
+		},
 		Target: config.TargetConfig{
 			Type: model.RestoreTargetKubernetes,
 			Kubernetes: config.KubernetesTargetConfig{
 				KubectlBinary: "/opt/bin/kubectl",
 			},
 		},
-		Probes: []config.ProbeConfig{{Type: model.ProbeSQL}},
+		Probes: []config.ProbeConfig{{Type: model.ProbeSQL, Query: "select 1"}},
 	}
 
 	requirements, err := Requirements(cfg)
@@ -109,6 +113,52 @@ func TestRequirementsForKubernetesTargetIgnoreConfiguredProvider(t *testing.T) {
 	}
 	if requirements[1].Tool != model.ToolPSQL {
 		t.Fatalf("unexpected probe requirement %#v", requirements[1])
+	}
+}
+
+func TestRequirementsRejectInvalidExecutionConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.Config
+		want string
+	}{
+		{
+			name: "provider",
+			cfg: config.Config{
+				Provider: config.ProviderConfig{Type: model.ProviderBarman},
+				Target:   config.TargetConfig{Type: model.RestoreTargetLocal},
+			},
+			want: "provider.server is required",
+		},
+		{
+			name: "restore check",
+			cfg: config.Config{
+				Provider: config.ProviderConfig{Type: model.ProviderWALG},
+				Target:   config.TargetConfig{Type: model.RestoreTargetLocal},
+				Restore: config.RestoreConfig{VerifyBackup: config.VerifyBackupConfig{
+					Format: "json",
+				}},
+			},
+			want: "unsupported pg_verifybackup format",
+		},
+		{
+			name: "probe",
+			cfg: config.Config{
+				Provider: config.ProviderConfig{Type: model.ProviderWALG},
+				Target:   config.TargetConfig{Type: model.RestoreTargetLocal},
+				Probes:   []config.ProbeConfig{{Type: model.ProbePGDump, Mode: "custom"}},
+			},
+			want: "unsupported pg_dump mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Requirements(tt.cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
 	}
 }
 

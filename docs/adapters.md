@@ -10,6 +10,13 @@ multi-hour restore allowance from hiding a stuck catalog command. Expensive
 provider checks retain their own nested timeout. Defaults and override rules
 are documented in [configuration.md](configuration.md).
 
+All implemented physical adapters can append the generic `pg_verifybackup`
+step when `restore.verify_backup.enabled` is true. The `strict` profile adds
+`--exit-on-error`. An explicit `format` selects the input backup layout and is
+limited to PostgreSQL's `p`, `plain`, `t`, and `tar` values; it is not a JSON
+output selector. Provider and restore-check semantics are rejected before
+native preflight or repository access.
+
 ## Canonical Recovery Targets
 
 Provider adapters receive a validated canonical recovery target. Timestamp
@@ -160,8 +167,7 @@ Implemented restore planning:
 - optional `pg_verifybackup` restore check when `restore.verify_backup.enabled`
   is true and the restored data directory contains a PostgreSQL backup
   manifest
-- `restore.verify_backup.profile: strict` enables JSON output and
-  `--exit-on-error`
+- `restore.verify_backup.profile: strict` enables `--exit-on-error`
 
 Initial value:
 
@@ -210,6 +216,8 @@ Implemented restore planning:
   `--recovery-target-lsn`, `--recovery-target-xid`,
   `--recovery-target-name`, `--recovery-target-timeline`,
   `--recovery-target-inclusive`, and `--recovery-target-action=promote`
+- optional `pg_verifybackup` restore check against the restored data directory
+  before PostgreSQL startup
 
 Initial value:
 

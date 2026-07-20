@@ -27,13 +27,13 @@ type Config struct {
 }
 
 func (c Config) Step(dataDir string) (*model.RestoreStep, error) {
-	if !c.Enabled {
-		return nil, nil
-	}
 	var err error
-	c, err = c.applyProfile()
+	c, err = c.normalized()
 	if err != nil {
 		return nil, err
+	}
+	if !c.Enabled {
+		return nil, nil
 	}
 	if dataDir == "" {
 		return nil, fmt.Errorf("pg_verifybackup data directory is required")
@@ -84,6 +84,11 @@ func (c Config) Step(dataDir string) (*model.RestoreStep, error) {
 	}, nil
 }
 
+func (c Config) Validate() error {
+	_, err := c.normalized()
+	return err
+}
+
 func (c Config) binary() string {
 	if c.Binary != "" {
 		return c.Binary
@@ -96,13 +101,24 @@ func (c Config) applyProfile() (Config, error) {
 	case "", "custom":
 		return c, nil
 	case "strict":
-		if c.Format == "" {
-			c.Format = "json"
-		}
 		c.ExitOnError = true
 		return c, nil
 	default:
 		return Config{}, fmt.Errorf("unsupported pg_verifybackup profile %q", c.Profile)
+	}
+}
+
+func (c Config) normalized() (Config, error) {
+	c, err := c.applyProfile()
+	if err != nil {
+		return Config{}, err
+	}
+	c.Format = strings.ToLower(strings.TrimSpace(c.Format))
+	switch c.Format {
+	case "", "p", "plain", "t", "tar":
+		return c, nil
+	default:
+		return Config{}, fmt.Errorf("unsupported pg_verifybackup format %q", c.Format)
 	}
 }
 

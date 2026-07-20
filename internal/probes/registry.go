@@ -20,6 +20,13 @@ const (
 )
 
 func NewProbe(cfg config.ProbeConfig) (core.Probe, error) {
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, err
+	}
+	return newProbe(cfg)
+}
+
+func newProbe(cfg config.ProbeConfig) (core.Probe, error) {
 	switch cfg.Type {
 	case model.ProbePGIsReady:
 		return pgisready.New(pgisready.Config{
@@ -60,20 +67,74 @@ func NewProbe(cfg config.ProbeConfig) (core.Probe, error) {
 }
 
 func NewProbes(cfgs []config.ProbeConfig) ([]core.Probe, error) {
-	expanded, err := ExpandConfigs(cfgs)
+	resolved, err := ResolveConfigs(cfgs)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]core.Probe, 0, len(expanded))
-	for i, cfg := range expanded {
-		probe, err := NewProbe(cfg)
+	result := make([]core.Probe, 0, len(resolved))
+	for i, cfg := range resolved {
+		probe, err := newProbe(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("probe %d: %w", i, err)
 		}
 		result = append(result, probe)
 	}
 	return result, nil
+}
+
+func ResolveConfigs(cfgs []config.ProbeConfig) ([]config.ProbeConfig, error) {
+	expanded, err := ExpandConfigs(cfgs)
+	if err != nil {
+		return nil, err
+	}
+	for i, cfg := range expanded {
+		if err := ValidateConfig(cfg); err != nil {
+			return nil, fmt.Errorf("probe %d: %w", i, err)
+		}
+	}
+	return expanded, nil
+}
+
+func ValidateConfig(cfg config.ProbeConfig) error {
+	if strings.TrimSpace(cfg.Preset) != "" {
+		return fmt.Errorf("probe preset must be expanded before construction")
+	}
+
+	switch cfg.Type {
+	case model.ProbePGIsReady:
+		return rejectProbeFields(cfg, false, false)
+	case model.ProbeSQL:
+		if err := rejectProbeFields(cfg, true, false); err != nil {
+			return err
+		}
+		return sql.ValidateConfig(sql.Config{Query: cfg.Query})
+	case model.ProbeAMCheck:
+		if err := rejectProbeFields(cfg, false, true); err != nil {
+			return err
+		}
+		return amcheck.ValidateConfig(amcheck.Config{Mode: cfg.Mode, Args: cfg.Args})
+	case model.ProbePGDump:
+		if err := rejectProbeFields(cfg, false, true); err != nil {
+			return err
+		}
+		return pgdump.ValidateConfig(pgdump.Config{Mode: cfg.Mode, Args: cfg.Args})
+	default:
+		return fmt.Errorf("probe %q is not implemented", cfg.Type)
+	}
+}
+
+func rejectProbeFields(cfg config.ProbeConfig, allowQuery bool, allowModeAndArgs bool) error {
+	if !allowQuery && strings.TrimSpace(cfg.Query) != "" {
+		return fmt.Errorf("probe %q does not support query", cfg.Type)
+	}
+	if !allowModeAndArgs && strings.TrimSpace(cfg.Mode) != "" {
+		return fmt.Errorf("probe %q does not support mode", cfg.Type)
+	}
+	if !allowModeAndArgs && len(cfg.Args) > 0 {
+		return fmt.Errorf("probe %q does not support args", cfg.Type)
+	}
+	return nil
 }
 
 func ExpandConfigs(cfgs []config.ProbeConfig) ([]config.ProbeConfig, error) {

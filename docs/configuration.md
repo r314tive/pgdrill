@@ -4,6 +4,35 @@
 cannot silently disable a provider check, probe, cleanup option, or deadline.
 Durations use Go duration syntax such as `30s`, `20m`, or `6h`.
 
+## Semantic Validation
+
+Known field names are not sufficient for an executable config. Before any
+native version command, repository access, restore, or Kubernetes resource
+creation, pgdrill also validates:
+
+- provider-specific required fields, including `provider.server` for Barman
+  and `provider.backup_dir` for pg_probackup
+- provider option enums such as `provider.pgbackrest_verify.output`
+- the `pg_verifybackup` profile and backup format
+- required and type-specific probe fields, supported modes, and named args
+
+Fields that a selected probe does not consume are rejected rather than
+silently ignored. For example, SQL requires a non-empty `query`, `pg_isready`
+does not accept `query`, `mode`, or `args`, and `pg_amcheck`/`pg_dump` reject
+unknown modes and named args. Probe presets are expanded before this validation
+and errors identify the expanded probe index.
+
+`restore.verify_backup.profile: strict` adds `--exit-on-error`; it does not
+select a JSON output mode because `pg_verifybackup --format` describes the
+input backup layout, not its output. The optional `format` field accepts only
+PostgreSQL's `p`, `plain`, `t`, and `tar` values. Omitting it retains the
+PostgreSQL default. Text output is still retained as structured command
+evidence.
+
+The Kubernetes target-only path deliberately does not validate unused provider
+settings because CNPG performs the restore and no provider adapter is invoked.
+Its configured probes are still validated before `kubectl` preflight.
+
 ## Operation Deadlines
 
 Every external command started from a loaded config has a bounded default.

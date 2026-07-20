@@ -35,6 +35,13 @@ func New(cfg Config, runner command.Runner) *Probe {
 	}
 }
 
+func ValidateConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.Query) == "" {
+		return fmt.Errorf("sql probe query is required")
+	}
+	return nil
+}
+
 func (p *Probe) Type() model.ProbeType {
 	return model.ProbeSQL
 }

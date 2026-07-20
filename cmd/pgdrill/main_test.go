@@ -184,6 +184,53 @@ probes:
 	}
 }
 
+func TestCommandsRejectInvalidProbeBeforeNativePreflight(t *testing.T) {
+	tests := []struct {
+		name string
+		args func(string) []string
+	}{
+		{name: "run", args: func(path string) []string { return []string{"run", "-f", path} }},
+		{name: "doctor", args: func(path string) []string { return []string{"doctor", "-f", path} }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			invokedPath := filepath.Join(dir, "native-invoked")
+			nativePath := filepath.Join(dir, "native")
+			writeExecutable(t, nativePath, `#!/bin/sh
+printf 'invoked\n' > "`+invokedPath+`"
+exit 0
+`)
+			configPath := filepath.Join(dir, "pgdrill.yaml")
+			writeFile(t, configPath, `
+provider:
+  type: wal-g
+  binary: `+nativePath+`
+target:
+  type: local
+  work_dir: `+filepath.Join(dir, "restore")+`
+  postgres_binary: `+nativePath+`
+probes:
+  - type: pg_dump
+    binary: `+nativePath+`
+    mode: custom
+report:
+  path: `+filepath.Join(dir, "report.json")+`
+`)
+
+			var stdout, stderr bytes.Buffer
+			code := run(tt.args(configPath), &stdout, &stderr)
+			if code != 1 || !strings.Contains(stderr.String(), `unsupported pg_dump mode "custom"`) {
+				t.Fatalf("expected semantic config failure, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			if _, err := os.Stat(invokedPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("native command ran before semantic validation, stat err=%v", err)
+			}
+		})
+	}
+}
+
 func TestDoctorCommandReturnsInterruptedExitCode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "pgdrill.yaml")
