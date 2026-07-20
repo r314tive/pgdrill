@@ -42,7 +42,7 @@ tests, and release artifact generation. It fails immediately when the active
 compiler does not exactly match `.go-version`.
 
 ```sh
-make -s release-check VERSION=v0.1.0-alpha.8
+make -s release-check VERSION=v0.1.0-alpha.9
 ```
 
 ## Release Artifacts
@@ -71,14 +71,14 @@ pgdrill_<version>_checksums.txt
 Build only the artifacts with:
 
 ```sh
-make -s release-artifacts VERSION=v0.1.0-alpha.8
+make -s release-artifacts VERSION=v0.1.0-alpha.9
 ```
 
 Verify them on Linux or macOS respectively:
 
 ```sh
-(cd dist && sha256sum -c pgdrill_0.1.0-alpha.8_checksums.txt)
-(cd dist && shasum -a 256 -c pgdrill_0.1.0-alpha.8_checksums.txt)
+(cd dist && sha256sum -c pgdrill_0.1.0-alpha.9_checksums.txt)
+(cd dist && shasum -a 256 -c pgdrill_0.1.0-alpha.9_checksums.txt)
 ```
 
 `release-snapshot` remains available as a quick host-only build and smoke
@@ -92,7 +92,7 @@ check. It is not a substitute for `release-check`.
 3. Run the release gate and extract release notes:
 
 ```sh
-VERSION=v0.1.0-alpha.8
+VERSION=v0.1.0-alpha.9
 make -s release-check VERSION="$VERSION"
 make -s release-notes VERSION="$VERSION"
 ```

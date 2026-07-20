@@ -2,6 +2,7 @@
 
 VERSION ?= v0.1.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+RELEASE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 RELEASE_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
 RELEASE_TARGETS ?= linux/amd64,linux/arm64,darwin/amd64,darwin/arm64
@@ -67,7 +68,7 @@ smoke: build
 release-artifacts: toolchain-check
 	go run ./internal/releasecmd artifacts \
 		-version "$(VERSION)" \
-		-commit "$(COMMIT)" \
+		-commit "$(RELEASE_COMMIT)" \
 		-date "$(RELEASE_DATE)" \
 		-output "$(DISTDIR)" \
 		-targets "$(RELEASE_TARGETS)"
@@ -83,8 +84,8 @@ release-check:
 	$(MAKE) -s check
 	$(MAKE) -s workflow-check
 	$(MAKE) -s race
-	$(MAKE) -s smoke VERSION="$(VERSION)" COMMIT="$(COMMIT)" DATE="$(RELEASE_DATE)"
-	$(MAKE) -s release-artifacts VERSION="$(VERSION)" COMMIT="$(COMMIT)" RELEASE_DATE="$(RELEASE_DATE)" RELEASE_TARGETS="$(RELEASE_TARGETS)"
+	$(MAKE) -s smoke VERSION="$(VERSION)" COMMIT="$(RELEASE_COMMIT)" DATE="$(RELEASE_DATE)"
+	$(MAKE) -s release-artifacts VERSION="$(VERSION)" RELEASE_COMMIT="$(RELEASE_COMMIT)" RELEASE_DATE="$(RELEASE_DATE)" RELEASE_TARGETS="$(RELEASE_TARGETS)"
 
 release-snapshot: toolchain-check check
 	mkdir -p $(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)

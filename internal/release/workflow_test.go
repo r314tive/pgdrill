@@ -21,20 +21,11 @@ type workflowStep struct {
 	Name string            `yaml:"name"`
 	Uses string            `yaml:"uses"`
 	Env  map[string]string `yaml:"env"`
+	Run  string            `yaml:"run"`
 }
 
 func TestReleasePublishStepHasExplicitRepository(t *testing.T) {
-	path := filepath.Join("..", "..", ".github", "workflows", "release.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read release workflow: %v", err)
-	}
-
-	var workflow workflowContract
-	if err := yaml.Unmarshal(data, &workflow); err != nil {
-		t.Fatalf("parse release workflow: %v", err)
-	}
-
+	workflow := readReleaseWorkflow(t)
 	publish, ok := workflow.Jobs["publish"]
 	if !ok {
 		t.Fatal("release workflow has no publish job")
@@ -51,4 +42,37 @@ func TestReleasePublishStepHasExplicitRepository(t *testing.T) {
 		}
 	}
 	t.Fatal("release workflow has no Publish release step")
+}
+
+func TestReleaseBuildPassesFullCommitInput(t *testing.T) {
+	workflow := readReleaseWorkflow(t)
+	build, ok := workflow.Jobs["build"]
+	if !ok {
+		t.Fatal("release workflow has no build job")
+	}
+	for _, step := range build.Steps {
+		if step.Name != "Run release-grade checks" {
+			continue
+		}
+		if !strings.Contains(step.Run, `RELEASE_COMMIT="$PGDRILL_COMMIT"`) {
+			t.Fatalf("release-grade check does not pass the full commit input: %q", step.Run)
+		}
+		return
+	}
+	t.Fatal("release workflow has no Run release-grade checks step")
+}
+
+func readReleaseWorkflow(t *testing.T) workflowContract {
+	t.Helper()
+	path := filepath.Join("..", "..", ".github", "workflows", "release.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+
+	var workflow workflowContract
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatalf("parse release workflow: %v", err)
+	}
+	return workflow
 }

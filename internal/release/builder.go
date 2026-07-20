@@ -198,8 +198,8 @@ func validateOptions(opts Options) (Options, time.Time, error) {
 	if err := ValidateVersion(opts.Version); err != nil {
 		return Options{}, time.Time{}, err
 	}
-	if !isHex(opts.Commit) || len(opts.Commit) < 7 || len(opts.Commit) > 64 {
-		return Options{}, time.Time{}, fmt.Errorf("release commit must be a 7-64 character hexadecimal Git object ID")
+	if !isHex(opts.Commit) || (len(opts.Commit) != 40 && len(opts.Commit) != 64) {
+		return Options{}, time.Time{}, fmt.Errorf("release commit must be a full 40- or 64-character hexadecimal Git object ID")
 	}
 	releaseTime, err := time.Parse(time.RFC3339, opts.Date)
 	if err != nil {

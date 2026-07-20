@@ -124,20 +124,44 @@ func TestBuildEnvironmentNormalizesReleaseInputs(t *testing.T) {
 	}
 }
 
-func TestReleaseLDFlagsRemoveHostDependentBuildID(t *testing.T) {
+func TestReleaseLDFlagsOmitBuildID(t *testing.T) {
 	releaseTime := time.Date(2026, 7, 20, 17, 0, 0, 0, time.UTC)
-	flags := releaseLDFlags(Options{Version: "v0.1.0-alpha.8", Commit: "abcdef123456"}, releaseTime)
+	commit := strings.Repeat("a", 40)
+	flags := releaseLDFlags(Options{Version: "v0.1.0-alpha.9", Commit: commit}, releaseTime)
 
 	for _, expected := range []string{
 		"-s",
 		"-w",
 		"-buildid=",
-		versionPackage + ".Version=v0.1.0-alpha.8",
-		versionPackage + ".Commit=abcdef123456",
+		versionPackage + ".Version=v0.1.0-alpha.9",
+		versionPackage + ".Commit=" + commit,
 		versionPackage + ".Date=2026-07-20T17:00:00Z",
 	} {
 		if !strings.Contains(flags, expected) {
 			t.Fatalf("release linker flags %q do not contain %q", flags, expected)
+		}
+	}
+}
+
+func TestValidateOptionsRequiresFullGitObjectID(t *testing.T) {
+	base := Options{
+		Version: "v0.1.0-alpha.9",
+		Date:    "2026-07-20T17:00:00Z",
+		Targets: []Target{{OS: "linux", Arch: "amd64"}},
+	}
+	for _, commit := range []string{strings.Repeat("a", 40), strings.Repeat("b", 64)} {
+		opts := base
+		opts.Commit = commit
+		if _, _, err := validateOptions(opts); err != nil {
+			t.Fatalf("full commit %q rejected: %v", commit, err)
+		}
+	}
+
+	for _, commit := range []string{"859af58", strings.Repeat("z", 40)} {
+		opts := base
+		opts.Commit = commit
+		if _, _, err := validateOptions(opts); err == nil || !strings.Contains(err.Error(), "full 40- or 64-character") {
+			t.Fatalf("commit %q should be rejected, got %v", commit, err)
 		}
 	}
 }

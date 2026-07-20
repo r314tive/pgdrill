@@ -8,6 +8,14 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.9] - 2026-07-20
+
+### Fixed
+
+- Local and GitHub release builds now use and require the same full Git object
+  ID, eliminating short/full commit metadata differences and making identical
+  cross-host release inputs byte-for-byte reproducible.
+
 ## [0.1.0-alpha.8] - 2026-07-20
 
 ### Fixed

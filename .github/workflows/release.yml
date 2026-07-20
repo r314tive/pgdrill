@@ -44,7 +44,7 @@ jobs:
         run: >-
           make -s release-check
           VERSION="$GITHUB_REF_NAME"
-          COMMIT="$PGDRILL_COMMIT"
+          RELEASE_COMMIT="$PGDRILL_COMMIT"
           RELEASE_DATE="$PGDRILL_DATE"
       - name: Extract changelog release notes
         run: make -s release-notes VERSION="$GITHUB_REF_NAME"
