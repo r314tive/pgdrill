@@ -2,14 +2,43 @@ name: ci
 
 on:
   push:
+    branches:
+      - "**"
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  go:
+  quality:
+    name: Go ${{ matrix.go }} (${{ matrix.gate }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - go: 1.25.12
+            gate: minimum
+          - go: 1.26.5
+            gate: release
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          go-version-file: go.mod
-      - run: make -s check
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: go.sum
+      - name: Run minimum-version checks
+        if: matrix.gate == 'minimum'
+        run: make -s check
+      - name: Run release-grade checks
+        if: matrix.gate == 'release'
+        run: make -s release-check VERSION=v0.0.0-ci

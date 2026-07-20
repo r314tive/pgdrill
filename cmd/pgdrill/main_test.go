@@ -437,10 +437,10 @@ JSON
   *" logs verify-altbox-test-1 -c bootstrap-controller --timestamps --tail=25"*)
     echo "postgres bootstrap ready"
     ;;
-  *" delete cluster.postgresql.cnpg.io verify-altbox-test --wait=true --timeout=1s"*)
+  *" delete cluster.postgresql.cnpg.io verify-altbox-test --wait=true --timeout=5s"*)
     echo "cluster deleted"
     ;;
-  *" delete pvc -l cnpg.io/cluster=verify-altbox-test --wait=true --timeout=1s"*)
+  *" delete pvc -l cnpg.io/cluster=verify-altbox-test --wait=true --timeout=5s"*)
     echo "pvc deleted"
     ;;
   *)
@@ -465,8 +465,8 @@ target:
   kubernetes:
     namespace: d003-db
     kubectl_binary: `+kubectlPath+`
-    command_timeout: 1s
-    wait_timeout: 2s
+    command_timeout: 5s
+    wait_timeout: 5s
     cleanup_pvc: true
     capture_logs: true
     events_tail: 10
@@ -479,7 +479,7 @@ probes:
     name: select_1
     binary: `+psqlPath+`
     query: "select 1"
-    timeout: 1s
+    timeout: 5s
 report:
   format: json
   path: `+reportPath+`
@@ -686,7 +686,7 @@ restore:
   verify_backup:
     enabled: true
     binary: `+pgVerifyBackupPath+`
-    timeout: 1s
+    timeout: 5s
     exit_on_error: true
     quiet: true
 target:
@@ -694,8 +694,8 @@ target:
   work_dir: `+workDir+`
   postgres_binary: `+postgresPath+`
   postgres_port: 15432
-  startup_timeout: 50ms
-  shutdown_timeout: 2s
+  startup_timeout: 100ms
+  shutdown_timeout: 5s
   env:
     PGDRILL_EXPECT_DATA_DIR: `+filepath.Join(workDir, "data")+`
     PGDRILL_STOP_FILE: `+stopFile+`
@@ -704,19 +704,19 @@ recovery:
 probes:
   - type: pg_isready
     binary: `+pgIsReadyPath+`
-    timeout: 1s
+    timeout: 5s
   - type: sql
     name: select_1
     binary: `+psqlPath+`
     query: "select 1"
-    timeout: 1s
+    timeout: 5s
   - type: amcheck
     binary: `+pgAMCheckPath+`
-    timeout: 1s
+    timeout: 5s
   - type: pg_dump
     binary: `+pgDumpPath+`
     mode: schema
-    timeout: 1s
+    timeout: 5s
 report:
   format: json
   path: `+reportPath+`
@@ -895,8 +895,8 @@ target:
   work_dir: `+workDir+`
   postgres_binary: `+postgresPath+`
   postgres_port: 15434
-  startup_timeout: 50ms
-  shutdown_timeout: 2s
+  startup_timeout: 100ms
+  shutdown_timeout: 5s
 recovery:
   target: timestamp
   value: "2026-07-06 01:02:03"
@@ -904,7 +904,7 @@ recovery:
 probes:
   - type: pg_isready
     binary: `+pgIsReadyPath+`
-    timeout: 1s
+    timeout: 5s
 report:
   format: json
   path: `+reportPath+`
@@ -1066,8 +1066,8 @@ target:
   work_dir: `+workDir+`
   postgres_binary: `+postgresPath+`
   postgres_port: 15435
-  startup_timeout: 50ms
-  shutdown_timeout: 2s
+  startup_timeout: 100ms
+  shutdown_timeout: 5s
 recovery:
   target: timestamp
   value: "2026-07-06 01:02:03"
@@ -1075,7 +1075,7 @@ recovery:
 probes:
   - type: pg_isready
     binary: `+pgIsReadyPath+`
-    timeout: 1s
+    timeout: 5s
 report:
   format: json
   path: `+reportPath+`
