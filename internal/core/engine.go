@@ -88,6 +88,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if err := recoveryTarget.Validate(); err != nil {
 		return fail(model.DrillStageRequestValidation, fmt.Errorf("validate recovery target: %w", err))
 	}
+	if req.Target.Type != e.Target.Type() {
+		return fail(model.DrillStageRequestValidation, fmt.Errorf("restore target type %q does not match requested target type %q", e.Target.Type(), req.Target.Type))
+	}
 	if validator, ok := e.Target.(TargetValidator); ok {
 		if err := validator.Validate(ctx, req.Target); err != nil {
 			return fail(model.DrillStageRequestValidation, fmt.Errorf("validate restore target: %w", err))
@@ -103,11 +106,19 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 	if e.Preflight != nil {
 		preflightReport, err := e.Preflight.Check(ctx)
-		result.Checks = append(result.Checks, preflightReport.Checks...)
 		result.Evidence = append(result.Evidence, preflightReport.Evidence...)
 		if err != nil {
+			if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
+				result.Checks = append(result.Checks, preflightReport.Checks...)
+			} else {
+				err = errors.Join(err, fmt.Errorf("invalid partial preflight report: %w", reportErr))
+			}
 			return fail(model.DrillStagePreflight, fmt.Errorf("run preflight: %w", err))
 		}
+		if err := validateCheckReport(preflightReport, true); err != nil {
+			return fail(model.DrillStagePreflight, fmt.Errorf("validate preflight report: %w", err))
+		}
+		result.Checks = append(result.Checks, preflightReport.Checks...)
 		if hasFailedChecks(preflightReport.Checks) {
 			return fail(model.DrillStagePreflight, fmt.Errorf("preflight failed"))
 		}
@@ -118,23 +129,38 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if err != nil {
 		return fail(model.DrillStageBackupDiscovery, fmt.Errorf("discover backups: %w", err))
 	}
+	if err := validateBackupCatalog(e.Provider.Type(), catalog); err != nil {
+		return fail(model.DrillStageBackupDiscovery, fmt.Errorf("validate provider catalog: %w", err))
+	}
 
 	selector := req.Selector
 	if selector == nil {
 		selector = LatestAvailableSelector{}
 	}
-	backup, err := selector.Select(catalog, recoveryTarget)
+	selected, err := selector.Select(catalog, recoveryTarget)
 	if err != nil {
 		return fail(model.DrillStageBackupSelection, fmt.Errorf("select backup: %w", err))
+	}
+	backup, err := canonicalSelectedBackup(catalog, selected)
+	if err != nil {
+		return fail(model.DrillStageBackupSelection, fmt.Errorf("validate selected backup: %w", err))
 	}
 	result.Backup = backup
 
 	checkReport, err := e.Provider.ValidateCatalog(ctx, catalog, backup, recoveryTarget)
-	result.Checks = append(result.Checks, checkReport.Checks...)
 	result.Evidence = append(result.Evidence, checkReport.Evidence...)
 	if err != nil {
+		if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
+			result.Checks = append(result.Checks, checkReport.Checks...)
+		} else {
+			err = errors.Join(err, fmt.Errorf("invalid partial catalog check report: %w", reportErr))
+		}
 		return fail(model.DrillStageCatalogValidation, fmt.Errorf("validate catalog: %w", err))
 	}
+	if err := validateCheckReport(checkReport, true); err != nil {
+		return fail(model.DrillStageCatalogValidation, fmt.Errorf("validate catalog check report: %w", err))
+	}
+	result.Checks = append(result.Checks, checkReport.Checks...)
 	if hasFailedChecks(checkReport.Checks) {
 		return fail(model.DrillStageCatalogValidation, fmt.Errorf("catalog validation failed"))
 	}
@@ -143,6 +169,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	result.Evidence = append(result.Evidence, plan.Evidence...)
 	if err != nil {
 		return fail(model.DrillStageRestorePlanning, fmt.Errorf("plan restore: %w", err))
+	}
+	if err := validateRestorePlan(e.Provider.Type(), backup, recoveryTarget, req.Target, plan); err != nil {
+		return fail(model.DrillStageRestorePlanning, fmt.Errorf("validate restore plan: %w", err))
 	}
 
 	prepared := false

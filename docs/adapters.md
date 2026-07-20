@@ -17,6 +17,13 @@ limited to PostgreSQL's `p`, `plain`, `t`, and `tar` values; it is not a JSON
 output selector. Provider and restore-check semantics are rejected before
 native preflight or repository access.
 
+Adapter outputs are also validated after each call. A discovered catalog must
+use the adapter provider and unique provider-scoped IDs. Selected backups must
+come from that catalog, completed checks require terminal statuses, and restore
+plans must match the selected backup, requested target, and recovery target.
+Malformed output fails closed before target preparation; adapters cannot extend
+the canonical enums implicitly.
+
 ## Canonical Recovery Targets
 
 Provider adapters receive a validated canonical recovery target. Timestamp

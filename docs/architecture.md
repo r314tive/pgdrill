@@ -107,6 +107,15 @@ pgbackrest:<stanza>/<backup-label>
 pg_probackup:<instance>/<backup-id>
 ```
 
+The engine validates every in-process protocol boundary before target mutation.
+Catalog provider identities, provider-scoped backup IDs, enum values, duplicate
+IDs, selector membership, terminal check statuses, and restore-plan identity
+must agree with the request. A selector chooses an ID; the engine then uses the
+matching canonical catalog object rather than trusting fields returned by the
+selector. Restore plans must contain a runtime data directory and at least one
+executable command or file step. Violations fail at the corresponding stable
+lifecycle stage and are persisted like native-tool failures.
+
 Bounded raw command stdout/stderr stay available to adapter code as
 `command.RawEvidence`. Reports and logs use `model.CommandEvidence`, where
 arguments, environment values, output previews, exit errors, and the requested
@@ -133,6 +142,8 @@ link the evidence IDs accumulated through that stage.
 ## Design Rules
 
 - Provider adapters call external tools and normalize facts into the core model.
+- Adapter, selector, preflight, and probe outputs are untrusted protocol data;
+  validate them before they can authorize target mutation or a passed result.
 - Restore targets own storage and runtime lifecycle.
 - Destructive cleanup must be opt-in and guarded by per-run target ownership
   markers.

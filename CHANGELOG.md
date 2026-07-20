@@ -74,6 +74,10 @@ called out explicitly even while the major version is `0`.
 - A shared core probe executor for local and CNPG drills, preserving partial
   evidence and treating an empty configured-probe report as a failed protocol
   response on both paths.
+- Fail-closed core protocol validation for provider catalogs, selector output,
+  terminal check reports, restore plans, target implementation identity, and
+  probe reports before target mutation. Selectors now authorize only a catalog
+  backup ID; the canonical discovered object remains authoritative.
 
 ### Changed
 

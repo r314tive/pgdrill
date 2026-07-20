@@ -7,9 +7,11 @@ A full `pgdrill run` requires at least one probe. Starting a PostgreSQL process
 without checking it cannot produce a passed recovery-readiness result. CNPG
 `target verify` separately proves operator readiness and may add probes for
 database-level assertions. A configured probe must return at least one check;
-an empty probe report fails the drill. Local and CNPG execution use the same
-core probe runner, including partial-evidence retention, ordinary probe-error
-aggregation, and cancellation semantics.
+an empty probe report, non-terminal check status, missing check name, or
+mismatched probe identity fails the drill. Malformed checks are replaced by a
+canonical failed check while their command evidence is retained. Local and CNPG
+execution use the same core probe runner, including partial-evidence retention,
+ordinary probe-error aggregation, and cancellation semantics.
 
 ## Explicit Probes
 

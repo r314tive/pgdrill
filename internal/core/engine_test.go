@@ -20,6 +20,7 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 				ID:         "wal-g:base_1",
 				Provider:   model.ProviderWALG,
 				ProviderID: "base_1",
+				Kind:       model.BackupKindFull,
 				Status:     model.BackupStatusAvailable,
 				FinishedAt: &finishedAt,
 			}},
@@ -33,9 +34,12 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 			Provider: model.ProviderWALG,
 			BackupID: "wal-g:base_1",
 			Target:   model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill"},
+			RecoveryTarget: model.RecoveryTarget{
+				Type: model.RecoveryTargetLatest,
+			},
 			Steps: []model.RestoreStep{
-				{Name: "fetch"},
-				{Name: "recover"},
+				{Name: "fetch", Command: fakeRestoreCommand()},
+				{Name: "recover", Command: fakeRestoreCommand()},
 			},
 			Runtime:  model.RuntimeConfig{DataDirectory: "/tmp/pgdrill/data"},
 			Evidence: []model.EvidenceRecord{testEvidence("plan")},
@@ -167,11 +171,9 @@ func TestEngineCleansUpAndWritesFailureOnRestoreStepError(t *testing.T) {
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
 			Provider: model.ProviderWALG,
-			Backups:  []model.Backup{{ID: "wal-g:base_1", Status: model.BackupStatusAvailable}},
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
 		},
-		plan: model.RestorePlan{
-			Steps: []model.RestoreStep{{Name: "fetch"}, {Name: "recover"}},
-		},
+		plan: testRestorePlan(model.ProviderWALG, "base_1", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, "fetch", "recover"),
 	}
 	target := &fakeTarget{
 		executeErrStep:  "recover",
@@ -214,9 +216,9 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
 			Provider: model.ProviderBarman,
-			Backups:  []model.Backup{{ID: "barman:main/1", Status: model.BackupStatusAvailable}},
+			Backups:  []model.Backup{availableBackup(model.ProviderBarman, "main/1")},
 		},
-		plan: model.RestorePlan{},
+		plan: testRestorePlan(model.ProviderBarman, "main/1", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, "restore"),
 	}
 	target := &fakeTarget{
 		destroyEvidence: []model.EvidenceRecord{testEvidence("cleanup")},
@@ -249,7 +251,7 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 	if result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
 		t.Fatalf("expected probe execution failure, got %#v", result.Failure)
 	}
-	if got, want := target.calls, []string{"prepare", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
 	if !sink.called || sink.result.Status != model.DrillStatusFailed {
@@ -261,9 +263,9 @@ func TestEngineFailsWhenProbeReturnsNoChecks(t *testing.T) {
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
 			Provider: model.ProviderWALG,
-			Backups:  []model.Backup{{ID: "wal-g:base_1", Status: model.BackupStatusAvailable}},
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
 		},
-		plan: model.RestorePlan{},
+		plan: testRestorePlan(model.ProviderWALG, "base_1", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, "restore"),
 	}
 	target := &fakeTarget{destroyEvidence: []model.EvidenceRecord{testEvidence("cleanup")}}
 	sink := &fakeSink{}
@@ -284,14 +286,232 @@ func TestEngineFailsWhenProbeReturnsNoChecks(t *testing.T) {
 	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
 		t.Fatalf("unexpected empty probe result %#v", result)
 	}
-	if len(result.Checks) != 1 || result.Checks[0].Status != model.CheckStatusFailed || result.Checks[0].Message != "probe returned no checks" {
+	if len(result.Checks) != 2 || result.Checks[1].Status != model.CheckStatusFailed || result.Checks[1].Message != "invalid probe report: report returned no checks" {
 		t.Fatalf("expected synthesized failed check, got %#v", result.Checks)
 	}
-	if got, want := target.calls, []string{"prepare", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
 	if !sink.called || sink.result.Status != model.DrillStatusFailed {
 		t.Fatalf("expected durable failed result, got called=%v result=%#v", sink.called, sink.result)
+	}
+}
+
+func TestEngineRejectsMalformedCatalogBeforeSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider model.ProviderType
+		catalog  model.BackupCatalog
+		want     string
+	}{
+		{
+			name:     "provider mismatch",
+			provider: model.ProviderWALG,
+			catalog:  model.BackupCatalog{Provider: model.ProviderBarman},
+			want:     "does not match adapter provider",
+		},
+		{
+			name:     "backup provider mismatch",
+			provider: model.ProviderWALG,
+			catalog: model.BackupCatalog{Provider: model.ProviderWALG, Backups: []model.Backup{{
+				ID:         "wal-g:base_1",
+				Provider:   model.ProviderBarman,
+				ProviderID: "base_1",
+				Kind:       model.BackupKindFull,
+				Status:     model.BackupStatusAvailable,
+			}}},
+			want: "does not match catalog provider",
+		},
+		{
+			name:     "duplicate id",
+			provider: model.ProviderWALG,
+			catalog: model.BackupCatalog{Provider: model.ProviderWALG, Backups: []model.Backup{
+				availableBackup(model.ProviderWALG, "base_1"),
+				availableBackup(model.ProviderWALG, "base_1"),
+			}},
+			want: "duplicate backup id",
+		},
+		{
+			name:     "unknown status value",
+			provider: model.ProviderWALG,
+			catalog: model.BackupCatalog{Provider: model.ProviderWALG, Backups: []model.Backup{{
+				ID:         "wal-g:base_1",
+				Provider:   model.ProviderWALG,
+				ProviderID: "base_1",
+				Kind:       model.BackupKindFull,
+				Status:     "future-status",
+			}}},
+			want: "unsupported status",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &fakeProvider{providerType: tt.provider, catalog: tt.catalog}
+			target := &fakeTarget{}
+			sink := &fakeSink{}
+
+			result, err := Engine{Provider: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
+				context.Background(),
+				DrillRequest{Target: model.TargetSpec{Type: model.RestoreTargetLocal}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}},
+			)
+
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q protocol error, got %v", tt.want, err)
+			}
+			if result.Failure == nil || result.Failure.Stage != model.DrillStageBackupDiscovery {
+				t.Fatalf("unexpected protocol failure %#v", result.Failure)
+			}
+			if got, want := provider.calls, []string{"discover"}; !reflect.DeepEqual(got, want) || len(target.calls) != 0 {
+				t.Fatalf("malformed catalog crossed boundary: provider=%#v target=%#v", provider.calls, target.calls)
+			}
+			if !sink.called || sink.result.Status != model.DrillStatusFailed {
+				t.Fatalf("expected durable protocol failure, got called=%v result=%#v", sink.called, sink.result)
+			}
+		})
+	}
+}
+
+func TestEngineRejectsSelectorOutputOutsideCatalog(t *testing.T) {
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+		},
+	}
+	target := &fakeTarget{}
+	sink := &fakeSink{}
+
+	result, err := Engine{Provider: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
+		context.Background(),
+		DrillRequest{
+			Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+			RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			Selector: BackupSelectorFunc(func(model.BackupCatalog, model.RecoveryTarget) (model.Backup, error) {
+				return model.Backup{ID: "wal-g:not-discovered"}, nil
+			}),
+		},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "not in the discovered catalog") {
+		t.Fatalf("expected selector protocol error, got %v", err)
+	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageBackupSelection {
+		t.Fatalf("unexpected selector failure %#v", result.Failure)
+	}
+	if got, want := provider.calls, []string{"discover"}; !reflect.DeepEqual(got, want) || len(target.calls) != 0 {
+		t.Fatalf("invalid selection crossed boundary: provider=%#v target=%#v", provider.calls, target.calls)
+	}
+}
+
+func TestEngineRejectsMalformedCatalogCheckReport(t *testing.T) {
+	tests := []struct {
+		name   string
+		report model.CheckReport
+		want   string
+	}{
+		{name: "empty", report: model.CheckReport{Checks: []model.Check{}}, want: "report returned no checks"},
+		{name: "missing name", report: model.CheckReport{Checks: []model.Check{{Status: model.CheckStatusPassed}}}, want: "name is required"},
+		{name: "unknown status", report: model.CheckReport{Checks: []model.Check{{Name: "catalog", Status: model.CheckStatusUnknown}}}, want: "non-terminal status"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &fakeProvider{
+				catalog: model.BackupCatalog{
+					Provider: model.ProviderWALG,
+					Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+				},
+				validateReport: tt.report,
+			}
+			target := &fakeTarget{}
+
+			result, err := Engine{Provider: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
+				context.Background(),
+				DrillRequest{Target: model.TargetSpec{Type: model.RestoreTargetLocal}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}},
+			)
+
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q check protocol error, got %v", tt.want, err)
+			}
+			if result.Failure == nil || result.Failure.Stage != model.DrillStageCatalogValidation {
+				t.Fatalf("unexpected check report failure %#v", result.Failure)
+			}
+			if got, want := provider.calls, []string{"discover", "validate"}; !reflect.DeepEqual(got, want) || len(target.calls) != 0 {
+				t.Fatalf("malformed checks crossed boundary: provider=%#v target=%#v", provider.calls, target.calls)
+			}
+		})
+	}
+}
+
+func TestEngineRejectsMalformedRestorePlanBeforeTargetMutation(t *testing.T) {
+	targetSpec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill"}
+	recovery := model.RecoveryTarget{Type: model.RecoveryTargetLatest}
+	tests := []struct {
+		name   string
+		mutate func(*model.RestorePlan)
+		want   string
+	}{
+		{name: "provider", mutate: func(plan *model.RestorePlan) { plan.Provider = model.ProviderBarman }, want: "plan provider"},
+		{name: "backup", mutate: func(plan *model.RestorePlan) { plan.BackupID = "wal-g:other" }, want: "plan backup_id"},
+		{name: "target", mutate: func(plan *model.RestorePlan) { plan.Target.WorkDir = "/tmp/other" }, want: "plan target"},
+		{name: "recovery", mutate: func(plan *model.RestorePlan) { plan.RecoveryTarget.Type = model.RecoveryTargetImmediate }, want: "plan recovery_target"},
+		{name: "runtime", mutate: func(plan *model.RestorePlan) { plan.Runtime.DataDirectory = "" }, want: "runtime data_directory"},
+		{name: "steps", mutate: func(plan *model.RestorePlan) { plan.Steps = nil }, want: "no restore steps"},
+		{name: "empty step", mutate: func(plan *model.RestorePlan) { plan.Steps[0].Command = nil }, want: "has no command or file operations"},
+		{name: "unknown tool", mutate: func(plan *model.RestorePlan) { plan.Steps[0].Command.Tool = "future-tool" }, want: "unsupported command tool"},
+		{name: "duplicate step", mutate: func(plan *model.RestorePlan) { plan.Steps = append(plan.Steps, plan.Steps[0]) }, want: "duplicate restore step"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := testRestorePlan(model.ProviderWALG, "base_1", targetSpec, recovery, "restore")
+			tt.mutate(&plan)
+			provider := &fakeProvider{
+				catalog: model.BackupCatalog{
+					Provider: model.ProviderWALG,
+					Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+				},
+				plan: plan,
+			}
+			target := &fakeTarget{}
+
+			result, err := Engine{Provider: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
+				context.Background(),
+				DrillRequest{Target: targetSpec, RecoveryTarget: recovery},
+			)
+
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q plan protocol error, got %v", tt.want, err)
+			}
+			if result.Failure == nil || result.Failure.Stage != model.DrillStageRestorePlanning {
+				t.Fatalf("unexpected restore plan failure %#v", result.Failure)
+			}
+			if got, want := provider.calls, []string{"discover", "validate", "plan"}; !reflect.DeepEqual(got, want) || len(target.calls) != 0 {
+				t.Fatalf("malformed plan crossed mutation boundary: provider=%#v target=%#v", provider.calls, target.calls)
+			}
+		})
+	}
+}
+
+func TestEngineRejectsTargetImplementationMismatchBeforePreflight(t *testing.T) {
+	provider := &fakeProvider{catalog: model.BackupCatalog{Provider: model.ProviderWALG}}
+	target := &fakeTarget{}
+	preflight := &fakePreflight{}
+
+	result, err := Engine{Provider: provider, Target: target, Preflight: preflight, Probes: []Probe{passingProbe()}}.Run(
+		context.Background(),
+		DrillRequest{Target: model.TargetSpec{Type: model.RestoreTargetKubernetes}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "does not match requested target type") {
+		t.Fatalf("expected target type protocol error, got %v", err)
+	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("unexpected target mismatch failure %#v", result.Failure)
+	}
+	if preflight.called || len(provider.calls) != 0 || len(target.calls) != 0 {
+		t.Fatalf("target mismatch crossed request boundary: preflight=%v provider=%#v target=%#v", preflight.called, provider.calls, target.calls)
 	}
 }
 
@@ -300,9 +520,9 @@ func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
 			Provider: model.ProviderWALG,
-			Backups:  []model.Backup{{ID: "wal-g:base_1", Status: model.BackupStatusAvailable}},
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
 		},
-		plan: model.RestorePlan{Steps: []model.RestoreStep{{Name: "fetch"}}},
+		plan: testRestorePlan(model.ProviderWALG, "base_1", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, "fetch"),
 	}
 	target := &fakeTarget{
 		executeHook: func() error {
@@ -465,9 +685,9 @@ func TestEngineReturnsReportWriteFailure(t *testing.T) {
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
 			Provider: model.ProviderWALG,
-			Backups:  []model.Backup{{ID: "wal-g:base_1", Status: model.BackupStatusAvailable}},
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
 		},
-		plan: model.RestorePlan{},
+		plan: testRestorePlan(model.ProviderWALG, "base_1", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, "restore"),
 	}
 	sink := &fakeSink{err: errors.New("disk full")}
 
@@ -493,6 +713,7 @@ func TestEngineReturnsReportWriteFailure(t *testing.T) {
 }
 
 type fakeProvider struct {
+	providerType   model.ProviderType
 	catalog        model.BackupCatalog
 	validateReport model.CheckReport
 	plan           model.RestorePlan
@@ -525,6 +746,9 @@ func (p *fakePreflight) Check(context.Context) (model.CheckReport, error) {
 }
 
 func (p *fakeProvider) Type() model.ProviderType {
+	if p.providerType != "" {
+		return p.providerType
+	}
 	return p.catalog.Provider
 }
 
@@ -535,6 +759,9 @@ func (p *fakeProvider) DiscoverBackups(context.Context) (model.BackupCatalog, er
 
 func (p *fakeProvider) ValidateCatalog(context.Context, model.BackupCatalog, model.Backup, model.RecoveryTarget) (model.CheckReport, error) {
 	p.calls = append(p.calls, "validate")
+	if p.validateReport.Checks == nil && p.validateReport.Evidence == nil && p.validateErr == nil {
+		return model.CheckReport{Checks: []model.Check{{Name: "provider-validation", Status: model.CheckStatusPassed}}}, nil
+	}
 	return p.validateReport, p.validateErr
 }
 
@@ -635,6 +862,35 @@ func testEvidence(id string) model.EvidenceRecord {
 		Source:      "test",
 		CollectedAt: time.Date(2025, 1, 4, 0, 0, 0, 0, time.UTC),
 	}
+}
+
+func availableBackup(provider model.ProviderType, providerID string) model.Backup {
+	return model.Backup{
+		ID:         model.ProviderScopedID(provider, providerID),
+		Provider:   provider,
+		ProviderID: providerID,
+		Kind:       model.BackupKindUnknown,
+		Status:     model.BackupStatusAvailable,
+	}
+}
+
+func testRestorePlan(provider model.ProviderType, providerID string, target model.TargetSpec, recovery model.RecoveryTarget, stepNames ...string) model.RestorePlan {
+	steps := make([]model.RestoreStep, 0, len(stepNames))
+	for _, name := range stepNames {
+		steps = append(steps, model.RestoreStep{Name: name, Command: fakeRestoreCommand()})
+	}
+	return model.RestorePlan{
+		Provider:       provider,
+		BackupID:       model.ProviderScopedID(provider, providerID),
+		Target:         target,
+		RecoveryTarget: recovery,
+		Steps:          steps,
+		Runtime:        model.RuntimeConfig{DataDirectory: target.WorkDir + "/data"},
+	}
+}
+
+func fakeRestoreCommand() *model.CommandSpec {
+	return &model.CommandSpec{Tool: model.ToolPostgres, Path: "fake-restore"}
 }
 
 func fixedClock(value string) func() time.Time {

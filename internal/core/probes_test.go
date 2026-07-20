@@ -32,6 +32,9 @@ func TestRunProbesAggregatesChecksAndEvidence(t *testing.T) {
 	if len(report.Checks) != 2 || len(report.Evidence) != 2 || first.calls != 1 || second.calls != 1 {
 		t.Fatalf("unexpected report=%#v calls=%d/%d", report, first.calls, second.calls)
 	}
+	if report.Checks[0].Probe != model.ProbePGIsReady || report.Checks[1].Probe != model.ProbeSQL {
+		t.Fatalf("expected normalized probe identities, got %#v", report.Checks)
+	}
 }
 
 func TestRunProbesContinuesAfterOrdinaryProbeError(t *testing.T) {
@@ -68,8 +71,73 @@ func TestRunProbesRejectsEmptyReport(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
 		t.Fatalf("expected empty report failure, got %v", err)
 	}
-	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusFailed || report.Checks[0].Message != "probe returned no checks" {
+	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusFailed || report.Checks[0].Message != "invalid probe report: report returned no checks" {
 		t.Fatalf("expected synthesized failed check, got %#v", report.Checks)
+	}
+}
+
+func TestRunProbesRejectsMalformedReportsAndContinues(t *testing.T) {
+	tests := []struct {
+		name  string
+		check model.Check
+		want  string
+	}{
+		{name: "unknown status", check: model.Check{Name: "bad", Status: model.CheckStatusUnknown}, want: "non-terminal status"},
+		{name: "wrong probe", check: model.Check{Name: "bad", Probe: model.ProbePGDump, Status: model.CheckStatusPassed}, want: "does not match executing probe"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bad := &testProbe{
+				probeType: model.ProbeSQL,
+				report: model.CheckReport{
+					Checks:   []model.Check{tt.check},
+					Evidence: []model.EvidenceRecord{testEvidence("bad")},
+				},
+			}
+			good := &testProbe{
+				probeType: model.ProbePGDump,
+				report:    model.CheckReport{Checks: []model.Check{{Name: "schema", Status: model.CheckStatusPassed}}},
+			}
+
+			report, err := RunProbes(context.Background(), []Probe{bad, good}, model.RunningPostgres{})
+			if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
+				t.Fatalf("expected aggregate protocol failure, got %v", err)
+			}
+			if bad.calls != 1 || good.calls != 1 {
+				t.Fatalf("malformed report must not skip later probes: calls=%d/%d", bad.calls, good.calls)
+			}
+			if len(report.Checks) != 2 || report.Checks[0].Status != model.CheckStatusFailed || !strings.Contains(report.Checks[0].Message, tt.want) {
+				t.Fatalf("unexpected normalized checks %#v", report.Checks)
+			}
+			if report.Checks[1].Probe != model.ProbePGDump || len(report.Evidence) != 1 {
+				t.Fatalf("expected valid later report and malformed evidence, got %#v", report)
+			}
+		})
+	}
+}
+
+func TestRunProbesDropsMalformedPartialChecksOnProbeError(t *testing.T) {
+	probe := &testProbe{
+		probeType: model.ProbeSQL,
+		report: model.CheckReport{Checks: []model.Check{{
+			Name:   "partial",
+			Status: model.CheckStatusUnknown,
+		}}},
+		err: errors.New("query failed"),
+	}
+
+	report, err := RunProbes(context.Background(), []Probe{probe}, model.RunningPostgres{})
+	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
+		t.Fatalf("expected aggregate probe failure, got %v", err)
+	}
+	if len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusFailed {
+		t.Fatalf("malformed partial check leaked into report: %#v", report.Checks)
+	}
+	for _, want := range []string{"query failed", "invalid partial probe report", "non-terminal status"} {
+		if !strings.Contains(report.Checks[0].Message, want) {
+			t.Fatalf("expected %q in synthesized check %#v", want, report.Checks[0])
+		}
 	}
 }
 
