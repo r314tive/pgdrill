@@ -74,6 +74,30 @@ func TestParseBackupList(t *testing.T) {
 	}
 }
 
+func TestParseBackupListSupportsKeyedBackupObjectsAndFullTypes(t *testing.T) {
+	backups, err := ParseBackupList(readFixture(t, "testdata/list-backups-keyed.json"), "main")
+	if err != nil {
+		t.Fatalf("parse keyed backup list: %v", err)
+	}
+	if len(backups) != 2 {
+		t.Fatalf("expected 2 backups, got %d", len(backups))
+	}
+
+	byProviderID := make(map[string]model.Backup, len(backups))
+	for _, backup := range backups {
+		byProviderID[backup.ProviderID] = backup
+	}
+	for _, providerID := range []string{"main/20240504T030405", "main/20240505T030405"} {
+		backup, ok := byProviderID[providerID]
+		if !ok {
+			t.Fatalf("missing keyed backup %q in %#v", providerID, backups)
+		}
+		if backup.Kind != model.BackupKindFull || backup.Status != model.BackupStatusAvailable {
+			t.Fatalf("unexpected keyed backup %#v", backup)
+		}
+	}
+}
+
 func TestAdapterDiscoverBackupsRunsBarmanListBackups(t *testing.T) {
 	fixture := readFixture(t, "testdata/list-backups.json")
 	runner := &fakeRunner{result: successResult(fixture)}
@@ -424,6 +448,9 @@ func TestPlanRestoreBuildsBarmanRestoreStep(t *testing.T) {
 	}
 	if plan.Runtime.DataDirectory != "/tmp/pgdrill/main/data" {
 		t.Fatalf("unexpected data directory %q", plan.Runtime.DataDirectory)
+	}
+	if plan.Runtime.Environment["BARMAN_HOME"] != "/srv/barman" {
+		t.Fatalf("unexpected runtime env %#v", plan.Runtime.Environment)
 	}
 	if len(plan.Steps) != 1 {
 		t.Fatalf("expected one restore step, got %#v", plan.Steps)

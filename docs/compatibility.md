@@ -18,10 +18,11 @@ archives are therefore not published.
 ## Adapter Confidence
 
 WAL-G, Barman, pgBackRest, and pg_probackup catalog parsers have fixture-driven
-tests. Restore planning and provider checks have command-construction and
-evidence tests. These tests prove normalization against the committed fixtures;
-they do not prove compatibility with every historical or future native tool
-version.
+tests, including numeric and textual WAL-G LSN representations, keyed Barman
+backup objects, and multi-history pgBackRest metadata. Restore planning and
+provider checks have command-construction and evidence tests. These tests prove
+normalization against the committed fixtures; they do not prove compatibility
+with every historical or future native tool version.
 
 Before claiming a native version as validated:
 

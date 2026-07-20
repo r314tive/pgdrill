@@ -44,8 +44,11 @@ func TestParseBackupListDetail(t *testing.T) {
 	if full.WALRange.StartSegment != "00000001000000000000007F" {
 		t.Fatalf("unexpected start segment %q", full.WALRange.StartSegment)
 	}
-	if full.WALRange.StartLSN != "34359738488" {
+	if full.WALRange.StartLSN != "0/7F000028" || full.WALRange.EndLSN != "0/7FF00000" {
 		t.Fatalf("unexpected start lsn %q", full.WALRange.StartLSN)
+	}
+	if full.WALRange.Timeline != "1" {
+		t.Fatalf("unexpected timeline %q", full.WALRange.Timeline)
 	}
 	if full.StartedAt == nil || !full.StartedAt.Equal(mustTime(t, "2025-10-29T10:00:00Z")) {
 		t.Fatalf("unexpected start time %#v", full.StartedAt)
@@ -63,6 +66,39 @@ func TestParseBackupListDetail(t *testing.T) {
 	}
 	if delta.WALRange.StartLSN != "0/80000028" {
 		t.Fatalf("unexpected delta start lsn %q", delta.WALRange.StartLSN)
+	}
+}
+
+func TestParseBackupListNormalizesWALLocations(t *testing.T) {
+	backups, err := ParseBackupList([]byte(`[
+  {
+    "name": "base_0000000A0000000100000002",
+    "wal_segment_backup_start": "0000000a0000000100000002",
+    "start_lsn": "4294967336",
+    "finish_lsn": "1/abcdef"
+  }
+]`))
+	if err != nil {
+		t.Fatalf("parse backup list: %v", err)
+	}
+	if got, want := backups[0].WALRange.StartLSN, "1/28"; got != want {
+		t.Fatalf("unexpected numeric WAL location: got %q want %q", got, want)
+	}
+	if got, want := backups[0].WALRange.EndLSN, "1/ABCDEF"; got != want {
+		t.Fatalf("unexpected textual LSN: got %q want %q", got, want)
+	}
+	if got, want := backups[0].WALRange.Timeline, "10"; got != want {
+		t.Fatalf("unexpected timeline: got %q want %q", got, want)
+	}
+}
+
+func TestParseBackupListRejectsMalformedWALLocation(t *testing.T) {
+	_, err := ParseBackupList([]byte(`[{
+  "name": "base_000000010000000000000001",
+  "start_lsn": true
+}]`))
+	if err == nil || !strings.Contains(err.Error(), "start_lsn") {
+		t.Fatalf("expected malformed start_lsn error, got %v", err)
 	}
 }
 

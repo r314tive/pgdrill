@@ -143,6 +143,7 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 }
 
 func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error) {
+	target = target.Normalized()
 	if backup.Provider != "" && backup.Provider != model.ProviderPGBackRest {
 		return model.RestorePlan{}, fmt.Errorf("pgbackrest cannot restore backup from provider %q", backup.Provider)
 	}
@@ -330,7 +331,7 @@ func (a *Adapter) globalArgs(stanza string) []string {
 
 func (a *Adapter) restoreArgs(target model.RecoveryTarget, label string, stanza string, dataDir string) ([]string, error) {
 	args := a.globalArgs(stanza)
-	args = append(args, "restore", "--set="+label, "--pg1-path="+dataDir)
+	args = append(args, "restore", "--set="+label, "--pg1-path="+dataDir, "--reset-pg1-host")
 
 	targetArgs, err := pgBackRestRecoveryArgs(target)
 	if err != nil {
@@ -341,6 +342,7 @@ func (a *Adapter) restoreArgs(target model.RecoveryTarget, label string, stanza 
 }
 
 func pgBackRestRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
+	target = target.Normalized()
 	if err := target.Validate(); err != nil {
 		return nil, err
 	}
@@ -548,9 +550,9 @@ func mapBackup(object map[string]any, stanzaName string, stanzaStatus string, db
 			StartLSN:     nestedString(object, "lsn", "start"),
 			EndLSN:       nestedString(object, "lsn", "stop"),
 		},
-		PostgreSQLVersion: firstNonEmpty(dbVersions[dbID], firstMapValue(dbVersions)),
+		PostgreSQLVersion: databaseValue(dbVersions, dbID),
 		Permanent:         false,
-		Metadata:          metadataOrNil(withSystemID(metadata, dbSystemIDs[dbID], firstMapValue(dbSystemIDs))),
+		Metadata:          metadataOrNil(withSystemID(metadata, databaseValue(dbSystemIDs, dbID))),
 	}, nil
 }
 
@@ -742,8 +744,8 @@ func addMetadata(metadata map[string]string, key, value string) {
 	}
 }
 
-func withSystemID(metadata map[string]string, systemID string, fallback string) map[string]string {
-	addMetadata(metadata, "system_identifier", firstNonEmpty(systemID, fallback))
+func withSystemID(metadata map[string]string, systemID string) map[string]string {
+	addMetadata(metadata, "system_identifier", systemID)
 	return metadata
 }
 
@@ -756,11 +758,15 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func firstMapValue(values map[string]string) string {
+func databaseValue(values map[string]string, databaseID string) string {
+	if databaseID != "" {
+		return values[databaseID]
+	}
+	if len(values) != 1 {
+		return ""
+	}
 	for _, value := range values {
-		if value != "" {
-			return value
-		}
+		return value
 	}
 	return ""
 }

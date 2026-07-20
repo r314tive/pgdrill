@@ -308,6 +308,7 @@ func TestRecoveryArgs(t *testing.T) {
 		target model.RecoveryTarget
 		want   []string
 	}{
+		{name: "zero value is latest", target: model.RecoveryTarget{}, want: []string{"--recovery-target=latest", "--recovery-target-action=promote"}},
 		{name: "latest", target: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, want: []string{"--recovery-target=latest", "--recovery-target-action=promote"}},
 		{name: "immediate", target: model.RecoveryTarget{Type: model.RecoveryTargetImmediate}, want: []string{"--recovery-target=immediate", "--recovery-target-action=promote"}},
 		{name: "timestamp", target: model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "2026-07-20T01:02:03Z", Inclusive: &inclusive}, want: []string{"--recovery-target-time=2026-07-20T01:02:03Z", "--recovery-target-inclusive=true", "--recovery-target-action=promote"}},

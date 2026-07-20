@@ -76,6 +76,30 @@ func TestParseInfo(t *testing.T) {
 	}
 }
 
+func TestParseInfoDoesNotGuessDatabaseMetadataAcrossHistories(t *testing.T) {
+	backups, err := ParseInfo([]byte(`[
+  {
+    "name": "main",
+    "db": [
+      {"id": 1, "system-id": 111, "version": "15"},
+      {"id": 2, "system-id": 222, "version": "16"}
+    ],
+    "backup": [
+      {"label": "20240502-030405F", "type": "full"},
+      {"label": "20240503-030405F", "type": "full", "database": {"id": 3}}
+    ]
+  }
+]`), "")
+	if err != nil {
+		t.Fatalf("parse pgbackrest info: %v", err)
+	}
+	for _, backup := range backups {
+		if backup.PostgreSQLVersion != "" || backup.Metadata["system_identifier"] != "" {
+			t.Fatalf("unexpected guessed database metadata in %#v", backup)
+		}
+	}
+}
+
 func TestAdapterDiscoverBackupsRunsPgBackRestInfo(t *testing.T) {
 	fixture := readFixture(t, "testdata/info-output.json")
 	runner := &fakeRunner{result: successResult(fixture)}
@@ -408,6 +432,7 @@ func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 		"restore",
 		"--set=20240502-030405F",
 		"--pg1-path=/tmp/pgdrill/main/data",
+		"--reset-pg1-host",
 		"--type=time",
 		"--target=2026-07-06T01:02:03Z",
 		"--target-timeline=latest",
@@ -452,6 +477,7 @@ func TestPlanRestoreUsesBackupStanzaWhenConfigStanzaEmpty(t *testing.T) {
 		"restore",
 		"--set=20240502-030405F",
 		"--pg1-path=/tmp/pgdrill/main/data",
+		"--reset-pg1-host",
 	}
 	if !reflect.DeepEqual(plan.Steps[0].Command.Args, wantArgs) {
 		t.Fatalf("unexpected restore args:\ngot  %#v\nwant %#v", plan.Steps[0].Command.Args, wantArgs)

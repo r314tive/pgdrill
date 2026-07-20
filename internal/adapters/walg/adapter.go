@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -270,6 +271,7 @@ func walVerifyCommandCheck(status model.CheckStatus, evidenceID string, message 
 }
 
 func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error) {
+	target = target.Normalized()
 	if backup.Provider != "" && backup.Provider != model.ProviderWALG {
 		return model.RestorePlan{}, fmt.Errorf("wal-g cannot restore backup from provider %q", backup.Provider)
 	}
@@ -372,6 +374,7 @@ func (a *Adapter) restoreTimeout() time.Duration {
 }
 
 func (a *Adapter) recoveryConfig(target model.RecoveryTarget) (string, error) {
+	target = target.Normalized()
 	if err := target.Validate(); err != nil {
 		return "", err
 	}
@@ -455,6 +458,14 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 	if name == "" {
 		return model.Backup{}, fmt.Errorf("missing backup name")
 	}
+	startLSN, err := normalizeWALLSN(e.StartLSN.Value)
+	if err != nil {
+		return model.Backup{}, fmt.Errorf("start_lsn: %w", err)
+	}
+	finishLSN, err := normalizeWALLSN(e.FinishLSN.Value)
+	if err != nil {
+		return model.Backup{}, fmt.Errorf("finish_lsn: %w", err)
+	}
 
 	metadata := map[string]string{}
 	if e.UserData != nil {
@@ -462,21 +473,70 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 	}
 
 	return model.Backup{
-		ID:                model.ProviderScopedID(model.ProviderWALG, name),
-		Provider:          model.ProviderWALG,
-		ProviderID:        name,
-		Kind:              inferWALGKind(name),
-		Status:            model.BackupStatusAvailable,
-		StartedAt:         e.StartTime.ptr(),
-		FinishedAt:        e.FinishTime.ptr(),
-		LastModifiedAt:    firstTime(e.LastModified, e.Modified, e.Time).ptr(),
-		WALRange:          model.WALRange{StartSegment: e.WALSegmentBackupStart, StartLSN: e.StartLSN.Value, EndLSN: e.FinishLSN.Value},
+		ID:             model.ProviderScopedID(model.ProviderWALG, name),
+		Provider:       model.ProviderWALG,
+		ProviderID:     name,
+		Kind:           inferWALGKind(name),
+		Status:         model.BackupStatusAvailable,
+		StartedAt:      e.StartTime.ptr(),
+		FinishedAt:     e.FinishTime.ptr(),
+		LastModifiedAt: firstTime(e.LastModified, e.Modified, e.Time).ptr(),
+		WALRange: model.WALRange{
+			StartSegment: e.WALSegmentBackupStart,
+			StartLSN:     startLSN,
+			EndLSN:       finishLSN,
+			Timeline:     walSegmentTimeline(e.WALSegmentBackupStart),
+		},
 		PostgreSQLVersion: firstNonEmpty(e.PGVersion.Value, e.PostgresVersion.Value),
 		DataDirectory:     e.DataDir,
 		Hostname:          e.Hostname,
 		Permanent:         e.IsPermanent,
 		Metadata:          metadataOrNil(metadata),
 	}, nil
+}
+
+func normalizeWALLSN(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if high, low, ok := strings.Cut(value, "/"); ok {
+		if high == "" || low == "" || strings.Contains(low, "/") {
+			return "", fmt.Errorf("value %q is not PostgreSQL X/Y notation", value)
+		}
+		highValue, err := strconv.ParseUint(high, 16, 32)
+		if err != nil {
+			return "", fmt.Errorf("value %q is not PostgreSQL X/Y notation: %w", value, err)
+		}
+		lowValue, err := strconv.ParseUint(low, 16, 32)
+		if err != nil {
+			return "", fmt.Errorf("value %q is not PostgreSQL X/Y notation: %w", value, err)
+		}
+		return fmt.Sprintf("%X/%X", highValue, lowValue), nil
+	}
+
+	location, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("value %q is neither an unsigned WAL location nor PostgreSQL X/Y notation: %w", value, err)
+	}
+	return fmt.Sprintf("%X/%X", location>>32, location&0xffffffff), nil
+}
+
+func walSegmentTimeline(segment string) string {
+	segment = strings.TrimSpace(segment)
+	if len(segment) != 24 {
+		return ""
+	}
+	for offset := 0; offset < len(segment); offset += 8 {
+		if _, err := strconv.ParseUint(segment[offset:offset+8], 16, 32); err != nil {
+			return ""
+		}
+	}
+	timeline, err := strconv.ParseUint(segment[:8], 16, 32)
+	if err != nil || timeline == 0 {
+		return ""
+	}
+	return strconv.FormatUint(timeline, 10)
 }
 
 func inferWALGKind(name string) model.BackupKind {

@@ -1,0 +1,16 @@
+{
+  "main": {
+    "20240504T030405": {
+      "status": "DONE",
+      "backup_type": "snapshot",
+      "begin_time": "2024-05-04T03:04:05Z",
+      "end_time": "2024-05-04T03:20:05Z"
+    },
+    "20240505T030405": {
+      "status": "DONE",
+      "backup_type": "rsync",
+      "begin_time": "2024-05-05T03:04:05Z",
+      "end_time": "2024-05-05T03:20:05Z"
+    }
+  }
+}

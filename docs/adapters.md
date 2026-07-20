@@ -50,7 +50,9 @@ Implemented normalization:
 - provider ID: WAL-G backup name
 - kind: `full` for `base_*`, `delta` for names containing `_D_`
 - timestamps: `start_time`, `finish_time`, `last_modified`/`modified`/`time`
-- WAL range: `wal_segment_backup_start`, `start_lsn`, `finish_lsn`
+- WAL range: `wal_segment_backup_start`, `start_lsn`, `finish_lsn`; WAL-G's
+  numeric sentinel locations are converted to canonical PostgreSQL `X/Y`
+  notation and the timeline is derived from a valid WAL segment name
 - PostgreSQL version, hostname, data directory, permanence flag
 
 Implemented restore planning:
@@ -91,8 +93,9 @@ Implemented normalization:
 
 - provider ID: `<server>/<backup_id>`
 - status: `DONE`, `WAITING_FOR_WALS`, `STARTED`/`RUNNING`, `FAILED`
-- kind: `full`, `incremental`, `differential`, or inferred incremental from a
-  parent backup ID
+- kind: `full`, `rsync`, and `snapshot` backup types normalize to canonical
+  `full`; incremental and differential types retain their canonical kind, and
+  a parent backup ID provides an incremental fallback
 - timestamps: `begin_time`, `end_time`, `last_modified`
 - WAL range: `begin_wal`, `end_wal`, `begin_xlog`/`begin_lsn`,
   `end_xlog`/`end_lsn`
@@ -165,7 +168,8 @@ Implemented provider validation:
 Implemented restore planning:
 
 - local target `pgbackrest restore --set=<backup-label>
-  --pg1-path=<target-data-dir>` command step
+  --pg1-path=<target-data-dir> --reset-pg1-host` command step; resetting a
+  configured remote `pg1-host` is mandatory for the local restore target
 - stanza validation from adapter config and catalog-derived provider IDs
 - PITR flags mapped from the canonical recovery target: `--type=time`,
   `--type=lsn`, `--type=xid`, `--type=name`, `--type=immediate`,

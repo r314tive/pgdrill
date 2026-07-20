@@ -8,8 +8,8 @@
     "hostname": "db-prod-01",
     "data_dir": "/var/lib/postgresql/16/main",
     "pg_version": 160005,
-    "start_lsn": 34359738488,
-    "finish_lsn": 34360721408,
+    "start_lsn": 2130706472,
+    "finish_lsn": 2146435072,
     "is_permanent": false,
     "user_data": {
       "env": "production"

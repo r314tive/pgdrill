@@ -1408,6 +1408,7 @@ JSON
   restore)
     dest=""
     set=""
+    saw_reset=0
     saw_type=0
     saw_target=0
     saw_action=0
@@ -1415,12 +1416,13 @@ JSON
       case "$arg" in
         --set=*) set="${arg#--set=}" ;;
         --pg1-path=*) dest="${arg#--pg1-path=}" ;;
+        --reset-pg1-host) saw_reset=1 ;;
         --type=time) saw_type=1 ;;
         --target=2026-07-06T01:02:03Z) saw_target=1 ;;
         --target-action=promote) saw_action=1 ;;
       esac
     done
-    if [ "$set" != "20240502-030405F" ] || [ -z "$dest" ] || [ "$saw_type" != "1" ] || [ "$saw_target" != "1" ] || [ "$saw_action" != "1" ]; then
+    if [ "$set" != "20240502-030405F" ] || [ -z "$dest" ] || [ "$saw_reset" != "1" ] || [ "$saw_type" != "1" ] || [ "$saw_target" != "1" ] || [ "$saw_action" != "1" ]; then
       echo "unexpected pgbackrest restore args: $*" >&2
       exit 64
     fi

@@ -81,6 +81,18 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- WAL-G numeric backup-list WAL locations now normalize to PostgreSQL `X/Y`
+  notation, with canonical uppercase hexadecimal output and timeline metadata
+  derived from valid WAL segment names. Malformed locations fail parsing.
+- Local pgBackRest restore plans now pass `--reset-pg1-host`, preventing a
+  stanza's remote database host from redirecting a drill intended for the
+  owned local target. Database history metadata is no longer guessed when the
+  backup does not identify one unambiguously.
+- Barman `rsync` and `snapshot` backup types now normalize as full backups;
+  keyed JSON backup objects are covered by fixtures, and configured Barman
+  environment variables are retained for the recovery runtime.
+- Provider restore plans normalize a zero-value recovery target to canonical
+  `latest` before constructing commands and returning the plan.
 - Prometheus samples now include a `cluster` label; update selectors or
   recording rules that match the previous label set. Legacy reports and configs
   without `cluster.name` export `cluster="unknown"`.

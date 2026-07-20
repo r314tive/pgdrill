@@ -152,6 +152,7 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 }
 
 func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error) {
+	target = target.Normalized()
 	if backup.Provider != "" && backup.Provider != model.ProviderBarman {
 		return model.RestorePlan{}, fmt.Errorf("barman cannot restore backup from provider %q", backup.Provider)
 	}
@@ -209,9 +210,12 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 		BackupID:       backup.ID,
 		Target:         spec,
 		RecoveryTarget: target,
-		Runtime:        model.RuntimeConfig{DataDirectory: dataDir},
-		Steps:          steps,
-		Evidence:       []model.EvidenceRecord{planEvidence("restore-plan")},
+		Runtime: model.RuntimeConfig{
+			DataDirectory: dataDir,
+			Environment:   copyStringMap(a.cfg.Env),
+		},
+		Steps:    steps,
+		Evidence: []model.EvidenceRecord{planEvidence("restore-plan")},
 	}, nil
 }
 
@@ -400,6 +404,7 @@ func showBackupAttributes(data []byte, defaultServer string) (map[string]string,
 }
 
 func barmanRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
+	target = target.Normalized()
 	if err := target.Validate(); err != nil {
 		return nil, err
 	}
@@ -579,7 +584,7 @@ func mapBarmanStatus(status string) model.BackupStatus {
 
 func inferBarmanKind(kind string, parentID string) model.BackupKind {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "full":
+	case "full", "rsync", "snapshot":
 		return model.BackupKindFull
 	case "incremental", "incr":
 		return model.BackupKindIncremental

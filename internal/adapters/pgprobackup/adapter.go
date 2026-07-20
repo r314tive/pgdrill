@@ -133,6 +133,7 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 }
 
 func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error) {
+	target = target.Normalized()
 	if backup.Provider != "" && backup.Provider != model.ProviderPGProbackup {
 		return model.RestorePlan{}, fmt.Errorf("pg_probackup cannot restore backup from provider %q", backup.Provider)
 	}
@@ -305,6 +306,7 @@ func (a *Adapter) validateTimeout() time.Duration {
 }
 
 func recoveryArgs(target model.RecoveryTarget, includeAction bool) ([]string, error) {
+	target = target.Normalized()
 	if err := target.Validate(); err != nil {
 		return nil, err
 	}
