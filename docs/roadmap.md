@@ -84,8 +84,8 @@ pgdrill catalog list -f pgdrill.yaml
 
 ## Phase 3: Kubernetes / CNPG Target
 
-Status: implemented for guarded CNPG drills; live-cluster field validation is
-still required before calling it production-ready.
+Status: implemented for guarded CNPG drills; field validation is in progress and
+does not yet constitute a broad production compatibility claim.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
@@ -100,7 +100,8 @@ still required before calling it production-ready.
   target verification reports.
 - Temporary CNPG cluster restore target with standard JSON reports.
 - Source image reuse for verify clusters.
-- Probe execution against the restored CNPG service.
+- Post-ready probe-client preflight and probe execution inside the restored
+  CNPG pod over its local Unix socket.
 - Shared local/CNPG probe-report and cancellation semantics.
 - Full-recovery fail-fast handling.
 - Kubernetes events, pod descriptions, logs, and PVC state as evidence.
@@ -145,8 +146,9 @@ be a separate control plane.
 
 ## Release Readiness
 
-Status: locally implemented; remote CI and tag publication remain unverified
-until the workflows run on GitHub.
+Status: implemented and exercised through branch and tag workflows; each release
+still requires its own green CI, immutable tag, published assets, and checksum
+verification.
 
 - Non-mutating format, module, vet, and test gate.
 - Minimum and pinned release Go toolchain checks.

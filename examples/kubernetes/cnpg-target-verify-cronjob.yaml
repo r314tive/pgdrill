@@ -3,7 +3,8 @@
 # The image must contain:
 # - pgdrill
 # - kubectl, configured for in-cluster auth
-# - PostgreSQL client tools needed by configured probes, such as psql
+#
+# Probe clients run inside the restored PostgreSQL container.
 #
 # Replace namespace, image, source_cluster, resources, schedule, and probes
 # before applying.
@@ -27,6 +28,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]

@@ -122,13 +122,27 @@ pgdrill target verify -f pgdrill-cnpg.yaml -discover -confirm-create
 ```
 
 `target verify` creates a temporary CNPG verify cluster, waits for the instance
-pod to become Ready, runs the configured probe set against the restored
-PostgreSQL service, writes the standard JSON report, and destroys the verify
+pod to become Ready, runs the configured probe set inside the restored
+`postgres` container, writes the standard JSON report, and destroys the verify
 cluster. It refuses to run without `-confirm-create` because it mutates
 Kubernetes resources. Backup-provider configuration is optional for target-only
 commands because the referenced CNPG `Backup` is the restore input; read-only
 discovery commands are retained as report evidence when `-discover` is used,
 including when discovery itself fails.
+
+Probe commands use direct argument execution through `kubectl exec`; no shell is
+inserted. Before the first probe, pgdrill executes each required client's native
+version command in the restored container and retains the result as preflight
+evidence. Database clients connect as the container's `postgres` user through
+`host=/controller/run dbname=postgres user=postgres`. This avoids service
+authentication and does not require reading a password or Kubernetes Secret.
+Configured probe binary paths are interpreted inside the PostgreSQL image. The
+runner image needs only pgdrill and `kubectl`.
+
+The service account needs `create` on the `pods/exec` subresource in addition to
+the lifecycle and evidence permissions shown in the example. Because pod exec is
+a privileged capability, use a dedicated service account and namespace-scoped
+Role. pgdrill does not request Secret access.
 
 `SIGINT` or `SIGTERM` cancels active `kubectl` and probe commands and produces
 an `aborted` report. If cancellation happens while the cluster is starting,

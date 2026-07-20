@@ -80,7 +80,7 @@ func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 	if instance.Host != spec.Name+"-rw.d003-db.svc" {
 		t.Fatalf("unexpected host %q", instance.Host)
 	}
-	if !strings.Contains(instance.ConnString, spec.Name+"-rw.d003-db.svc:5432") {
+	if instance.ConnString != DefaultPodConnString {
 		t.Fatalf("unexpected conn string %q", instance.ConnString)
 	}
 	if !hasOperation(evidence, "kubectl-check-full-recovery") || !hasOperation(evidence, "kubectl-check-instance-ready") {

@@ -8,6 +8,29 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2026-07-20
+
+### Added
+
+- Post-ready CNPG probe-client preflight and shell-free probe execution inside
+  the restored `postgres` container through `kubectl exec`, using CNPG's local
+  Unix socket without reading database credentials or Kubernetes Secrets.
+- Regression coverage for remote tool transport, redaction, non-interactive
+  invocation, and cleanup after a restored-target preflight failure.
+
+### Changed
+
+- The default CNPG readiness deadline is now `2h` instead of `20m`, with a
+  `9000s` CronJob deadline so realistic base restore and WAL replay time is not
+  mistaken for an RTO assertion.
+- CNPG runner images require pgdrill and `kubectl`; configured PostgreSQL probe
+  binaries are resolved and version-checked inside the restored image.
+
+### Fixed
+
+- Release publication now passes the repository explicitly through `GH_REPO`,
+  allowing the checkout-free write-enabled job to create the GitHub Release.
+
 ## [0.1.0-alpha.6] - 2026-07-20
 
 ### Added

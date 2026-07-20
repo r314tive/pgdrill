@@ -31,7 +31,9 @@ evidence.
 
 The Kubernetes target-only path deliberately does not validate unused provider
 settings because CNPG performs the restore and no provider adapter is invoked.
-Its configured probes are still validated before `kubectl` preflight.
+Its configured probe semantics are still validated before local `kubectl`
+preflight. Probe binary version checks run later inside the restored PostgreSQL
+pod, before database probes.
 
 `pgdrill run` currently accepts only `target.type: local`. Kubernetes uses the
 separate guarded `pgdrill target verify` lifecycle, and `container` is reserved

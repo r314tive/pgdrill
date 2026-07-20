@@ -114,6 +114,24 @@ func TestVersionCheckPrefersCaptureErrorOverSuccessfulExit(t *testing.T) {
 	}
 }
 
+func TestVersionCheckDistinguishesRemoteBinaryFromTransport(t *testing.T) {
+	evidence := model.CommandEvidence{
+		Path:         "kubectl",
+		ResolvedPath: "/usr/local/bin/kubectl",
+		ExitStatus:   model.ExitStatus{Started: true, Exited: true, Success: true, ExitCode: 0},
+		Stdout:       "psql (PostgreSQL) 15.13\n",
+	}
+
+	check := versionCheck(Requirement{Tool: model.ToolPSQL, Binary: "psql"}, evidence, "evidence-1", nil)
+
+	if check.Attributes["binary"] != "psql" || check.Attributes["transport"] != "kubectl" {
+		t.Fatalf("unexpected remote binary attributes %#v", check.Attributes)
+	}
+	if check.Attributes["transport_resolved_path"] != "/usr/local/bin/kubectl" || check.Attributes["resolved_path"] != "" {
+		t.Fatalf("unexpected remote transport attributes %#v", check.Attributes)
+	}
+}
+
 func TestSuiteExposesCanonicalCheckReport(t *testing.T) {
 	finishedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	runner := &stubRunner{responses: []stubResponse{{

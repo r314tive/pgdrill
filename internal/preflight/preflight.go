@@ -140,12 +140,22 @@ func versionEvidence(requirement Requirement, index int, evidence model.CommandE
 }
 
 func versionCheck(requirement Requirement, evidence model.CommandEvidence, evidenceID string, runErr error) model.Check {
+	logicalBinary := requirement.Binary
+	if logicalBinary == "" {
+		logicalBinary = evidence.Path
+	}
+	logicalBinary = command.NewRedactor(requirement.RedactValues...).RedactString(logicalBinary)
 	attributes := map[string]string{
-		"binary":     evidence.Path,
+		"binary":     logicalBinary,
 		"components": strings.Join(requirement.Components, ","),
 		"tool":       string(requirement.Tool),
 	}
-	if evidence.ResolvedPath != "" {
+	if evidence.Path != "" && evidence.Path != logicalBinary {
+		attributes["transport"] = evidence.Path
+		if evidence.ResolvedPath != "" {
+			attributes["transport_resolved_path"] = evidence.ResolvedPath
+		}
+	} else if evidence.ResolvedPath != "" {
 		attributes["resolved_path"] = evidence.ResolvedPath
 	}
 	version := versionText(requirement.Tool, evidence.Stdout, evidence.Stderr)

@@ -488,9 +488,8 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 	startedAt := time.Now().UTC()
 	effectiveDrillID := targetVerifyID(drillID, startedAt)
 	cnpgTarget := cfg.Target.CNPG
-	configuredProbes, err := probes.NewProbes(cfg.Probes)
-	if err != nil {
-		fmt.Fprintf(stderr, "create probes: %v\n", err)
+	if _, err := probes.ResolveConfigs(cfg.Probes); err != nil {
+		fmt.Fprintf(stderr, "validate probes: %v\n", err)
 		return 1
 	}
 	preflightRequirements, err := preflight.Requirements(cfg)
@@ -559,7 +558,7 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 		result.Failure = model.NewDrillFailure(model.DrillStageRequestValidation, runErr, result.Evidence)
 		return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 	}
-	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, configuredProbes, effectiveDrillID, startedAt, initialChecks, initialEvidence)
+	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, effectiveDrillID, startedAt, initialChecks, initialEvidence)
 	return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 }
 
@@ -649,7 +648,7 @@ func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfi
 	}, drillID)
 }
 
-func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, configuredProbes []core.Probe, drillID string, startedAt time.Time, initialChecks []model.Check, initialEvidence []model.EvidenceRecord) (model.DrillResult, error) {
+func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, drillID string, startedAt time.Time, initialChecks []model.Check, initialEvidence []model.EvidenceRecord) (model.DrillResult, error) {
 	result := newCNPGTargetVerifyResult(cfg, spec.SourceCluster, spec.BackupName, spec.Name, drillID, startedAt)
 	result.Checks = append([]model.Check{}, initialChecks...)
 	result.Evidence = append([]model.EvidenceRecord{}, initialEvidence...)
@@ -687,7 +686,7 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 	}
 	result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusPassed, "CNPG verify cluster is Ready", spec, pg))
 
-	probeReport, operationErr := core.RunProbes(ctx, configuredProbes, pg)
+	probeReport, operationErr := runCNPGTargetProbes(ctx, cfg, spec, pg)
 	result.Checks = append(result.Checks, probeReport.Checks...)
 	result.Evidence = append(result.Evidence, probeReport.Evidence...)
 	operationStage := model.DrillStageProbeExecution
@@ -716,6 +715,41 @@ func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.V
 		result.Status = model.DrillStatusPassed
 		return result, nil
 	}
+}
+
+func runCNPGTargetProbes(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, pg model.RunningPostgres) (model.CheckReport, error) {
+	runner := cnpg.NewPodExecRunner(cnpg.KubectlConfig{
+		Binary:       cfg.Target.Kubernetes.KubectlBinary,
+		Namespace:    cfg.Target.Kubernetes.Namespace,
+		Kubeconfig:   cfg.Target.Kubernetes.Kubeconfig,
+		Context:      cfg.Target.Kubernetes.Context,
+		Timeout:      cfg.Target.Kubernetes.CommandTimeout.Duration,
+		RedactValues: cfg.Target.RedactValues,
+	}, spec, nil)
+
+	requirements, err := preflight.ProbeRequirements(cfg.Probes)
+	if err != nil {
+		return model.CheckReport{}, fmt.Errorf("build restored target probe preflight: %w", err)
+	}
+	for i := range requirements {
+		requirements[i].RedactValues = append(requirements[i].RedactValues, cfg.Target.RedactValues...)
+	}
+	report, preflightErr := preflight.NewSuite(requirements, runner, 0).Check(ctx)
+	if preflightErr != nil {
+		return report, fmt.Errorf("run restored target probe preflight: %w", preflightErr)
+	}
+	if hasFailedChecks(report.Checks) {
+		return report, fmt.Errorf("restored target probe preflight failed")
+	}
+
+	configuredProbes, err := probes.NewProbesWithRunner(cfg.Probes, runner)
+	if err != nil {
+		return report, fmt.Errorf("create restored target probes: %w", err)
+	}
+	probeReport, probeErr := core.RunProbes(ctx, configuredProbes, pg)
+	report.Checks = append(report.Checks, probeReport.Checks...)
+	report.Evidence = append(report.Evidence, probeReport.Evidence...)
+	return report, probeErr
 }
 
 func mergeCNPGCleanupFailure(operationStage model.DrillStage, operationErr, destroyErr error) (model.DrillStage, error) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
 	"github.com/r314tive/pgdrill/internal/model"
@@ -23,10 +24,10 @@ func NewProbe(cfg config.ProbeConfig) (core.Probe, error) {
 	if err := ValidateConfig(cfg); err != nil {
 		return nil, err
 	}
-	return newProbe(cfg)
+	return newProbe(cfg, nil)
 }
 
-func newProbe(cfg config.ProbeConfig) (core.Probe, error) {
+func newProbe(cfg config.ProbeConfig, runner command.Runner) (core.Probe, error) {
 	switch cfg.Type {
 	case model.ProbePGIsReady:
 		return pgisready.New(pgisready.Config{
@@ -34,7 +35,7 @@ func newProbe(cfg config.ProbeConfig) (core.Probe, error) {
 			Binary:       cfg.Binary,
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
-		}, nil), nil
+		}, runner), nil
 	case model.ProbeSQL:
 		return sql.New(sql.Config{
 			Name:         cfg.Name,
@@ -42,7 +43,7 @@ func newProbe(cfg config.ProbeConfig) (core.Probe, error) {
 			Query:        cfg.Query,
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
-		}, nil), nil
+		}, runner), nil
 	case model.ProbeAMCheck:
 		return amcheck.New(amcheck.Config{
 			Name:         cfg.Name,
@@ -51,7 +52,7 @@ func newProbe(cfg config.ProbeConfig) (core.Probe, error) {
 			Args:         cfg.Args,
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
-		}, nil), nil
+		}, runner), nil
 	case model.ProbePGDump:
 		return pgdump.New(pgdump.Config{
 			Name:         cfg.Name,
@@ -60,13 +61,17 @@ func newProbe(cfg config.ProbeConfig) (core.Probe, error) {
 			Args:         cfg.Args,
 			Timeout:      cfg.Timeout.Duration,
 			RedactValues: cfg.RedactValues,
-		}, nil), nil
+		}, runner), nil
 	default:
 		return nil, fmt.Errorf("probe %q is not implemented", cfg.Type)
 	}
 }
 
 func NewProbes(cfgs []config.ProbeConfig) ([]core.Probe, error) {
+	return NewProbesWithRunner(cfgs, nil)
+}
+
+func NewProbesWithRunner(cfgs []config.ProbeConfig, runner command.Runner) ([]core.Probe, error) {
 	resolved, err := ResolveConfigs(cfgs)
 	if err != nil {
 		return nil, err
@@ -74,7 +79,7 @@ func NewProbes(cfgs []config.ProbeConfig) ([]core.Probe, error) {
 
 	result := make([]core.Probe, 0, len(resolved))
 	for i, cfg := range resolved {
-		probe, err := newProbe(cfg)
+		probe, err := newProbe(cfg, runner)
 		if err != nil {
 			return nil, fmt.Errorf("probe %d: %w", i, err)
 		}

@@ -663,7 +663,6 @@ func TestMergeCNPGCleanupFailurePreservesPrimaryStage(t *testing.T) {
 func TestTargetVerifyCommandRunsCNPGLifecycleAndProbes(t *testing.T) {
 	dir := t.TempDir()
 	kubectlPath := filepath.Join(dir, "kubectl")
-	psqlPath := filepath.Join(dir, "psql")
 	configPath := filepath.Join(dir, "pgdrill.yaml")
 	reportPath := filepath.Join(dir, "cnpg-report.json")
 
@@ -696,6 +695,12 @@ JSON
     cat <<'JSON'
 {"status":{"conditions":[{"type":"Ready","status":"True"}]}}
 JSON
+    ;;
+  *" exec verify-altbox-test-1 -c postgres -- /usr/local/bin/psql --version"*)
+    echo "psql (PostgreSQL) 16.4"
+    ;;
+  *" exec verify-altbox-test-1 -c postgres -- /usr/local/bin/psql -X -v ON_ERROR_STOP=1 -d host=/controller/run dbname=postgres user=postgres -c select 1"*)
+    echo "1"
     ;;
   *" get cluster.postgresql.cnpg.io verify-altbox-test -o yaml"*)
     echo "kind: Cluster"
@@ -739,13 +744,6 @@ JSON
     ;;
 esac
 `)
-	writeExecutable(t, psqlPath, `#!/bin/sh
-case "$*" in
-  "--version") echo "psql (PostgreSQL) 16.4" ;;
-  *"verify-altbox-test-rw.d003-db.svc:5432"*"select 1"*) exit 0 ;;
-  *) echo "unexpected psql args: $*" >&2; exit 64 ;;
-esac
-`)
 	writeFile(t, configPath, `
 cluster:
   name: altbox
@@ -770,7 +768,7 @@ target:
 probes:
   - type: sql
     name: select_1
-    binary: `+psqlPath+`
+    binary: /usr/local/bin/psql
     query: "select 1"
     timeout: 5s
 report:
@@ -834,6 +832,33 @@ report:
 	} {
 		if !hasEvidenceOperation(result.Evidence, operation) {
 			t.Fatalf("expected evidence operation %q, got %#v", operation, result.Evidence)
+		}
+	}
+
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config for remote preflight failure: %v", err)
+	}
+	writeFile(t, configPath, strings.ReplaceAll(string(configData), "/usr/local/bin/psql", "/missing/psql"))
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"target", "verify", "-f", configPath, "-discover", "-confirm-create", "-drill-id", "cnpg-drill-preflight-failure"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected remote preflight failure exit code 1, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	result, err = report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatalf("read remote preflight failure report: %v", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
+		t.Fatalf("unexpected remote preflight failure result %#v", result)
+	}
+	if !hasCheckNamed(result.Checks, "tool.psql", model.CheckStatusFailed) {
+		t.Fatalf("expected failed restored-target psql preflight, got %#v", result.Checks)
+	}
+	for _, operation := range []string{"kubectl-delete-cluster", "kubectl-delete-pvcs"} {
+		if !hasEvidenceOperation(result.Evidence, operation) {
+			t.Fatalf("expected cleanup evidence %q after remote preflight failure, got %#v", operation, result.Evidence)
 		}
 	}
 }

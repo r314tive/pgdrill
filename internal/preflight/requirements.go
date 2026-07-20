@@ -22,6 +22,7 @@ type Requirement struct {
 
 func Requirements(cfg config.Config) ([]Requirement, error) {
 	requirements := make([]Requirement, 0, 8)
+	includeProbeRequirements := true
 
 	switch cfg.Target.Type {
 	case model.RestoreTargetLocal:
@@ -54,6 +55,7 @@ func Requirements(cfg config.Config) ([]Requirement, error) {
 			})
 		}
 	case model.RestoreTargetKubernetes:
+		includeProbeRequirements = false
 		requirements = append(requirements, Requirement{
 			Tool:       model.ToolKubectl,
 			Components: []string{"target.kubernetes"},
@@ -70,10 +72,24 @@ func Requirements(cfg config.Config) ([]Requirement, error) {
 		return nil, fmt.Errorf("unsupported restore target %q", cfg.Target.Type)
 	}
 
-	expandedProbes, err := probes.ResolveConfigs(cfg.Probes)
+	probeRequirements, err := ProbeRequirements(cfg.Probes)
+	if err != nil {
+		return nil, err
+	}
+	if includeProbeRequirements {
+		requirements = append(requirements, probeRequirements...)
+	}
+
+	return mergeRequirements(requirements), nil
+}
+
+func ProbeRequirements(cfgs []config.ProbeConfig) ([]Requirement, error) {
+	expandedProbes, err := probes.ResolveConfigs(cfgs)
 	if err != nil {
 		return nil, fmt.Errorf("validate probes: %w", err)
 	}
+
+	requirements := make([]Requirement, 0, len(expandedProbes))
 	for _, probe := range expandedProbes {
 		requirement, err := probeRequirement(probe)
 		if err != nil {
@@ -81,7 +97,6 @@ func Requirements(cfg config.Config) ([]Requirement, error) {
 		}
 		requirements = append(requirements, requirement)
 	}
-
 	return mergeRequirements(requirements), nil
 }
 

@@ -34,13 +34,19 @@ For `target.type: kubernetes`, doctor follows the implemented CNPG target
 verification path and checks:
 
 - `kubectl` in client-only mode
-- every client required by the expanded probe list
 
 Provider configuration is not checked for the Kubernetes target because
 `pgdrill target verify` restores from a CNPG `Backup` resource and does not call
 the configured provider adapter. The unimplemented `container` target fails
-preflight explicitly. Probe semantics are still validated for Kubernetes before
-the client-only `kubectl` check.
+preflight explicitly. Probe semantics are still validated before the client-only
+`kubectl` check, but their binaries are paths inside the future restored
+`postgres` container and cannot be executed by read-only doctor.
+
+After a CNPG instance becomes Ready, `pgdrill target verify` runs a second
+preflight through `kubectl exec` inside that pod. It captures each configured
+probe client's native version before executing any database probe. A failure in
+this post-ready phase fails the drill and still follows normal evidence capture
+and owned-resource cleanup.
 
 Probe presets are expanded before requirements are calculated. Repeated uses of
 the same tool and binary are merged into one command while preserving the list
@@ -53,14 +59,17 @@ Kubernetes API, create resources, or test credentials. A passing result means:
 
 - the config is accepted for the implemented target path and the local work
   directory, when selected, is currently safe to prepare
-- every required executable can be started
-- every native version command exits successfully within the timeout
+- every executable in doctor's target-local scope can be started
+- every native version command in that scope exits successfully within the
+  timeout
 - requested and resolved executable paths, output, timing, and exit status were
   captured as redacted command evidence
 
-It does not prove repository access, WAL continuity, restore correctness,
-PostgreSQL startup, probe success against a server, or production compatibility.
-Those claims require provider checks and a completed restore drill.
+For Kubernetes this means only local `kubectl`; it does not prove the probe
+binaries exist in a future restored image. Doctor also does not prove repository
+access, WAL continuity, restore correctness, PostgreSQL startup, probe success
+against a server, or production compatibility. Those claims require provider
+checks and a completed restore drill.
 
 The version invocations follow the upstream command contracts: WAL-G and Barman
 use `--version`; pgBackRest and pg_probackup use their `version` commands;

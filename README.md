@@ -77,9 +77,9 @@ path. `pgdrill explain -format json` exposes this distinction explicitly.
 ## Installation
 
 The pre-alpha release pipeline targets Linux and macOS on amd64 and arm64.
-Published archives and SHA256 checksums will appear under
-[GitHub Releases](https://github.com/r314tive/pgdrill/releases); until the first
-automated release is published, build from source.
+Published archives and SHA256 checksums are available under
+[GitHub Releases](https://github.com/r314tive/pgdrill/releases). Building from
+source remains supported.
 
 To build from source, install the Go version from `.go-version` and run:
 
@@ -88,10 +88,12 @@ make build
 ./bin/pgdrill version
 ```
 
-`pgdrill` orchestrates external PostgreSQL tools; the binaries required by the
-selected provider, target, and probes must also be installed in the execution
-environment. See [docs/compatibility.md](docs/compatibility.md) for the current
-validation boundary.
+`pgdrill` orchestrates external PostgreSQL tools. For local drills, the selected
+provider, target, and probe binaries must be installed in the execution
+environment. CNPG probe binaries run inside the restored `postgres` container;
+the pgdrill runner needs `kubectl`, not a duplicate PostgreSQL client toolchain.
+See [docs/compatibility.md](docs/compatibility.md) for the current validation
+boundary.
 
 Validate the config and capture the required client versions without touching a
 backup repository, PostgreSQL server, or Kubernetes API:
@@ -141,10 +143,11 @@ target, or probe command is canceled first; pgdrill then uses a bounded
 finalization context for owned-target cleanup and atomic report persistence.
 Interrupted drills are reported as `aborted` and return exit code `130`.
 
-`pgdrill run` and `pgdrill target verify` execute the same native-tool
-preflight automatically. Missing or non-runnable provider, target, restore
-check, or probe clients fail before backup discovery or Kubernetes resource
-creation, and their version checks remain in the JSON drill report.
+`pgdrill run` and `pgdrill target verify` execute target-aware native-tool
+preflight automatically. Local dependencies fail before repository access or
+target mutation. CNPG validates local `kubectl` first, then checks probe clients
+inside the restored pod after it becomes Ready; both phases remain in the JSON
+drill report.
 
 CLI exit codes are stable automation inputs:
 

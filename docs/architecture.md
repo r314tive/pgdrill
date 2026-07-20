@@ -16,15 +16,17 @@ probes, and evidence, not in terms of one provider's command output.
   selection, shared probe execution semantics, and the drill engine lifecycle.
 - `internal/command`: direct command runner with timeout, bounded raw
   stdout/stderr, bounded redacted evidence, and structured exit status.
-- `internal/preflight`: config-derived executable requirements and read-only
-  native version checks used by `pgdrill doctor`.
+- `internal/preflight`: config-derived executable requirements and native
+  version checks used by read-only `pgdrill doctor` and target-aware execution
+  preflight.
 - `internal/adapters/*`: provider registry, provider-specific command
   orchestration, semantic provider/restore-check validation, and output
   normalization.
 - `internal/restorechecks/*`: restore-artifact checks that run after provider
   restore/fetch steps and before PostgreSQL startup.
-- `internal/targets/*`: restore target registry and disposable restore
-  environment implementations.
+- `internal/targets/*`: restore target registry, disposable restore environment
+  implementations, and target-specific command transports such as CNPG pod
+  exec.
 - `internal/probes/*`: probe registry and post-restore checks over a running
   PostgreSQL instance, including type-specific semantic config validation.
 - `internal/report`: report readers and evidence sinks for durable drill
@@ -154,6 +156,9 @@ link the evidence IDs accumulated through that stage.
 - Destructive cleanup must be opt-in and guarded by per-run target ownership
   markers.
 - Probes only inspect a running restored PostgreSQL instance.
+- Probe implementations receive a command-runner interface; the target may
+  provide a transport runner while preserving the same logical probe and
+  evidence contracts.
 - A full restore drill requires at least one non-nil probe; process survival
   alone cannot produce a passed readiness result. A probe that returns no
   checks is a failed protocol response.

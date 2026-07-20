@@ -13,6 +13,16 @@ canonical failed check while their command evidence is retained. Local and CNPG
 execution use the same core probe runner, including partial-evidence retention,
 ordinary probe-error aggregation, and cancellation semantics.
 
+For a local target, probe commands execute on the pgdrill host against the
+disposable server connection string. For CNPG target verification, the same
+logical probes execute without a shell inside the restored pod's `postgres`
+container through `kubectl exec`. They connect as `postgres` over CNPG's local
+Unix socket at `/controller/run`, so the verifier does not read a database
+password or Kubernetes Secret. A configured `binary` path is therefore resolved
+inside the restored PostgreSQL image for CNPG, not in the pgdrill runner image.
+The remote binary version preflight runs after the pod is Ready and before the
+first database probe.
+
 ## Explicit Probes
 
 Explicit probe config remains the most precise form:

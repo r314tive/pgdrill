@@ -102,7 +102,7 @@ func TestRequirementsForKubernetesTargetIgnoreConfiguredProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build requirements: %v", err)
 	}
-	if len(requirements) != 2 {
+	if len(requirements) != 1 {
 		t.Fatalf("unexpected requirements %#v", requirements)
 	}
 	if requirements[0].Tool != model.ToolKubectl || requirements[0].Binary != "/opt/bin/kubectl" {
@@ -111,8 +111,12 @@ func TestRequirementsForKubernetesTargetIgnoreConfiguredProvider(t *testing.T) {
 	if !reflect.DeepEqual(requirements[0].Args, []string{"version", "--client", "--output=json"}) {
 		t.Fatalf("unexpected kubectl version args %#v", requirements[0].Args)
 	}
-	if requirements[1].Tool != model.ToolPSQL {
-		t.Fatalf("unexpected probe requirement %#v", requirements[1])
+	probeRequirements, err := ProbeRequirements(cfg.Probes)
+	if err != nil {
+		t.Fatalf("build probe requirements: %v", err)
+	}
+	if len(probeRequirements) != 1 || probeRequirements[0].Tool != model.ToolPSQL {
+		t.Fatalf("unexpected probe requirements %#v", probeRequirements)
 	}
 }
 

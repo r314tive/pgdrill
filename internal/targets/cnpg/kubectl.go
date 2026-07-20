@@ -77,7 +77,7 @@ func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClu
 				Host:       host,
 				Port:       DefaultPostgresPort,
 				Database:   "postgres",
-				ConnString: fmt.Sprintf("postgresql://%s:%d/postgres?sslmode=disable", host, DefaultPostgresPort),
+				ConnString: DefaultPodConnString,
 			}, evidence, nil
 		}
 
