@@ -33,6 +33,11 @@ The Kubernetes target-only path deliberately does not validate unused provider
 settings because CNPG performs the restore and no provider adapter is invoked.
 Its configured probes are still validated before `kubectl` preflight.
 
+`pgdrill run` currently accepts only `target.type: local`. Kubernetes uses the
+separate guarded `pgdrill target verify` lifecycle, and `container` is reserved
+for a future target implementation. Config parsing retains all canonical target
+types so target-specific commands can enforce their own execution contracts.
+
 ## Operation Deadlines
 
 Every external command started from a loaded config has a bounded default.

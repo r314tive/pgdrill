@@ -197,6 +197,27 @@ func TestValidateDrillRequiresLocalWorkDir(t *testing.T) {
 	}
 }
 
+func TestValidateDrillRejectsTargetsWithoutFullRestoreExecution(t *testing.T) {
+	for _, targetType := range []model.RestoreTargetType{
+		model.RestoreTargetContainer,
+		model.RestoreTargetKubernetes,
+	} {
+		t.Run(string(targetType), func(t *testing.T) {
+			cfg := Config{
+				Provider: ProviderConfig{Type: model.ProviderWALG},
+				Target:   TargetConfig{Type: targetType},
+				Probes:   []ProbeConfig{{Preset: "readiness"}},
+			}
+			cfg.Normalize()
+
+			err := cfg.ValidateDrill()
+			if err == nil || !strings.Contains(err.Error(), `full restore drills support target.type "local"`) {
+				t.Fatalf("expected unsupported full-drill target error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadConfigAppliesBoundedOperationalDefaults(t *testing.T) {
 	cfg, err := Load(strings.NewReader(`
 provider:

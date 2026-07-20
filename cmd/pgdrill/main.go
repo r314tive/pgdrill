@@ -1333,4 +1333,11 @@ RecoveryTarget Describes what recovery point must be reached.
 Probe          Runs post-restore checks against the recovered PostgreSQL instance.
 EvidenceSink   Persists drill facts, timings, command outputs, and final status.
 
+Implemented target command paths:
+  pgdrill run              local
+  pgdrill target manifest  kubernetes (CloudNativePG)
+  pgdrill target verify    kubernetes (CloudNativePG)
+
+Canonical but not yet executable target type: container.
+
 `

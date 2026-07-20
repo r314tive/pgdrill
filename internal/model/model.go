@@ -61,11 +61,18 @@ const (
 )
 
 type Overview struct {
-	Providers       []ProviderType       `json:"providers"`
-	RestoreTargets  []RestoreTargetType  `json:"restore_targets"`
-	RecoveryTargets []RecoveryTargetType `json:"recovery_targets"`
-	Probes          []ProbeType          `json:"probes"`
-	Tools           []ToolType           `json:"tools"`
+	Providers          []ProviderType       `json:"providers"`
+	RestoreTargets     []RestoreTargetType  `json:"restore_targets"`
+	TargetCapabilities TargetCapabilities   `json:"target_capabilities"`
+	RecoveryTargets    []RecoveryTargetType `json:"recovery_targets"`
+	Probes             []ProbeType          `json:"probes"`
+	Tools              []ToolType           `json:"tools"`
+}
+
+type TargetCapabilities struct {
+	Run      []RestoreTargetType `json:"run"`
+	Manifest []RestoreTargetType `json:"manifest"`
+	Verify   []RestoreTargetType `json:"verify"`
 }
 
 func ProjectOverview() Overview {
@@ -80,6 +87,11 @@ func ProjectOverview() Overview {
 			RestoreTargetLocal,
 			RestoreTargetContainer,
 			RestoreTargetKubernetes,
+		},
+		TargetCapabilities: TargetCapabilities{
+			Run:      []RestoreTargetType{RestoreTargetLocal},
+			Manifest: []RestoreTargetType{RestoreTargetKubernetes},
+			Verify:   []RestoreTargetType{RestoreTargetKubernetes},
 		},
 		RecoveryTargets: []RecoveryTargetType{
 			RecoveryTargetImmediate,

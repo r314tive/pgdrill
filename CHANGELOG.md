@@ -75,6 +75,13 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- `pgdrill run` now rejects non-local target types during semantic config
+  validation, before adapter construction or native preflight. `pgdrill
+  explain -format json` separately reports canonical target types and the
+  target types implemented by each command path.
+- Automatically generated full-drill report IDs now include nanoseconds, and
+  explicit IDs are trimmed, matching target-verification ID semantics and
+  avoiding same-second collisions.
 - `provider.timeout` no longer sets the physical restore command deadline when
   config is loaded; use `restore.timeout` for that operation. Existing explicit
   provider, nested validation, probe, and Kubernetes timeouts remain supported.

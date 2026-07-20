@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,8 +39,69 @@ func TestExplainJSONCommand(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, `"providers"`) {
-		t.Fatalf("expected providers in json output, got: %s", got)
+	var overview model.Overview
+	if err := json.Unmarshal(stdout.Bytes(), &overview); err != nil {
+		t.Fatalf("parse explain output: %v\n%s", err, stdout.String())
+	}
+	if len(overview.Providers) == 0 {
+		t.Fatalf("expected providers in json output, got: %s", stdout.String())
+	}
+	if got, want := overview.TargetCapabilities.Run, []model.RestoreTargetType{model.RestoreTargetLocal}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected run target capabilities: got %#v want %#v", got, want)
+	}
+	if got, want := overview.TargetCapabilities.Verify, []model.RestoreTargetType{model.RestoreTargetKubernetes}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected verify target capabilities: got %#v want %#v", got, want)
+	}
+}
+
+func TestExplainTextDistinguishesImplementedTargetPaths(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"explain"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+	for _, want := range []string{
+		"pgdrill run              local",
+		"pgdrill target verify    kubernetes (CloudNativePG)",
+		"Canonical but not yet executable target type: container.",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expected %q in explain output:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestRunRejectsKubernetesTargetBeforeNativePreflight(t *testing.T) {
+	dir := t.TempDir()
+	invokedPath := filepath.Join(dir, "native-invoked")
+	nativePath := filepath.Join(dir, "native")
+	writeExecutable(t, nativePath, `#!/bin/sh
+printf 'invoked\n' > "`+invokedPath+`"
+exit 0
+`)
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeFile(t, configPath, `
+provider:
+  type: wal-g
+  binary: `+nativePath+`
+target:
+  type: kubernetes
+probes:
+  - preset: readiness
+report:
+  path: `+filepath.Join(dir, "report.json")+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "-f", configPath}, &stdout, &stderr)
+
+	if code != 1 || !strings.Contains(stderr.String(), `full restore drills support target.type "local"`) {
+		t.Fatalf("expected full-drill target validation, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(invokedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("run invoked native preflight before target validation, stat err=%v", err)
 	}
 }
 

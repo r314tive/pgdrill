@@ -62,6 +62,11 @@ Additional providers can be added behind the same internal provider contract.
 - **Failure stage**: a stable lifecycle stage and human-readable reason for a
   failed or aborted drill, linked to the evidence collected before failure.
 
+The implemented full-drill target is `local`. Kubernetes is available through
+the guarded CloudNativePG `target manifest` and `target verify` paths;
+`container` remains a canonical, planned target type rather than an executable
+path. `pgdrill explain -format json` exposes this distinction explicitly.
+
 ## Non-Goals
 
 - Becoming another PostgreSQL backup tool.

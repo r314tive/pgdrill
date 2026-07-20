@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/finalize"
@@ -212,10 +213,10 @@ func (e Engine) clock() func() time.Time {
 }
 
 func drillID(id string, startedAt time.Time) string {
-	if id != "" {
-		return id
+	if trimmed := strings.TrimSpace(id); trimmed != "" {
+		return trimmed
 	}
-	return "drill-" + startedAt.UTC().Format("20060102T150405Z")
+	return "drill-" + startedAt.UTC().Format("20060102T150405.000000000Z")
 }
 
 func hasFailedChecks(checks []model.Check) bool {

@@ -15,6 +15,27 @@ func TestRecoveryTargetNormalizeDefaultsLatest(t *testing.T) {
 	}
 }
 
+func TestProjectOverviewDistinguishesCanonicalTargetsFromCommandCapabilities(t *testing.T) {
+	overview := ProjectOverview()
+
+	if got, want := overview.RestoreTargets, []RestoreTargetType{
+		RestoreTargetLocal,
+		RestoreTargetContainer,
+		RestoreTargetKubernetes,
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected canonical restore targets: got %#v want %#v", got, want)
+	}
+	if got, want := overview.TargetCapabilities.Run, []RestoreTargetType{RestoreTargetLocal}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected full-drill targets: got %#v want %#v", got, want)
+	}
+	if got, want := overview.TargetCapabilities.Manifest, []RestoreTargetType{RestoreTargetKubernetes}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected manifest targets: got %#v want %#v", got, want)
+	}
+	if got, want := overview.TargetCapabilities.Verify, []RestoreTargetType{RestoreTargetKubernetes}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected verify targets: got %#v want %#v", got, want)
+	}
+}
+
 func TestRecoveryTargetValidate(t *testing.T) {
 	inclusive := true
 	tests := []struct {

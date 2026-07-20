@@ -342,7 +342,10 @@ func (c Config) ValidateDrill() error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if c.Target.Type == model.RestoreTargetLocal && strings.TrimSpace(c.Target.WorkDir) == "" {
+	if c.Target.Type != model.RestoreTargetLocal {
+		return fmt.Errorf("full restore drills support target.type %q, got %q", model.RestoreTargetLocal, c.Target.Type)
+	}
+	if strings.TrimSpace(c.Target.WorkDir) == "" {
 		return fmt.Errorf("target.work_dir is required for a local restore drill")
 	}
 	if len(c.Probes) == 0 {
