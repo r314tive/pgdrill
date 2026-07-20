@@ -124,6 +124,24 @@ func TestBuildEnvironmentNormalizesReleaseInputs(t *testing.T) {
 	}
 }
 
+func TestReleaseLDFlagsRemoveHostDependentBuildID(t *testing.T) {
+	releaseTime := time.Date(2026, 7, 20, 17, 0, 0, 0, time.UTC)
+	flags := releaseLDFlags(Options{Version: "v0.1.0-alpha.8", Commit: "abcdef123456"}, releaseTime)
+
+	for _, expected := range []string{
+		"-s",
+		"-w",
+		"-buildid=",
+		versionPackage + ".Version=v0.1.0-alpha.8",
+		versionPackage + ".Commit=abcdef123456",
+		versionPackage + ".Date=2026-07-20T17:00:00Z",
+	} {
+		if !strings.Contains(flags, expected) {
+			t.Fatalf("release linker flags %q do not contain %q", flags, expected)
+		}
+	}
+}
+
 func countString(values []string, target string) int {
 	count := 0
 	for _, value := range values {

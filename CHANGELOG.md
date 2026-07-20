@@ -8,6 +8,14 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8] - 2026-07-20
+
+### Fixed
+
+- Release binaries now omit Go's host-dependent linker build ID, making archive
+  checksums reproducible across macOS and Linux builders for identical release
+  inputs.
+
 ## [0.1.0-alpha.7] - 2026-07-20
 
 ### Added

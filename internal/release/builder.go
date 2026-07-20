@@ -255,13 +255,7 @@ func validateTarget(target Target) error {
 }
 
 func buildBinary(ctx context.Context, opts Options, target Target, outputPath string, releaseTime time.Time) error {
-	ldflags := strings.Join([]string{
-		"-s",
-		"-w",
-		"-X", versionPackage + ".Version=" + opts.Version,
-		"-X", versionPackage + ".Commit=" + opts.Commit,
-		"-X", versionPackage + ".Date=" + releaseTime.Format(time.RFC3339),
-	}, " ")
+	ldflags := releaseLDFlags(opts, releaseTime)
 	cmd := exec.CommandContext(
 		ctx,
 		opts.GoBinary,
@@ -280,6 +274,17 @@ func buildBinary(ctx context.Context, opts Options, target Target, outputPath st
 		return fmt.Errorf("build pgdrill for %s: %w: %s", target, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func releaseLDFlags(opts Options, releaseTime time.Time) string {
+	return strings.Join([]string{
+		"-s",
+		"-w",
+		"-buildid=",
+		"-X", versionPackage + ".Version=" + opts.Version,
+		"-X", versionPackage + ".Commit=" + opts.Commit,
+		"-X", versionPackage + ".Date=" + releaseTime.Format(time.RFC3339),
+	}, " ")
 }
 
 func buildEnvironment(current []string, target Target) []string {
