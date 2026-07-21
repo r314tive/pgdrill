@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/model"
@@ -13,7 +14,17 @@ import (
 )
 
 func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
-	target := &fakeManagedTarget{}
+	artifactRef := managedArtifactRef(t)
+	target := &fakeManagedTarget{report: model.CheckReport{
+		Evidence: []model.EvidenceRecord{{
+			ID:          "managed-manifest",
+			Kind:        model.EvidenceRuntime,
+			Source:      "managed-test",
+			CollectedAt: time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC),
+			ArtifactIDs: []string{artifactRef.ID},
+		}},
+		Artifacts: []model.ArtifactRef{artifactRef},
+	}}
 	checker := &fakePostRestoreChecker{}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, checker)}
 	events := []model.RunEvent{}
@@ -46,6 +57,9 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	}
 	if len(result.Operations) != 2 || result.Operations[0].State != model.OperationStateSucceeded || result.Operations[1].State != model.OperationStateSucceeded {
 		t.Fatalf("unexpected managed operation checkpoints %#v", result.Operations)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0] != artifactRef {
+		t.Fatalf("managed artifact references were not propagated %#v", result.Artifacts)
 	}
 	if got, want := target.calls, []string{"start", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("target calls = %#v, want %#v", got, want)
@@ -265,6 +279,7 @@ type fakeManagedTarget struct {
 	destroyErr  error
 	destroyHook func()
 	operation   model.Operation
+	report      model.CheckReport
 }
 
 func (t *fakeManagedTarget) Type() model.RestoreTargetType {
@@ -290,10 +305,12 @@ func (t *fakeManagedTarget) Start(context.Context) (model.RunningPostgres, model
 	if t.startErr != nil {
 		status = model.CheckStatusFailed
 	}
-	return model.RunningPostgres{ConnString: "host=/controller/run"}, model.CheckReport{Checks: []model.Check{{
+	report := t.report
+	report.Checks = append(report.Checks, model.Check{
 		Name:   "managed-ready",
 		Status: status,
-	}}}, t.startErr
+	})
+	return model.RunningPostgres{ConnString: "host=/controller/run"}, report, t.startErr
 }
 
 func (t *fakeManagedTarget) Destroy(context.Context) ([]model.EvidenceRecord, error) {
@@ -320,6 +337,24 @@ func (c *fakePostRestoreChecker) Check(context.Context, model.RunningPostgres) (
 
 func managedResolution(target ManagedRestoreTarget, checker PostRestoreChecker) ManagedResolution {
 	return ManagedResolution{Backup: managedBackup(), Target: target, Checks: checker, Probes: managedProbeDescriptors()}
+}
+
+func managedArtifactRef(t *testing.T) model.ArtifactRef {
+	t.Helper()
+	metadata, err := model.NewArtifactMetadata("application/yaml", model.ArtifactRetentionHistory, model.ArtifactRedactionNotRequired)
+	if err != nil {
+		t.Fatalf("NewArtifactMetadata() error = %v", err)
+	}
+	ref, err := model.NewArtifactRef(
+		"sha256:"+strings.Repeat("d", 64),
+		"managed.json.artifacts/sha256/dd/"+strings.Repeat("d", 64),
+		128,
+		metadata,
+	)
+	if err != nil {
+		t.Fatalf("NewArtifactRef() error = %v", err)
+	}
+	return ref
 }
 
 func managedProbeDescriptors() []model.ProbeDescriptor {

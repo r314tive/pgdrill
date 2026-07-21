@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -72,7 +73,18 @@ func RunProbes(ctx context.Context, configured []Probe, pg model.RunningPostgres
 		}
 
 		probeReport, err := probe.Run(ctx, pg)
+		evidenceStart := len(report.Evidence)
 		report.Evidence = append(report.Evidence, probeReport.Evidence...)
+		artifactErr := validateCheckReportArtifacts(probeReport)
+		if artifactErr == nil {
+			artifactErr = appendArtifactReferences(&report.Artifacts, probeReport.Artifacts)
+		}
+		if artifactErr != nil {
+			for index := evidenceStart; index < len(report.Evidence); index++ {
+				report.Evidence[index].ArtifactIDs = nil
+			}
+			err = errors.Join(err, fmt.Errorf("collect probe %q artifacts: %w", probe.Type(), artifactErr))
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return report, fmt.Errorf("run probe %q: %w", probe.Type(), err)

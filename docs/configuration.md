@@ -137,3 +137,8 @@ Mutating CLI commands derive a durable checkpoint directory by appending
 intent cannot be persisted. The directory is intentionally separate from the
 terminal report so executor loss still leaves reconciliation state. See
 [operation-checkpoint-format.md](operation-checkpoint-format.md).
+
+CNPG target verification also derives `<report.path>.artifacts`. It stores the
+exact generated manifest before `kubectl create` and links the content digest
+from report evidence. Keep that sibling directory with the report when moving
+or archiving a run. See [artifact-format.md](artifact-format.md).

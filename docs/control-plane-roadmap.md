@@ -240,11 +240,15 @@ reconciliation dispositions, and process-loss fault-injection coverage. This
 does not yet provide leases, heartbeat recovery, or automatic event-stream
 resume.
 
-1. Add bounded artifact storage and references; idempotency, checkpoints, and
-   crash-reconciliation classification now have fault-injection coverage.
-2. Complete real-repository and live-target compatibility gates.
-3. Ship daemon-free plan expansion and local history.
-4. Run one executor/controller on a single host with process-loss recovery.
+Completed prerequisite: reports now carry bounded content-addressed artifact
+references with exact size, media type, retention class, redaction state, and
+evidence provenance. The local directory store proves atomic publication and
+verified reads; it is not the future fleet artifact service.
+
+1. Complete recovery-policy verdicts plus real-repository and live-target
+   compatibility gates.
+2. Ship daemon-free plan expansion and local history.
+3. Run one executor/controller on a single host with process-loss recovery.
 5. Add remote executors and leases only after single-host reconciliation works.
 6. Add TUI, then multi-user controller capabilities, then web UI if validated
    workflows require it.

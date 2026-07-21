@@ -25,7 +25,8 @@ version.
 Schema recognition is not the only read gate. Current reports are validated for
 canonical enum values, required identity and timestamps, timestamp ordering,
 provider-scoped backup identity, valid WAL LSN/timeline values, terminal status
-coherence, unique evidence IDs, and resolvable check/failure evidence links.
+coherence, unique evidence/artifact IDs, and resolvable check, failure, and
+artifact evidence links.
 When a canonical drill spec is present, readers also recompute its digest and
 reject non-canonical values or disagreement with report cluster, provider,
 target, recovery target, or exact backup selection.
@@ -46,6 +47,7 @@ The top-level object is `model.DrillResult` and contains:
 - structured failure stage, message, and related evidence IDs for failed or
   aborted drills
 - normalized checks and evidence records
+- bounded immutable artifact references linked from evidence
 - bounded terminal mutation operation records with deterministic keys,
   checkpoint state, and reconciliation status
 
@@ -66,6 +68,12 @@ cross-attempt identities, non-terminal operation states, and a `passed` report
 containing any operation that did not succeed. Older reports without operation
 records remain readable. See
 [operation-checkpoint-format.md](operation-checkpoint-format.md).
+
+The optional `artifacts` array contains additive
+`pgdrill.artifact-reference/v1alpha1` records. IDs are exact content digests;
+payloads remain outside the report. Evidence links them through
+`artifact_ids`, and every artifact must have provenance. See
+[artifact-format.md](artifact-format.md).
 
 Command evidence contains redacted arguments, environment values, output, and a
 structured exit status. `path` is the configured executable name or path;
@@ -161,10 +169,15 @@ only by bounded `kind`, `state`, and `reconciled` labels plus cluster and
 provider. Operation names, keys, run IDs, and attempt IDs are deliberately not
 metric labels.
 
+Artifact metrics expose count and total bytes grouped only by bounded retention
+and redaction classifications. Artifact IDs, URIs, and media types are not
+metric labels.
+
 Canonical enum labels are bounded as well. Unknown provider, target, recovery
-target, probe, check-status, evidence-kind, or failure-stage values export as
-`unknown` rather than creating arbitrary metric series. Check names and cluster
-names remain operator-defined labels and should come from stable configuration.
+target, probe, check-status, evidence-kind, operation, artifact-classification,
+or failure-stage values export as `unknown` rather than creating arbitrary
+metric series. Check names and cluster names remain operator-defined labels and
+should come from stable configuration.
 
 ## Consumer Rules
 

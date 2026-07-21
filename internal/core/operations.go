@@ -32,6 +32,7 @@ func (o operationOutput) merge(other operationOutput) operationOutput {
 	}
 	o.report.Checks = append(o.report.Checks, other.report.Checks...)
 	o.report.Evidence = append(o.report.Evidence, other.report.Evidence...)
+	o.report.Artifacts = append(o.report.Artifacts, other.report.Artifacts...)
 	o.evidence = append(o.evidence, other.evidence...)
 	return o
 }
@@ -167,6 +168,18 @@ func (e *operationExecutor) Execute(
 			checkpointWriteError(operation, unknownSaveErr),
 		)
 	}
+	if err := validateCheckReport(reconciliation.Report, false); err != nil {
+		checkpoint.UpdatedAt = e.clock().UTC()
+		checkpoint.Message = boundedCheckpointMessage("target reconciliation returned an invalid check report")
+		e.record(checkpoint)
+		return output, errors.Join(
+			intentError(operation, intentErr),
+			checkpointWriteError(operation, lateIntentErr),
+			mutationErr,
+			fmt.Errorf("validate operation %q reconciliation report: %w", operation.Name, err),
+			checkpointWriteError(operation, unknownSaveErr),
+		)
+	}
 
 	checkpoint.Reconciled = true
 	checkpoint.UpdatedAt = e.clock().UTC()
@@ -259,27 +272,28 @@ func ReconcileAttempt(ctx context.Context, store CheckpointStore, target interfa
 	BindAttempt(model.AttemptContext) error
 	BeginOperation(model.Operation) error
 	Reconcile(context.Context, model.OperationCheckpoint) (model.OperationReconciliation, error)
-}, attempt model.AttemptContext, clock func() time.Time) ([]model.OperationCheckpoint, []model.EvidenceRecord, error) {
+}, attempt model.AttemptContext, clock func() time.Time) ([]model.OperationCheckpoint, []model.EvidenceRecord, []model.ArtifactRef, error) {
 	if store == nil {
-		return nil, nil, fmt.Errorf("checkpoint store is required")
+		return nil, nil, nil, fmt.Errorf("checkpoint store is required")
 	}
 	if target == nil {
-		return nil, nil, fmt.Errorf("reconciliation target is required")
+		return nil, nil, nil, fmt.Errorf("reconciliation target is required")
 	}
 	if err := attempt.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("validate attempt context: %w", err)
+		return nil, nil, nil, fmt.Errorf("validate attempt context: %w", err)
 	}
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 	if err := target.BindAttempt(attempt); err != nil {
-		return nil, nil, fmt.Errorf("bind reconciliation attempt: %w", err)
+		return nil, nil, nil, fmt.Errorf("bind reconciliation attempt: %w", err)
 	}
 	checkpoints, err := store.List(ctx, attempt.Identity)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list attempt checkpoints: %w", err)
+		return nil, nil, nil, fmt.Errorf("list attempt checkpoints: %w", err)
 	}
 	evidence := []model.EvidenceRecord{}
+	artifacts := []model.ArtifactRef{}
 	var joined error
 	for index := range checkpoints {
 		checkpoint := &checkpoints[index]
@@ -292,6 +306,7 @@ func ReconcileAttempt(ctx context.Context, store CheckpointStore, target interfa
 		}
 		reconciliation, reconcileErr := target.Reconcile(ctx, *checkpoint)
 		evidence = append(evidence, reconciliation.Evidence...)
+		evidence = append(evidence, reconciliation.Report.Evidence...)
 		checkpoint.UpdatedAt = clock().UTC()
 		if reconcileErr != nil {
 			checkpoint.State = model.OperationStateUnknown
@@ -301,7 +316,20 @@ func ReconcileAttempt(ctx context.Context, store CheckpointStore, target interfa
 			checkpoint.State = model.OperationStateUnknown
 			checkpoint.Message = boundedCheckpointMessage("target reconciliation returned an invalid protocol result")
 			joined = errors.Join(joined, fmt.Errorf("validate operation %q reconciliation: %w", checkpoint.Operation.Name, validateErr))
+		} else if reportErr := validateCheckReport(reconciliation.Report, false); reportErr != nil {
+			checkpoint.State = model.OperationStateUnknown
+			checkpoint.Message = boundedCheckpointMessage("target reconciliation returned an invalid check report")
+			joined = errors.Join(joined, fmt.Errorf("validate operation %q reconciliation report: %w", checkpoint.Operation.Name, reportErr))
 		} else {
+			if artifactErr := appendArtifactReferences(&artifacts, reconciliation.Report.Artifacts); artifactErr != nil {
+				checkpoint.State = model.OperationStateUnknown
+				checkpoint.Message = boundedCheckpointMessage("target reconciliation returned conflicting artifacts")
+				joined = errors.Join(joined, fmt.Errorf("collect operation %q reconciliation artifacts: %w", checkpoint.Operation.Name, artifactErr))
+				if saveErr := store.Save(ctx, *checkpoint); saveErr != nil {
+					joined = errors.Join(joined, fmt.Errorf("save reconciled operation %q: %w", checkpoint.Operation.Name, saveErr))
+				}
+				continue
+			}
 			checkpoint.Reconciled = true
 			checkpoint.Message = boundedCheckpointMessage(reconciliation.Message)
 			switch reconciliation.Disposition {
@@ -318,5 +346,5 @@ func ReconcileAttempt(ctx context.Context, store CheckpointStore, target interfa
 			joined = errors.Join(joined, fmt.Errorf("save reconciled operation %q: %w", checkpoint.Operation.Name, saveErr))
 		}
 	}
-	return checkpoints, evidence, joined
+	return checkpoints, evidence, artifacts, joined
 }

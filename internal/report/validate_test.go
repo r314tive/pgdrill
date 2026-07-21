@@ -128,6 +128,60 @@ func TestValidateChecksOperationIdentityAndTerminalState(t *testing.T) {
 	}
 }
 
+func TestValidateChecksArtifactProvenance(t *testing.T) {
+	result := validTestResult()
+	metadata, err := model.NewArtifactMetadata("application/yaml", model.ArtifactRetentionHistory, model.ArtifactRedactionNotRequired)
+	if err != nil {
+		t.Fatalf("NewArtifactMetadata() error = %v", err)
+	}
+	ref, err := model.NewArtifactRef(
+		"sha256:"+strings.Repeat("a", 64),
+		"report.json.artifacts/sha256/aa/"+strings.Repeat("a", 64),
+		1024,
+		metadata,
+	)
+	if err != nil {
+		t.Fatalf("NewArtifactRef() error = %v", err)
+	}
+	result.Artifacts = []model.ArtifactRef{ref}
+	result.Evidence = append(result.Evidence, model.EvidenceRecord{
+		ID:          "manifest",
+		Kind:        model.EvidenceRuntime,
+		Source:      "cnpg",
+		CollectedAt: result.StartedAt,
+		ArtifactIDs: []string{ref.ID},
+	})
+	if err := Validate(result); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	t.Run("missing", func(t *testing.T) {
+		broken := result
+		broken.Evidence = append([]model.EvidenceRecord(nil), result.Evidence...)
+		broken.Evidence[len(broken.Evidence)-1].ArtifactIDs = []string{"sha256:" + strings.Repeat("b", 64)}
+		if err := Validate(broken); err == nil || !strings.Contains(err.Error(), "references missing artifact") {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+
+	t.Run("orphan", func(t *testing.T) {
+		broken := result
+		broken.Evidence = append([]model.EvidenceRecord(nil), result.Evidence...)
+		broken.Evidence[len(broken.Evidence)-1].ArtifactIDs = nil
+		if err := Validate(broken); err == nil || !strings.Contains(err.Error(), "not referenced by evidence") {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+
+	t.Run("duplicate", func(t *testing.T) {
+		broken := result
+		broken.Artifacts = []model.ArtifactRef{ref, ref}
+		if err := Validate(broken); err == nil || !strings.Contains(err.Error(), "duplicate artifact id") {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+}
+
 func TestJSONFileSinkRejectsNonTerminalOperation(t *testing.T) {
 	result := validTestResult()
 	operation, err := model.NewOperation(model.AttemptIdentity{

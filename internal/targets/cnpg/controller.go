@@ -1,12 +1,14 @@
 package cnpg
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/artifact"
 	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -63,11 +65,13 @@ type Instance struct {
 }
 
 type Controller struct {
-	Spec     VerifyClusterSpec
-	Client   Client
-	Options  LifecycleOptions
-	created  bool
-	instance Instance
+	Spec         VerifyClusterSpec
+	Client       Client
+	Options      LifecycleOptions
+	Artifacts    artifact.Sink
+	created      bool
+	instance     Instance
+	artifactRefs []model.ArtifactRef
 }
 
 func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.EvidenceRecord, error) {
@@ -75,12 +79,12 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		return model.RunningPostgres{}, nil, fmt.Errorf("cnpg client is required")
 	}
 
-	manifest, err := c.Spec.ManifestYAML()
+	manifest, manifestArtifact, err := c.prepareManifestArtifact(ctx)
 	if err != nil {
 		return model.RunningPostgres{}, nil, err
 	}
 
-	evidence := []model.EvidenceRecord{c.runtimeEvidence("cnpg-manifest-render", map[string]string{
+	manifestEvidence := c.runtimeEvidence("cnpg-manifest-render", map[string]string{
 		"backup":             c.Spec.BackupName,
 		"bytes":              strconv.Itoa(len(manifest)),
 		"cluster":            c.Spec.Name,
@@ -93,7 +97,9 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		"postgres_image":     c.Spec.ImageName,
 		"target_port":        strconv.Itoa(DefaultPostgresPort),
 		"verify_cluster_uid": c.Spec.Name,
-	})}
+	})
+	manifestEvidence.ArtifactIDs = []string{manifestArtifact.ID}
+	evidence := []model.EvidenceRecord{manifestEvidence}
 
 	createEvidence, err := c.Client.CreateCluster(ctx, c.Spec, manifest)
 	evidence = append(evidence, createEvidence...)
@@ -127,6 +133,30 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		Host:       instance.Host,
 		Port:       instance.Port,
 	}, evidence, nil
+}
+
+func (c *Controller) prepareManifestArtifact(ctx context.Context) ([]byte, model.ArtifactRef, error) {
+	if c.Artifacts == nil {
+		return nil, model.ArtifactRef{}, fmt.Errorf("cnpg artifact sink is required")
+	}
+	manifest, err := c.Spec.ManifestYAML()
+	if err != nil {
+		return nil, model.ArtifactRef{}, err
+	}
+	metadata, err := model.NewArtifactMetadata(
+		"application/yaml",
+		model.ArtifactRetentionHistory,
+		model.ArtifactRedactionNotRequired,
+	)
+	if err != nil {
+		return nil, model.ArtifactRef{}, fmt.Errorf("classify cnpg manifest artifact: %w", err)
+	}
+	ref, err := c.Artifacts.Put(ctx, metadata, bytes.NewReader(manifest))
+	if err != nil {
+		return nil, model.ArtifactRef{}, fmt.Errorf("persist cnpg manifest artifact: %w", err)
+	}
+	c.artifactRefs = []model.ArtifactRef{ref}
+	return manifest, ref, nil
 }
 
 func createMayHaveSucceeded(evidence []model.EvidenceRecord) bool {

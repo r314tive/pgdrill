@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/artifact"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -30,6 +31,9 @@ func TestVerifyTargetReportsReadyAndDestroysOwnedTarget(t *testing.T) {
 	}
 	if pg.Host != client.instance.Host || len(report.Checks) != 1 || report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("unexpected start result pg=%#v report=%#v", pg, report)
+	}
+	if len(report.Artifacts) != 1 || len(report.Evidence) == 0 || len(report.Evidence[0].ArtifactIDs) != 1 || report.Evidence[0].ArtifactIDs[0] != report.Artifacts[0].ID {
+		t.Fatalf("manifest artifact was not propagated through target report %#v", report)
 	}
 	if got := report.Checks[0].Attributes["verify_cluster"]; got != spec.Name {
 		t.Fatalf("verify_cluster attribute = %q, want %q", got, spec.Name)
@@ -84,6 +88,9 @@ func TestVerifyTargetReconcilesOwnedReadyClusterAfterExecutorLoss(t *testing.T) 
 	if len(reconciliation.Report.Checks) != 1 || reconciliation.Report.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("unexpected reconciliation report %#v", reconciliation.Report)
 	}
+	if len(reconciliation.Report.Artifacts) != 1 {
+		t.Fatalf("reconciliation did not recover manifest artifact %#v", reconciliation.Report)
+	}
 	if got, want := client.calls, []string{"find-owned", "wait"}; !slices.Equal(got, want) {
 		t.Fatalf("reconciliation calls = %#v, want %#v", got, want)
 	}
@@ -116,6 +123,33 @@ func TestVerifyTargetReconciliationDoesNotCreateMissingCluster(t *testing.T) {
 	}
 }
 
+func TestVerifyTargetUnknownReconciliationRetainsManifestArtifact(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	client := &fakeLifecycleClient{
+		ownedCluster: OwnedCluster{Found: true, Name: spec.Name},
+		waitErr:      errors.New("readiness observation timed out"),
+	}
+	target, start, _ := boundVerifyTarget(t, spec, client, LifecycleOptions{})
+	client.ownedCluster.Name = target.Spec.Name
+
+	reconciliation, err := target.Reconcile(context.Background(), verifyCheckpoint(start))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if reconciliation.Disposition != model.ReconciliationUnknown || len(reconciliation.Report.Artifacts) != 1 {
+		t.Fatalf("unexpected reconciliation %#v", reconciliation)
+	}
+	foundLink := false
+	for _, evidence := range reconciliation.Report.Evidence {
+		if len(evidence.ArtifactIDs) == 1 && evidence.ArtifactIDs[0] == reconciliation.Report.Artifacts[0].ID {
+			foundLink = true
+		}
+	}
+	if !foundLink {
+		t.Fatalf("unknown reconciliation lost manifest provenance %#v", reconciliation.Report)
+	}
+}
+
 func verifyCheckpoint(operation model.Operation) model.OperationCheckpoint {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	return model.OperationCheckpoint{
@@ -140,7 +174,7 @@ func boundVerifyTarget(t *testing.T, spec VerifyClusterSpec, client Client, opti
 	}
 	spec.OwnershipID = ownerID
 	spec.Labels[labelOwnershipID] = ownerID
-	target := NewVerifyTarget(spec, client, options)
+	target := NewVerifyTarget(spec, client, artifact.NewMemoryStore(), options)
 	attempt := model.AttemptContext{Identity: identity, Target: model.TargetSpec{Type: model.RestoreTargetKubernetes}}
 	if err := target.BindAttempt(attempt); err != nil {
 		t.Fatalf("BindAttempt() error = %v", err)

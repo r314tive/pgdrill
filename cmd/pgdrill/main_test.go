@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/artifact"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/preflight"
 	"github.com/r314tive/pgdrill/internal/report"
@@ -797,6 +798,16 @@ report:
 		if !hasEvidenceOperation(result.Evidence, operation) {
 			t.Fatalf("expected evidence operation %q, got %#v", operation, result.Evidence)
 		}
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].MediaType != "application/yaml" {
+		t.Fatalf("expected one CNPG manifest artifact, got %#v", result.Artifacts)
+	}
+	manifestArtifact, err := (artifact.DirectoryStore{Path: artifact.PathForReport(reportPath)}).Read(context.Background(), result.Artifacts[0])
+	if err != nil {
+		t.Fatalf("read persisted CNPG manifest artifact: %v", err)
+	}
+	if !strings.Contains(string(manifestArtifact), "kind: Cluster") || !strings.Contains(string(manifestArtifact), "altbox-backup-20260707") {
+		t.Fatalf("unexpected persisted CNPG manifest:\n%s", manifestArtifact)
 	}
 
 	configData, err := os.ReadFile(configPath)

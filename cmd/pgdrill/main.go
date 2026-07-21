@@ -795,6 +795,7 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 		[2]string{"Provider", valueOrDash(string(result.Provider))},
 		[2]string{"Backup", valueOrDash(result.Backup.ID)},
 		[2]string{"Operations", fmt.Sprintf("%d recorded", len(result.Operations))},
+		[2]string{"Artifacts", fmt.Sprintf("%d referenced", len(result.Artifacts))},
 		[2]string{"Report", valueOrDash(reportPath)},
 	)
 	for _, row := range rows {
@@ -895,6 +896,7 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 		[2]string{"Checks", fmt.Sprintf("%d passed, %d failed, %d warnings, %d skipped", statusCounts.passed, statusCounts.failed, statusCounts.warning, statusCounts.skipped)},
 		[2]string{"Evidence", fmt.Sprintf("%d records", len(result.Evidence))},
 		[2]string{"Operations", fmt.Sprintf("%d recorded", len(result.Operations))},
+		[2]string{"Artifacts", fmt.Sprintf("%d referenced", len(result.Artifacts))},
 	)
 	for _, row := range rows {
 		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
@@ -937,6 +939,28 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 				checkpoint.State,
 				checkpoint.Reconciled,
 				checkpoint.Operation.Key,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Artifacts) > 0 {
+		if _, err := fmt.Fprintln(table); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(table, "ARTIFACT	MEDIA TYPE	BYTES	RETENTION	REDACTION	URI"); err != nil {
+			return err
+		}
+		for _, artifact := range result.Artifacts {
+			if _, err := fmt.Fprintf(
+				table,
+				"%s\t%s\t%d\t%s\t%s\t%s\n",
+				artifact.ID,
+				artifact.MediaType,
+				artifact.SizeBytes,
+				artifact.RetentionClass,
+				artifact.RedactionState,
+				artifact.URI,
 			); err != nil {
 				return err
 			}

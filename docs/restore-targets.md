@@ -83,6 +83,8 @@ controller owns the ordered drill lifecycle.
 Implemented lifecycle contract:
 
 - render the verified CNPG `Cluster` manifest and record manifest evidence
+- persist the exact manifest as a bounded content-addressed artifact before
+  invoking `kubectl create`
 - create the temporary verify cluster without adopting an existing object
 - treat every create error after process start as potentially mutating
 - propagate a deterministic attempt-scoped ownership label through
@@ -168,6 +170,8 @@ attempt. If a command result is uncertain, or another executor later finds an
 orphaned intent, the target queries CNPG Clusters by the exact ownership label.
 It may prove absence, a matching Ready target, or an ownership conflict without
 issuing another create. This is reconciliation, not automatic command replay.
+The manifest artifact is written after the operation intent and before the
+Kubernetes mutation; reconciliation can regenerate and deduplicate it.
 
 See [../examples/cnpg-target-verify.yaml](../examples/cnpg-target-verify.yaml)
 for a local CLI config example and

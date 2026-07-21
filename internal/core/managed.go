@@ -157,14 +157,18 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	if e.Preflight != nil {
 		err = lifecycle.RunStage(ctx, model.DrillStagePreflight, func() error {
 			preflightReport, preflightErr := e.Preflight.Check(ctx)
-			result.Evidence = append(result.Evidence, preflightReport.Evidence...)
+			artifactErr := appendCheckReportOutput(&result, preflightReport)
 			if preflightErr != nil {
+				preflightErr = errors.Join(preflightErr, artifactErr)
 				if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
 					result.Checks = append(result.Checks, preflightReport.Checks...)
 				} else {
 					preflightErr = errors.Join(preflightErr, fmt.Errorf("invalid partial preflight report: %w", reportErr))
 				}
 				return fmt.Errorf("run managed target preflight: %w", preflightErr)
+			}
+			if artifactErr != nil {
+				return fmt.Errorf("collect managed target preflight artifacts: %w", artifactErr)
 			}
 			if err := validateCheckReport(preflightReport, true); err != nil {
 				return fmt.Errorf("validate managed target preflight report: %w", err)
@@ -185,14 +189,18 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		var discoveryReport model.CheckReport
 		var resolveErr error
 		resolution, discoveryReport, resolveErr = e.Resolver.Resolve(ctx, attempt)
-		result.Evidence = append(result.Evidence, discoveryReport.Evidence...)
+		artifactErr := appendCheckReportOutput(&result, discoveryReport)
 		if resolveErr != nil {
+			resolveErr = errors.Join(resolveErr, artifactErr)
 			if reportErr := validateCheckReport(discoveryReport, false); reportErr == nil {
 				result.Checks = append(result.Checks, discoveryReport.Checks...)
 			} else {
 				resolveErr = errors.Join(resolveErr, fmt.Errorf("invalid partial managed discovery report: %w", reportErr))
 			}
 			return fmt.Errorf("resolve managed restore target: %w", resolveErr)
+		}
+		if artifactErr != nil {
+			return fmt.Errorf("collect managed discovery artifacts: %w", artifactErr)
 		}
 		if err := validateCheckReport(discoveryReport, false); err != nil {
 			return fmt.Errorf("validate managed discovery report: %w", err)
@@ -261,14 +269,19 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 			return operationOutput{postgres: &running, report: report}, err
 		})
 		startReport := output.report
-		result.Evidence = append(result.Evidence, startReport.Evidence...)
+		result.Evidence = append(result.Evidence, output.evidence...)
+		artifactErr := appendCheckReportOutput(&result, startReport)
 		if startErr != nil {
+			startErr = errors.Join(startErr, artifactErr)
 			if reportErr := validateCheckReport(startReport, false); reportErr == nil {
 				result.Checks = append(result.Checks, startReport.Checks...)
 			} else {
 				startErr = errors.Join(startErr, fmt.Errorf("invalid partial managed target start report: %w", reportErr))
 			}
 			return fmt.Errorf("start managed restore target: %w", startErr)
+		}
+		if artifactErr != nil {
+			return fmt.Errorf("collect managed target artifacts: %w", artifactErr)
 		}
 		if output.postgres == nil {
 			return fmt.Errorf("managed target start operation returned no running postgres")
@@ -291,14 +304,18 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 
 	err = lifecycle.RunStage(ctx, model.DrillStageProbeExecution, func() error {
 		checkReport, checkErr := resolution.Checks.Check(ctx, pg)
-		result.Evidence = append(result.Evidence, checkReport.Evidence...)
+		artifactErr := appendCheckReportOutput(&result, checkReport)
 		if checkErr != nil {
+			checkErr = errors.Join(checkErr, artifactErr)
 			if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
 				result.Checks = append(result.Checks, checkReport.Checks...)
 			} else {
 				checkErr = errors.Join(checkErr, fmt.Errorf("invalid partial post-restore check report: %w", reportErr))
 			}
 			return fmt.Errorf("run post-restore checks: %w", checkErr)
+		}
+		if artifactErr != nil {
+			return fmt.Errorf("collect post-restore check artifacts: %w", artifactErr)
 		}
 		if err := validateCheckReport(checkReport, true); err != nil {
 			return fmt.Errorf("validate post-restore check report: %w", err)

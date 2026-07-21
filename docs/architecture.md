@@ -21,6 +21,8 @@ probes, and evidence, not in terms of one provider's command output.
   stdout/stderr, bounded redacted evidence, and structured exit status.
 - `internal/checkpoint`: atomic attempt-scoped mutation checkpoint stores with
   monotonic transition validation and process-local or durable implementations.
+- `internal/artifact`: bounded content-addressed artifact sinks with streaming
+  disk publication, deduplication, and verified reads.
 - `internal/preflight`: config-derived executable requirements and native
   version checks used by read-only `pgdrill doctor` and target-aware execution
   preflight.
@@ -42,6 +44,8 @@ probes, and evidence, not in terms of one provider's command output.
   optional append-only lifecycle stream.
 - `docs/operation-checkpoint-format.md`: pre-mutation intent, idempotency,
   ownership, and unknown-outcome reconciliation contract.
+- `docs/artifact-format.md`: immutable artifact references, classification,
+  local persistence, and evidence-link integrity.
 - `docs/restore-targets.md`: lifecycle requirements for disposable restore
   environments, including Kubernetes/CNPG notes.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.
@@ -138,7 +142,7 @@ boundary.
 
 The canonical model starts with `DrillSpec`, `BackupCatalog`, `Backup`,
 `WALRange`, `RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`,
-`RunEvent`, `OperationCheckpoint`, and `EvidenceRecord`.
+`RunEvent`, `OperationCheckpoint`, `ArtifactRef`, and `EvidenceRecord`.
 
 Every native or managed engine attempt receives an immutable internal
 `pgdrill.drill-spec/v1alpha1` snapshot. It records execution mode, safe
@@ -264,6 +268,9 @@ confirmation guard so another presentation layer cannot bypass it accidentally.
   checks is a failed protocol response.
 - Evidence keeps bounded redacted command output previews, byte counts,
   truncation state, and normalized status.
+- Large immutable payloads cross a bounded artifact sink before infrastructure
+  mutation and remain linked from evidence by a content digest. Durable sinks
+  never accept an unclassified redaction state.
 - Cleanup must be explicit and observable.
 - Native and managed-target execution must use the common lifecycle recorder;
   presentation layers must not assemble result or cleanup state machines.

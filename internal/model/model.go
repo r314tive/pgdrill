@@ -452,8 +452,9 @@ type Check struct {
 }
 
 type CheckReport struct {
-	Checks   []Check          `json:"checks"`
-	Evidence []EvidenceRecord `json:"evidence,omitempty"`
+	Checks    []Check          `json:"checks"`
+	Evidence  []EvidenceRecord `json:"evidence,omitempty"`
+	Artifacts []ArtifactRef    `json:"artifacts,omitempty"`
 }
 
 type DrillStatus string
@@ -560,6 +561,7 @@ type DrillResult struct {
 	Failure        *DrillFailure         `json:"failure,omitempty"`
 	Checks         []Check               `json:"checks,omitempty"`
 	Evidence       []EvidenceRecord      `json:"evidence,omitempty"`
+	Artifacts      []ArtifactRef         `json:"artifacts,omitempty"`
 	Operations     []OperationCheckpoint `json:"operations,omitempty"`
 }
 
@@ -588,6 +590,7 @@ type EvidenceRecord struct {
 	Source      string            `json:"source"`
 	CollectedAt time.Time         `json:"collected_at"`
 	Command     *CommandEvidence  `json:"command,omitempty"`
+	ArtifactIDs []string          `json:"artifact_ids,omitempty"`
 	Attributes  map[string]string `json:"attributes,omitempty"`
 }
 

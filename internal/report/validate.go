@@ -62,16 +62,29 @@ func validateReport(result model.DrillResult, produced bool) error {
 	if err := validateOperations(result, produced); err != nil {
 		return err
 	}
+	artifactIDs, err := validateArtifacts(result.Artifacts)
+	if err != nil {
+		return err
+	}
+	artifactReferences := make(map[string]int, len(artifactIDs))
 
 	evidenceIDs := make(map[string]struct{}, len(result.Evidence))
 	for i, record := range result.Evidence {
-		if err := validateEvidenceRecord(record); err != nil {
+		if err := validateEvidenceRecord(record, artifactIDs); err != nil {
 			return fmt.Errorf("invalid evidence %d: %w", i, err)
 		}
 		if _, ok := evidenceIDs[record.ID]; ok {
 			return fmt.Errorf("duplicate evidence id %q", record.ID)
 		}
 		evidenceIDs[record.ID] = struct{}{}
+		for _, artifactID := range record.ArtifactIDs {
+			artifactReferences[artifactID]++
+		}
+	}
+	for artifactID := range artifactIDs {
+		if artifactReferences[artifactID] == 0 {
+			return fmt.Errorf("artifact %q is not referenced by evidence", artifactID)
+		}
 	}
 
 	for i, check := range result.Checks {
@@ -115,6 +128,28 @@ func validateReport(result model.DrillResult, produced bool) error {
 		return fmt.Errorf("failure message is required")
 	}
 	return validateEvidenceReferences("failure", result.Failure.EvidenceIDs, evidenceIDs)
+}
+
+func validateArtifacts(artifacts []model.ArtifactRef) (map[string]struct{}, error) {
+	if len(artifacts) > 256 {
+		return nil, fmt.Errorf("artifacts exceed maximum count 256")
+	}
+	ids := make(map[string]struct{}, len(artifacts))
+	uriOwners := make(map[string]string, len(artifacts))
+	for index, artifact := range artifacts {
+		if err := artifact.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid artifact %d: %w", index, err)
+		}
+		if _, exists := ids[artifact.ID]; exists {
+			return nil, fmt.Errorf("duplicate artifact id %q", artifact.ID)
+		}
+		ids[artifact.ID] = struct{}{}
+		if owner, exists := uriOwners[artifact.URI]; exists {
+			return nil, fmt.Errorf("artifact uri %q is shared by ids %q and %q", artifact.URI, owner, artifact.ID)
+		}
+		uriOwners[artifact.URI] = artifact.ID
+	}
+	return ids, nil
 }
 
 func validateOperations(result model.DrillResult, produced bool) error {
@@ -267,7 +302,7 @@ func validateBackup(provider model.ProviderType, backup model.Backup) error {
 	return nil
 }
 
-func validateEvidenceRecord(record model.EvidenceRecord) error {
+func validateEvidenceRecord(record model.EvidenceRecord, artifactIDs map[string]struct{}) error {
 	if strings.TrimSpace(record.ID) == "" {
 		return fmt.Errorf("id is required")
 	}
@@ -292,6 +327,19 @@ func validateEvidenceRecord(record model.EvidenceRecord) error {
 		}
 	} else if record.Command != nil {
 		return fmt.Errorf("kind %q must not contain command payload", record.Kind)
+	}
+	if len(record.ArtifactIDs) > 32 {
+		return fmt.Errorf("artifact_ids exceed maximum count 32")
+	}
+	seenArtifacts := make(map[string]struct{}, len(record.ArtifactIDs))
+	for _, artifactID := range record.ArtifactIDs {
+		if _, duplicate := seenArtifacts[artifactID]; duplicate {
+			return fmt.Errorf("contains duplicate artifact id %q", artifactID)
+		}
+		seenArtifacts[artifactID] = struct{}{}
+		if _, exists := artifactIDs[artifactID]; !exists {
+			return fmt.Errorf("references missing artifact %q", artifactID)
+		}
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/application/runinput"
+	"github.com/r314tive/pgdrill/internal/artifact"
 	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
@@ -36,6 +37,7 @@ type Service struct {
 	Sink                core.EvidenceSink
 	EventSink           core.EventSink
 	Checkpoints         core.CheckpointStore
+	Artifacts           artifact.Sink
 	Clock               func() time.Time
 	FinalizationTimeout time.Duration
 }
@@ -65,6 +67,13 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 		}
 		checkpointStore = checkpoint.DirectoryStore{Path: checkpoint.PathForReport(cfg.Report.Path)}
 	}
+	artifactSink := s.Artifacts
+	if artifactSink == nil {
+		if strings.TrimSpace(cfg.Report.Path) == "" {
+			return model.DrillResult{}, fmt.Errorf("CNPG target verification requires an artifact sink or report.path")
+		}
+		artifactSink = artifact.DirectoryStore{Path: artifact.PathForReport(cfg.Report.Path)}
+	}
 
 	requirements, err := preflight.Requirements(cfg)
 	if err != nil {
@@ -82,12 +91,13 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 		return model.DrillResult{}, fmt.Errorf("create managed CNPG drill spec: %w", err)
 	}
 	resolver := &managedResolver{
-		cfg:      cfg,
-		target:   cfg.Target.CNPG,
-		discover: opts.Discover,
-		drillID:  drillID,
-		probes:   drillSpec.Document().ProbeProfile.Probes,
-		runner:   s.Runner,
+		cfg:       cfg,
+		target:    cfg.Target.CNPG,
+		discover:  opts.Discover,
+		drillID:   drillID,
+		probes:    drillSpec.Document().ProbeProfile.Probes,
+		runner:    s.Runner,
+		artifacts: artifactSink,
 	}
 	return (core.ManagedEngine{
 		Resolver:            resolver,
@@ -175,12 +185,13 @@ func BuildSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameS
 }
 
 type managedResolver struct {
-	cfg      config.Config
-	target   config.CNPGTargetConfig
-	discover bool
-	drillID  string
-	probes   []model.ProbeDescriptor
-	runner   command.Runner
+	cfg       config.Config
+	target    config.CNPGTargetConfig
+	discover  bool
+	drillID   string
+	probes    []model.ProbeDescriptor
+	runner    command.Runner
+	artifacts artifact.Sink
 }
 
 func (r *managedResolver) Resolve(ctx context.Context, attempt model.AttemptContext) (core.ManagedResolution, model.CheckReport, error) {
@@ -209,7 +220,7 @@ func (r *managedResolver) Resolve(ctx context.Context, attempt model.AttemptCont
 		return core.ManagedResolution{}, report, fmt.Errorf("build target verify spec: %w", err)
 	}
 
-	target := cnpg.NewVerifyTarget(spec, cnpg.NewKubectlClient(kubectlConfig(r.cfg), r.runner), lifecycleOptions(r.cfg))
+	target := cnpg.NewVerifyTarget(spec, cnpg.NewKubectlClient(kubectlConfig(r.cfg), r.runner), r.artifacts, lifecycleOptions(r.cfg))
 	checker := core.PostRestoreCheckerFunc(func(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error) {
 		return runPostRestoreChecks(ctx, r.cfg, spec, pg, r.runner)
 	})

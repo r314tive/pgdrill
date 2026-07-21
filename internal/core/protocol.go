@@ -62,12 +62,54 @@ func validateCheckReport(report model.CheckReport, requireChecks bool) error {
 	if requireChecks && len(report.Checks) == 0 {
 		return fmt.Errorf("report returned no checks")
 	}
+	if err := validateCheckReportArtifacts(report); err != nil {
+		return err
+	}
 	for i, check := range report.Checks {
 		if strings.TrimSpace(check.Name) == "" {
 			return fmt.Errorf("check %d name is required", i)
 		}
 		if !check.Status.IsTerminal() {
 			return fmt.Errorf("check %q has non-terminal status %q", check.Name, check.Status)
+		}
+	}
+	return nil
+}
+
+func validateCheckReportArtifacts(report model.CheckReport) error {
+	if len(report.Artifacts) > 256 {
+		return fmt.Errorf("artifacts exceed maximum count 256")
+	}
+	artifactIDs := make(map[string]struct{}, len(report.Artifacts))
+	for index, artifact := range report.Artifacts {
+		if err := artifact.Validate(); err != nil {
+			return fmt.Errorf("artifact %d is invalid: %w", index, err)
+		}
+		if _, exists := artifactIDs[artifact.ID]; exists {
+			return fmt.Errorf("duplicate artifact id %q", artifact.ID)
+		}
+		artifactIDs[artifact.ID] = struct{}{}
+	}
+	artifactReferences := make(map[string]int, len(artifactIDs))
+	for evidenceIndex, evidence := range report.Evidence {
+		if len(evidence.ArtifactIDs) > 32 {
+			return fmt.Errorf("evidence %d artifact_ids exceed maximum count 32", evidenceIndex)
+		}
+		seen := make(map[string]struct{}, len(evidence.ArtifactIDs))
+		for _, artifactID := range evidence.ArtifactIDs {
+			if _, duplicate := seen[artifactID]; duplicate {
+				return fmt.Errorf("evidence %d contains duplicate artifact id %q", evidenceIndex, artifactID)
+			}
+			seen[artifactID] = struct{}{}
+			if _, exists := artifactIDs[artifactID]; !exists {
+				return fmt.Errorf("evidence %d references missing artifact %q", evidenceIndex, artifactID)
+			}
+			artifactReferences[artifactID]++
+		}
+	}
+	for artifactID := range artifactIDs {
+		if artifactReferences[artifactID] == 0 {
+			return fmt.Errorf("artifact %q is not referenced by evidence", artifactID)
 		}
 	}
 	return nil
@@ -83,7 +125,7 @@ func normalizePartialProbeReport(probeType model.ProbeType, report model.CheckRe
 
 func normalizeProbeReportWithRequirement(probeType model.ProbeType, report model.CheckReport, requireChecks bool) (model.CheckReport, error) {
 	if err := validateCheckReport(report, requireChecks); err != nil {
-		return model.CheckReport{Evidence: report.Evidence}, err
+		return model.CheckReport{Evidence: report.Evidence, Artifacts: report.Artifacts}, err
 	}
 	for i := range report.Checks {
 		if report.Checks[i].Probe == "" {
@@ -91,7 +133,7 @@ func normalizeProbeReportWithRequirement(probeType model.ProbeType, report model
 			continue
 		}
 		if report.Checks[i].Probe != probeType {
-			return model.CheckReport{Evidence: report.Evidence}, fmt.Errorf(
+			return model.CheckReport{Evidence: report.Evidence, Artifacts: report.Artifacts}, fmt.Errorf(
 				"check %q probe %q does not match executing probe %q",
 				report.Checks[i].Name,
 				report.Checks[i].Probe,
@@ -100,6 +142,49 @@ func normalizeProbeReportWithRequirement(probeType model.ProbeType, report model
 		}
 	}
 	return report, nil
+}
+
+func appendArtifactReferences(destination *[]model.ArtifactRef, references []model.ArtifactRef) error {
+	byID := make(map[string]model.ArtifactRef, len(*destination)+len(references))
+	byURI := make(map[string]string, len(*destination)+len(references))
+	for _, existing := range *destination {
+		byID[existing.ID] = existing
+		byURI[existing.URI] = existing.ID
+	}
+	for _, reference := range references {
+		if err := reference.Validate(); err != nil {
+			return fmt.Errorf("invalid artifact reference: %w", err)
+		}
+		if existing, found := byID[reference.ID]; found {
+			if !reflect.DeepEqual(existing, reference) {
+				return fmt.Errorf("artifact id %q has conflicting references", reference.ID)
+			}
+			continue
+		}
+		if owner, found := byURI[reference.URI]; found {
+			return fmt.Errorf("artifact uri %q is already owned by %q", reference.URI, owner)
+		}
+		*destination = append(*destination, reference)
+		byID[reference.ID] = reference
+		byURI[reference.URI] = reference.ID
+	}
+	return nil
+}
+
+func appendCheckReportOutput(result *model.DrillResult, report model.CheckReport) error {
+	evidenceStart := len(result.Evidence)
+	result.Evidence = append(result.Evidence, report.Evidence...)
+	artifactErr := validateCheckReportArtifacts(report)
+	if artifactErr == nil {
+		artifactErr = appendArtifactReferences(&result.Artifacts, report.Artifacts)
+	}
+	if artifactErr != nil {
+		for index := evidenceStart; index < len(result.Evidence); index++ {
+			result.Evidence[index].ArtifactIDs = nil
+		}
+		return artifactErr
+	}
+	return nil
 }
 
 func validateRestorePlan(provider model.ProviderType, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec, plan model.RestorePlan) error {

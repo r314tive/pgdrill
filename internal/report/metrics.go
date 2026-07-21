@@ -138,6 +138,27 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		}
 	}
 
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_artifacts_total Number of referenced artifacts in the last drill grouped by retention and redaction classification."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_artifacts_total gauge"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_artifact_bytes Total referenced artifact bytes in the last drill grouped by retention and redaction classification."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_artifact_bytes gauge"); err != nil {
+		return err
+	}
+	for _, sample := range artifactSamples(result.Cluster, result.Provider, result.Artifacts) {
+		if err := writeMetric(writer, "pgdrill_artifacts_total", sample.labels, strconv.Itoa(sample.count)); err != nil {
+			return err
+		}
+		if err := writeMetric(writer, "pgdrill_artifact_bytes", sample.labels, strconv.FormatInt(sample.bytes, 10)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -211,6 +232,46 @@ func operationCountSamples(cluster string, provider model.ProviderType, checkpoi
 		labelsByKey[key] = labels
 	}
 	return samplesFromCounts(counts, labelsByKey)
+}
+
+type artifactMetricSample struct {
+	labels []metricLabel
+	count  int
+	bytes  int64
+}
+
+func artifactSamples(cluster string, provider model.ProviderType, artifacts []model.ArtifactRef) []artifactMetricSample {
+	counts := map[string]int{}
+	bytes := map[string]int64{}
+	labelsByKey := map[string][]metricLabel{}
+	for _, artifact := range artifacts {
+		labels := []metricLabel{
+			{name: "cluster", value: labelOrUnknown(cluster)},
+			{name: "provider", value: providerLabel(provider)},
+			{name: "retention", value: artifactRetentionLabel(artifact.RetentionClass)},
+			{name: "redaction", value: artifactRedactionLabel(artifact.RedactionState)},
+		}
+		key := metricKey(labels)
+		counts[key]++
+		if artifact.SizeBytes > 0 {
+			bytes[key] += artifact.SizeBytes
+		}
+		labelsByKey[key] = labels
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	samples := make([]artifactMetricSample, 0, len(keys))
+	for _, key := range keys {
+		samples = append(samples, artifactMetricSample{
+			labels: labelsByKey[key],
+			count:  counts[key],
+			bytes:  bytes[key],
+		})
+	}
+	return samples
 }
 
 func samplesFromCounts(counts map[string]int, labelsByKey map[string][]metricLabel) []metricSample {
@@ -327,6 +388,20 @@ func operationKindLabel(value model.OperationKind) string {
 }
 
 func operationStateLabel(value model.OperationState) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func artifactRetentionLabel(value model.ArtifactRetentionClass) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func artifactRedactionLabel(value model.ArtifactRedactionState) string {
 	if !value.IsKnown() {
 		return "unknown"
 	}

@@ -3,11 +3,13 @@ package cnpg
 import (
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/artifact"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -20,9 +22,11 @@ func TestControllerStartCreatesClusterAndWaitsForInstance(t *testing.T) {
 			ConnString: "postgresql://verify-altbox-abc12345-rw.d003-db.svc:5432/postgres?sslmode=disable",
 		},
 	}
+	artifactStore := artifact.NewMemoryStore()
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifactStore,
 		Options: LifecycleOptions{
 			WaitTimeout:  3 * time.Minute,
 			PollInterval: 10 * time.Second,
@@ -50,13 +54,24 @@ func TestControllerStartCreatesClusterAndWaitsForInstance(t *testing.T) {
 	if !hasOperation(evidence, "cnpg-manifest-render") || !hasOperation(evidence, "create") || !hasOperation(evidence, "wait") {
 		t.Fatalf("missing expected evidence operations %#v", evidence)
 	}
+	if len(controller.artifactRefs) != 1 || len(evidence[0].ArtifactIDs) != 1 || evidence[0].ArtifactIDs[0] != controller.artifactRefs[0].ID {
+		t.Fatalf("manifest artifact provenance is incomplete: refs=%#v evidence=%#v", controller.artifactRefs, evidence[0])
+	}
+	storedManifest, err := artifactStore.Read(context.Background(), controller.artifactRefs[0])
+	if err != nil {
+		t.Fatalf("read manifest artifact: %v", err)
+	}
+	if string(storedManifest) != string(client.manifest) {
+		t.Fatalf("stored manifest does not match kubectl input")
+	}
 }
 
 func TestControllerStartUsesRestoreScaleWaitDefault(t *testing.T) {
 	client := &fakeLifecycleClient{}
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 	}
 
 	if _, _, err := controller.Start(context.Background()); err != nil {
@@ -67,11 +82,30 @@ func TestControllerStartUsesRestoreScaleWaitDefault(t *testing.T) {
 	}
 }
 
+func TestControllerPersistsManifestBeforeCreate(t *testing.T) {
+	wantErr := errors.New("artifact store unavailable")
+	client := &fakeLifecycleClient{}
+	controller := Controller{
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: failingArtifactSink{err: wantErr},
+	}
+
+	_, _, err := controller.Start(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Start() error = %v, want artifact error", err)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("artifact failure must prevent target mutation, calls=%v", client.calls)
+	}
+}
+
 func TestControllerStartFailureCapturesAndCleansUp(t *testing.T) {
 	client := &fakeLifecycleClient{waitErr: errors.New("full-recovery job failed")}
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 		Options: LifecycleOptions{
 			CaptureLogs:   true,
 			CleanupOnFail: true,
@@ -102,8 +136,9 @@ func TestControllerStartFailureCapturesAndCleansUp(t *testing.T) {
 func TestControllerAmbiguousCreateFailureCleansUpByOwnership(t *testing.T) {
 	client := &fakeLifecycleClient{createErr: errors.New("create response lost")}
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 		Options: LifecycleOptions{
 			CaptureLogs:   true,
 			CleanupOnFail: true,
@@ -135,8 +170,9 @@ func TestControllerCreateStartFailureDoesNotDelete(t *testing.T) {
 		}},
 	}
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 		Options: LifecycleOptions{
 			CaptureLogs:   true,
 			CleanupOnFail: true,
@@ -160,8 +196,9 @@ func TestControllerAmbiguousCreateWithExplicitNameUsesOwnershipCleanup(t *testin
 	spec := testVerifyClusterSpec(t)
 	client := &fakeLifecycleClient{createErr: errors.New("request timed out")}
 	controller := Controller{
-		Spec:   spec,
-		Client: client,
+		Spec:      spec,
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 		Options: LifecycleOptions{
 			CleanupOnFail: true,
 			CleanupPVC:    true,
@@ -183,8 +220,9 @@ func TestControllerAmbiguousCreateWithExplicitNameUsesOwnershipCleanup(t *testin
 func TestControllerAmbiguousCreateRespectsDisabledFailureCleanup(t *testing.T) {
 	client := &fakeLifecycleClient{createErr: errors.New("request timed out")}
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 		Options: LifecycleOptions{
 			CleanupOnFail: false,
 			CleanupPVC:    true,
@@ -270,8 +308,9 @@ func TestControllerStartCancellationFinalizesWithLiveContexts(t *testing.T) {
 		},
 	}
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 		Options: LifecycleOptions{
 			CaptureLogs:   true,
 			CleanupOnFail: true,
@@ -303,8 +342,9 @@ func TestControllerDestroyCapturesAndDeletesCluster(t *testing.T) {
 		},
 	}
 	controller := Controller{
-		Spec:   testVerifyClusterSpec(t),
-		Client: client,
+		Spec:      testVerifyClusterSpec(t),
+		Client:    client,
+		Artifacts: artifact.NewMemoryStore(),
 		Options: LifecycleOptions{
 			CaptureLogs:     true,
 			CleanupPVC:      true,
@@ -357,6 +397,14 @@ type fakeLifecycleClient struct {
 	waitHook          func() error
 	captureContextErr error
 	deleteContextErr  error
+}
+
+type failingArtifactSink struct {
+	err error
+}
+
+func (s failingArtifactSink) Put(context.Context, model.ArtifactMetadata, io.Reader) (model.ArtifactRef, error) {
+	return model.ArtifactRef{}, s.err
 }
 
 func (c *fakeLifecycleClient) FindOwnedCluster(_ context.Context, _ VerifyClusterSpec) (OwnedCluster, []model.EvidenceRecord, error) {

@@ -30,6 +30,9 @@ called out explicitly even while the major version is `0`.
 - Local-target operation receipts and read-only CNPG ownership discovery used
   to prove completed mutations without blindly replaying provider or
   Kubernetes commands.
+- Bounded `pgdrill.artifact-reference/v1alpha1` records, content-addressed
+  in-memory and directory stores, report referential-integrity checks, and
+  pre-create persistence of exact CNPG manifests.
 
 ### Changed
 
@@ -55,6 +58,10 @@ called out explicitly even while the major version is `0`.
 - Local and CNPG cleanup ownership is now derived deterministically from the
   immutable attempt identity. This allows a replacement executor to locate
   the same owned resources without persisting random process-local state.
+- CNPG verify reports link the exact immutable create manifest from
+  `<report.path>.artifacts`; artifact write failure now prevents the `kubectl
+  create` mutation. Metrics expose bounded retention/redaction counts and byte
+  totals.
 - CNPG create confirmation is enforced by both the CLI and the application
   service. Cancellation observed during final cleanup now produces an
   `aborted` result instead of a possible false `passed` result.

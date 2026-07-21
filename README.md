@@ -31,6 +31,9 @@ event contract is available for future durable history and control-plane work.
 Mutations use deterministic attempt-scoped operation and ownership identities,
 durable pre-mutation checkpoints, and explicit target reconciliation instead
 of blind command replay.
+Large immutable evidence can be persisted through bounded content-addressed
+artifact references; CNPG verify runs store the exact create manifest before
+target mutation.
 
 ## Goals
 
@@ -71,6 +74,8 @@ Additional providers can be added behind the same internal provider contract.
 - **Operation checkpoint**: a durable intent and terminal mutation state bound
   to one attempt. It lets a replacement executor reconcile owned resources
   without assuming that a failed command had no effect.
+- **Artifact reference**: a digest, immutable URI, exact size, media type,
+  retention class, and redaction classification linked from bounded evidence.
 
 The implemented full-drill target is `local`. Kubernetes is available through
 the guarded CloudNativePG `target manifest` and `target verify` paths;

@@ -171,14 +171,18 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if e.Preflight != nil {
 		err = lifecycle.RunStage(ctx, model.DrillStagePreflight, func() error {
 			preflightReport, preflightErr := e.Preflight.Check(ctx)
-			result.Evidence = append(result.Evidence, preflightReport.Evidence...)
+			artifactErr := appendCheckReportOutput(&result, preflightReport)
 			if preflightErr != nil {
+				preflightErr = errors.Join(preflightErr, artifactErr)
 				if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
 					result.Checks = append(result.Checks, preflightReport.Checks...)
 				} else {
 					preflightErr = errors.Join(preflightErr, fmt.Errorf("invalid partial preflight report: %w", reportErr))
 				}
 				return fmt.Errorf("run preflight: %w", preflightErr)
+			}
+			if artifactErr != nil {
+				return fmt.Errorf("collect preflight artifacts: %w", artifactErr)
 			}
 			if err := validateCheckReport(preflightReport, true); err != nil {
 				return fmt.Errorf("validate preflight report: %w", err)
@@ -231,14 +235,18 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 
 	err = lifecycle.RunStage(ctx, model.DrillStageCatalogValidation, func() error {
 		checkReport, validateErr := e.CatalogValidator.ValidateCatalog(ctx, catalog, backup, recoveryTarget)
-		result.Evidence = append(result.Evidence, checkReport.Evidence...)
+		artifactErr := appendCheckReportOutput(&result, checkReport)
 		if validateErr != nil {
+			validateErr = errors.Join(validateErr, artifactErr)
 			if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
 				result.Checks = append(result.Checks, checkReport.Checks...)
 			} else {
 				validateErr = errors.Join(validateErr, fmt.Errorf("invalid partial catalog check report: %w", reportErr))
 			}
 			return fmt.Errorf("validate catalog: %w", validateErr)
+		}
+		if artifactErr != nil {
+			return fmt.Errorf("collect catalog validation artifacts: %w", artifactErr)
 		}
 		if err := validateCheckReport(checkReport, true); err != nil {
 			return fmt.Errorf("validate catalog check report: %w", err)
@@ -371,8 +379,8 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	err = lifecycle.RunStage(ctx, model.DrillStageProbeExecution, func() error {
 		probeReport, probeErr := RunProbes(ctx, e.Probes, pg)
 		result.Checks = append(result.Checks, probeReport.Checks...)
-		result.Evidence = append(result.Evidence, probeReport.Evidence...)
-		return probeErr
+		artifactErr := appendCheckReportOutput(&result, probeReport)
+		return errors.Join(probeErr, artifactErr)
 	})
 	if err != nil {
 		cleanupErr := cleanup()

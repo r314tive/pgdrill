@@ -107,9 +107,9 @@ PostgreSQL 15.13 environment; a broader compatibility matrix remains pending.
 - Kubernetes events, pod descriptions, logs, and PVC state as evidence.
 - Bounded Kubernetes event evidence through `events_tail`.
 - Explicit cluster/PVC cleanup evidence.
-- Create-only target ownership with random labels inherited by CNPG resources,
-  plus idempotent selector-scoped cleanup after ambiguous `kubectl create`
-  failures.
+- Create-only target ownership with deterministic attempt labels inherited by
+  CNPG resources, plus idempotent selector-scoped cleanup after ambiguous
+  `kubectl create` failures.
 - Cancellation-safe CNPG diagnostics, cleanup, and report persistence.
 - CronJob-friendly examples.
 - Exact public `v0.1.0-alpha.9` Linux amd64 artifact exercised through latest
@@ -156,6 +156,9 @@ Completed foundation:
 - Deterministic attempt ownership and operation keys, fail-closed pre-mutation
   intents, atomic local checkpoint persistence, local operation receipts,
   read-only CNPG ownership reconciliation, and executor-loss fault injection.
+- Bounded content-addressed artifact stores and references with strict
+  redaction/retention classification, report provenance validation, and exact
+  CNPG manifest persistence before target creation.
 - CNPG orchestration moved from `cmd/pgdrill` into
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
@@ -163,14 +166,11 @@ Completed foundation:
 
 Remaining engine gates, in order:
 
-1. Add bounded content-addressed artifact references and storage; operation
-   idempotency keys, persisted checkpoints, and unknown-outcome reconciliation
-   are complete.
-2. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
+1. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
    target satisfaction, and required cleanup.
-3. Publish reusable provider/target conformance suites and record real
+2. Publish reusable provider/target conformance suites and record real
    repository/version matrices for WAL-G, Barman, pgBackRest, and pg_probackup.
-4. Exercise a release candidate through local native-provider drills and a
+3. Exercise a release candidate through local native-provider drills and a
    live disposable CNPG drill before calling Engine v0.2 release-ready.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this

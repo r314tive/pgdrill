@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/r314tive/pgdrill/internal/artifact"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -17,13 +18,14 @@ type VerifyTarget struct {
 	operation  model.Operation
 }
 
-func NewVerifyTarget(spec VerifyClusterSpec, client Client, options LifecycleOptions) *VerifyTarget {
+func NewVerifyTarget(spec VerifyClusterSpec, client Client, artifacts artifact.Sink, options LifecycleOptions) *VerifyTarget {
 	return &VerifyTarget{
 		Spec: spec,
 		controller: &Controller{
-			Spec:    spec,
-			Client:  client,
-			Options: options,
+			Spec:      spec,
+			Client:    client,
+			Artifacts: artifacts,
+			Options:   options,
 		},
 	}
 }
@@ -97,6 +99,17 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 			}, nil
 		}
 		t.controller.created = true
+		_, manifestArtifact, artifactErr := t.controller.prepareManifestArtifact(ctx)
+		if artifactErr != nil {
+			return model.OperationReconciliation{Evidence: evidence}, artifactErr
+		}
+		manifestEvidence := t.controller.runtimeEvidence("cnpg-manifest-reconcile", map[string]string{
+			"cluster":      t.Spec.Name,
+			"namespace":    t.Spec.Namespace,
+			"ownership_id": t.Spec.OwnershipID,
+		})
+		manifestEvidence.ArtifactIDs = []string{manifestArtifact.ID}
+		evidence = append(evidence, manifestEvidence)
 		instance, waitEvidence, waitErr := t.controller.Client.WaitForInstanceReady(ctx, t.Spec, WaitOptions{
 			Timeout:      t.controller.Options.WaitTimeout,
 			PollInterval: t.controller.Options.PollInterval,
@@ -106,7 +119,10 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 			return model.OperationReconciliation{
 				Disposition: model.ReconciliationUnknown,
 				Message:     "owned CNPG cluster exists but readiness is not proven",
-				Evidence:    evidence,
+				Report: model.CheckReport{
+					Evidence:  evidence,
+					Artifacts: append([]model.ArtifactRef(nil), t.controller.artifactRefs...),
+				},
 			}, nil
 		}
 		t.controller.instance = instance
@@ -126,7 +142,7 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 					"source_cluster": t.Spec.SourceCluster,
 					"verify_cluster": t.Spec.Name,
 				},
-			}}, Evidence: evidence},
+			}}, Evidence: evidence, Artifacts: append([]model.ArtifactRef(nil), t.controller.artifactRefs...)},
 		}, nil
 	case model.OperationTargetCleanup:
 		if !owned.Found {
@@ -172,7 +188,8 @@ func (t *VerifyTarget) Start(ctx context.Context) (model.RunningPostgres, model.
 				"verify_cluster": t.Spec.Name,
 			},
 		}},
-		Evidence: evidence,
+		Evidence:  evidence,
+		Artifacts: append([]model.ArtifactRef(nil), t.controller.artifactRefs...),
 	}, err
 }
 

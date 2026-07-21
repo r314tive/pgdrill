@@ -130,7 +130,7 @@ func TestReconcileAttemptClassifiesCrashAfterMutation(t *testing.T) {
 		Disposition: model.ReconciliationCompleted,
 		Message:     "owned resource proves completion",
 	}}
-	checkpoints, _, err := ReconcileAttempt(
+	checkpoints, _, _, err := ReconcileAttempt(
 		context.Background(),
 		store,
 		recoveredTarget,
@@ -161,7 +161,7 @@ func TestReconcileAttemptDoesNotMarkFailedObservationAsReconciled(t *testing.T) 
 	}
 
 	wantErr := errors.New("target observation unavailable")
-	checkpoints, _, err := ReconcileAttempt(
+	checkpoints, _, _, err := ReconcileAttempt(
 		context.Background(),
 		store,
 		&operationTargetStub{reconcileErr: wantErr},
