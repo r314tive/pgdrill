@@ -69,6 +69,13 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
 		model.BackupSelection{Type: model.BackupSelectionLatestAvailable},
 	)
+	request = nativeRequestWithPolicy(t, request, model.RecoveryPolicy{
+		MaximumRTO:            "30m",
+		MaximumRPO:            "48h",
+		MaximumBackupAge:      "48h",
+		RequireRecoveryTarget: true,
+		RequireCleanup:        true,
+	})
 	request.ID = "drill-1"
 
 	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
@@ -137,6 +144,72 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 		if operation.State != model.OperationStateSucceeded || !model.IsSHA256Digest(operation.Operation.Key) {
 			t.Fatalf("unexpected operation checkpoint %#v", operation)
 		}
+	}
+	if result.PolicyEvaluation == nil {
+		t.Fatal("expected policy evaluation")
+	}
+	for _, verdict := range result.PolicyEvaluation.Verdicts {
+		if verdict.Status != model.PolicyVerdictPassed {
+			t.Fatalf("unexpected policy verdict %#v", verdict)
+		}
+	}
+}
+
+func TestEnginePolicyGateFailsClosedOnUnprovenRPOAndOldBackup(t *testing.T) {
+	startedAt := mustTime(t, "2026-07-21T12:00:00Z")
+	backupFinishedAt := startedAt.Add(-2 * time.Hour)
+	targetSpec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill-policy"}
+	recoveryTarget := model.RecoveryTarget{Type: model.RecoveryTargetLatest}
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups: []model.Backup{{
+				ID:         "wal-g:base_1",
+				Provider:   model.ProviderWALG,
+				ProviderID: "base_1",
+				Kind:       model.BackupKindFull,
+				Status:     model.BackupStatusAvailable,
+				FinishedAt: &backupFinishedAt,
+			}},
+		},
+		plan: testRestorePlan(model.ProviderWALG, "base_1", targetSpec, recoveryTarget, "restore"),
+	}
+	request := nativeRequestWithPolicy(t, nativeRequest(model.ProviderWALG, targetSpec, recoveryTarget), model.RecoveryPolicy{
+		MaximumRTO:            "10m",
+		MaximumRPO:            "30m",
+		MaximumBackupAge:      "30m",
+		RequireRecoveryTarget: true,
+		RequireCleanup:        true,
+	})
+	sink := &fakeSink{}
+	target := &fakeTarget{}
+	result, err := (Engine{
+		Source:           provider,
+		CatalogValidator: provider,
+		Planner:          provider,
+		Target:           target,
+		Probes:           []Probe{passingProbe()},
+		Sink:             sink,
+		Checkpoints:      checkpoint.NewMemoryStore(),
+		Clock:            func() time.Time { return startedAt },
+	}).Run(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "rpo=unknown") || !strings.Contains(err.Error(), "backup_age=failed") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStagePolicyEvaluation {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if result.PolicyEvaluation == nil {
+		t.Fatal("policy failure has no canonical evaluation")
+	}
+	if got := result.PolicyEvaluation.BlockingVerdicts(); len(got) != 2 {
+		t.Fatalf("blocking verdicts = %#v", got)
+	}
+	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("target calls = %#v, want %#v", got, want)
+	}
+	if !sink.called || sink.result.Status != model.DrillStatusFailed {
+		t.Fatalf("policy failure was not persisted: %#v", sink)
 	}
 }
 
@@ -292,6 +365,7 @@ func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
 		model.DrillStagePostgresStart,
 		model.DrillStageProbeExecution,
 		model.DrillStageTargetCleanup,
+		model.DrillStagePolicyEvaluation,
 	}
 	gotStages := []model.DrillStage{}
 	for i, event := range events {
@@ -1324,6 +1398,18 @@ func nativeRequestFor(cluster string, provider model.ProviderType, target model.
 		panic(err)
 	}
 	return DrillRequest{Spec: spec}
+}
+
+func nativeRequestWithPolicy(t *testing.T, request DrillRequest, recoveryPolicy model.RecoveryPolicy) DrillRequest {
+	t.Helper()
+	document := request.Spec.Document()
+	document.Policy = recoveryPolicy
+	spec, err := runspec.New(document)
+	if err != nil {
+		t.Fatalf("runspec.New(policy) error = %v", err)
+	}
+	request.Spec = spec
+	return request
 }
 
 func availableBackup(provider model.ProviderType, providerID string) model.Backup {

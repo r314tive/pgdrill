@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/policy"
 	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
@@ -76,6 +77,9 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 	}
 	if loaded.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected status %q", loaded.Status)
+	}
+	if loaded.PolicyEvaluation == nil || len(loaded.PolicyEvaluation.Verdicts) != len(model.RecoveryPolicyAssertions()) {
+		t.Fatalf("unexpected policy evaluation %#v", loaded.PolicyEvaluation)
 	}
 	if len(loaded.Checks) != 1 || loaded.Checks[0].Name != "select_1" {
 		t.Fatalf("unexpected checks %#v", loaded.Checks)
@@ -376,5 +380,15 @@ func attachTestSpec(result model.DrillResult) model.DrillResult {
 	result.AttemptID = "attempt-1"
 	result.SpecDigest = spec.Digest()
 	result.Spec = &specDocument
+	evaluation, err := policy.Evaluate(specDocument.Policy, specDocument.RecoveryTarget, policy.Facts{
+		StartedAt:   result.StartedAt,
+		EvaluatedAt: result.FinishedAt,
+		Backup:      result.Backup,
+		Operations:  result.Operations,
+	})
+	if err != nil {
+		panic(err)
+	}
+	result.PolicyEvaluation = &evaluation
 	return result
 }

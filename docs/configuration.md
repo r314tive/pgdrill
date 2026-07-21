@@ -94,6 +94,26 @@ Choose explicit values from measured repository size and drill history. A
 timeout is an operational guard, not an RTO assertion; the report's measured
 timestamps are the evidence used to evaluate RTO.
 
+## Recovery Policy
+
+The optional top-level `policy` block defines assertions, not command
+deadlines:
+
+```yaml
+policy:
+  maximum_rto: 2h
+  maximum_rpo: 15m
+  maximum_backup_age: 24h
+  require_recovery_target: true
+  require_cleanup: true
+```
+
+Duration assertions are disabled when omitted and must be at least `1ms` when
+set. Boolean requirements default to false. Disabled assertions remain visible
+as `not_configured`; configured assertions fail closed on `unknown` evidence.
+The exact measurement and cleanup semantics are documented in
+[recovery-policy.md](recovery-policy.md).
+
 ## Kubernetes Target Ownership
 
 `pgdrill target verify` uses `kubectl create`, never `apply`, so an existing
@@ -106,6 +126,10 @@ resource name is not sufficient authority for deletion.
 `target.kubernetes.cleanup_on_fail` controls cleanup after startup failures and
 ambiguous create outcomes. Once a verify cluster reaches Ready, teardown is
 always attempted. `cleanup_pvc` independently controls deletion of owned PVCs.
+
+CNPG target verification currently accepts only `recovery.target: latest`
+without timeline or inclusive options. Other targets are rejected before
+Kubernetes mutation rather than being silently restored as latest.
 
 ## Local Work Directory
 

@@ -54,6 +54,12 @@ restore:
 recovery:
   target: timestamp
   value: "2026-07-06T00:00:00Z"
+policy:
+  maximum_rto: 30m
+  maximum_rpo: 5m
+  maximum_backup_age: 24h
+  require_recovery_target: true
+  require_cleanup: true
 probes:
   - type: pg_isready
     binary: /usr/lib/postgresql/16/bin/pg_isready
@@ -136,6 +142,30 @@ report:
 	}
 	if got := cfg.RecoveryTarget(); got.Type != model.RecoveryTargetTimestamp || got.Value != "2026-07-06T00:00:00Z" {
 		t.Fatalf("unexpected recovery target %#v", got)
+	}
+	if got := cfg.RecoveryPolicy(); got.MaximumRTO != "30m0s" || got.MaximumRPO != "5m0s" || got.MaximumBackupAge != "24h0m0s" || !got.RequireRecoveryTarget || !got.RequireCleanup {
+		t.Fatalf("unexpected recovery policy %#v", got)
+	}
+}
+
+func TestLoadRejectsInvalidPolicyDurations(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		field string
+		value string
+		want  string
+	}{
+		{name: "negative rto", field: "maximum_rto", value: "-1s", want: "must not be negative"},
+		{name: "sub millisecond rpo", field: "maximum_rpo", value: "1us", want: "must be at least 1ms"},
+		{name: "invalid backup age", field: "maximum_backup_age", value: "soon", want: "parse duration"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := "provider:\n  type: wal-g\ntarget:\n  type: local\npolicy:\n  " + test.field + ": " + test.value + "\n"
+			_, err := Load(strings.NewReader(input), "yaml")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -746,6 +776,9 @@ func TestLoadWALGExampleConfig(t *testing.T) {
 	}
 	if cfg.Restore.Timeout.Duration != 6*time.Hour {
 		t.Fatalf("unexpected example restore timeout %s", cfg.Restore.Timeout.Duration)
+	}
+	if got := cfg.RecoveryPolicy(); got.MaximumRTO != "2h0m0s" || got.MaximumRPO != "15m0s" || got.MaximumBackupAge != "24h0m0s" || !got.RequireRecoveryTarget || !got.RequireCleanup {
+		t.Fatalf("unexpected example recovery policy %#v", got)
 	}
 }
 

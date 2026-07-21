@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -134,6 +135,7 @@ func normalize(document model.DrillSpec) model.DrillSpec {
 	document.Target.Spec.WorkDir = strings.TrimSpace(document.Target.Spec.WorkDir)
 	document.Target.Spec.Labels = cloneStringMap(document.Target.Spec.Labels)
 	document.RecoveryTarget = normalizeRecoveryTarget(document.RecoveryTarget)
+	document.Policy = normalizeRecoveryPolicy(document.Policy)
 	document.ProbeProfile.Ref = normalizeRef(document.ProbeProfile.Ref)
 	if len(document.ProbeProfile.Probes) == 0 {
 		document.ProbeProfile.Probes = nil
@@ -184,6 +186,24 @@ func normalizeRecoveryTarget(target model.RecoveryTarget) model.RecoveryTarget {
 	return target
 }
 
+func normalizeRecoveryPolicy(policy model.RecoveryPolicy) model.RecoveryPolicy {
+	policy.MaximumRTO = normalizeDuration(policy.MaximumRTO)
+	policy.MaximumRPO = normalizeDuration(policy.MaximumRPO)
+	policy.MaximumBackupAge = normalizeDuration(policy.MaximumBackupAge)
+	return policy
+}
+
+func normalizeDuration(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if duration, err := time.ParseDuration(value); err == nil {
+		return duration.String()
+	}
+	return value
+}
+
 func validateDocument(document model.DrillSpec) error {
 	if document.SchemaVersion != model.CurrentDrillSpecSchemaVersion {
 		return fmt.Errorf("unsupported drill spec schema_version %q", document.SchemaVersion)
@@ -230,6 +250,9 @@ func validateDocument(document model.DrillSpec) error {
 	}
 	if err := document.RecoveryTarget.Validate(); err != nil {
 		return fmt.Errorf("invalid recovery target: %w", err)
+	}
+	if err := document.Policy.Validate(); err != nil {
+		return fmt.Errorf("invalid recovery policy: %w", err)
 	}
 	if err := validateRef("probe_profile.ref", document.ProbeProfile.Ref); err != nil {
 		return err

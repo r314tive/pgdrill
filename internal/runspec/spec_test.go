@@ -16,6 +16,7 @@ func TestNewCanonicalizesAndHashesEquivalentSpecs(t *testing.T) {
 		Value:    "2026-07-21T10:30:00+05:00",
 		Timeline: "0002",
 	}
+	first.Policy = model.RecoveryPolicy{MaximumRTO: "60m", MaximumBackupAge: "24h"}
 	second := validDocument()
 	second.Target.Spec.Labels = map[string]string{"environment": "test", "zone": "a"}
 	second.RecoveryTarget = model.RecoveryTarget{
@@ -23,6 +24,7 @@ func TestNewCanonicalizesAndHashesEquivalentSpecs(t *testing.T) {
 		Value:    "2026-07-21T05:30:00Z",
 		Timeline: "2",
 	}
+	second.Policy = model.RecoveryPolicy{MaximumRTO: "1h", MaximumBackupAge: "1440m"}
 
 	firstSpec, err := New(first)
 	if err != nil {
@@ -43,6 +45,9 @@ func TestNewCanonicalizesAndHashesEquivalentSpecs(t *testing.T) {
 	}
 	if got := firstSpec.Document().RecoveryTarget.Value; got != "2026-07-21T05:30:00Z" {
 		t.Fatalf("canonical timestamp = %q", got)
+	}
+	if got := firstSpec.Document().Policy; got.MaximumRTO != "1h0m0s" || got.MaximumBackupAge != "24h0m0s" {
+		t.Fatalf("canonical policy = %#v", got)
 	}
 }
 
@@ -107,6 +112,9 @@ func TestNewRejectsInvalidContracts(t *testing.T) {
 		{name: "recovery target", edit: func(d *model.DrillSpec) {
 			d.RecoveryTarget = model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "not-a-time"}
 		}, want: "invalid recovery target"},
+		{name: "recovery policy", edit: func(d *model.DrillSpec) {
+			d.Policy.MaximumRPO = "500us"
+		}, want: "invalid recovery policy"},
 		{name: "empty probes", edit: func(d *model.DrillSpec) { d.ProbeProfile.Probes = nil }, want: "at least one probe"},
 		{name: "duplicate probe", edit: func(d *model.DrillSpec) {
 			d.ProbeProfile.Probes = append(d.ProbeProfile.Probes, d.ProbeProfile.Probes[0])

@@ -30,6 +30,11 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	events := []model.RunEvent{}
 	sink := &fakeSink{}
 	request := managedRequest("managed-1")
+	request = managedRequestWithPolicy(t, request, model.RecoveryPolicy{
+		MaximumRTO:            "30m",
+		RequireRecoveryTarget: true,
+		RequireCleanup:        true,
+	})
 	request.AttemptID = "attempt-1"
 
 	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(),
@@ -70,6 +75,14 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	if !sink.called || sink.result.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected sink %#v", sink)
 	}
+	if result.PolicyEvaluation == nil {
+		t.Fatal("expected managed policy evaluation")
+	}
+	for _, assertion := range []model.PolicyAssertion{model.PolicyAssertionRTO, model.PolicyAssertionRecoveryTarget, model.PolicyAssertionCleanup} {
+		if verdict := managedPolicyVerdict(t, *result.PolicyEvaluation, assertion); verdict.Status != model.PolicyVerdictPassed {
+			t.Fatalf("unexpected managed %s verdict %#v", assertion, verdict)
+		}
+	}
 	wantStages := []model.DrillStage{
 		model.DrillStageRequestValidation,
 		model.DrillStagePreflight,
@@ -77,6 +90,7 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 		model.DrillStageTargetStart,
 		model.DrillStageProbeExecution,
 		model.DrillStageTargetCleanup,
+		model.DrillStagePolicyEvaluation,
 	}
 	gotStages := []model.DrillStage{}
 	for _, event := range events {
@@ -238,14 +252,15 @@ func TestManagedEngineValidatesResolutionBeforeMutation(t *testing.T) {
 		resolution ManagedResolution
 		want       string
 	}{
-		{name: "target", resolution: ManagedResolution{Backup: managedBackup(), Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "target is required"},
-		{name: "checker", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}, Probes: managedProbeDescriptors()}, want: "checker is required"},
-		{name: "backup", resolution: ManagedResolution{Target: &fakeManagedTarget{}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "backup id"},
+		{name: "target", resolution: ManagedResolution{Backup: managedBackup(), RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "target is required"},
+		{name: "checker", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Probes: managedProbeDescriptors()}, want: "checker is required"},
+		{name: "backup", resolution: ManagedResolution{Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "backup id"},
 		{name: "status", resolution: ManagedResolution{Backup: func() model.Backup {
 			backup := managedBackup()
 			backup.Status = model.BackupStatusFailed
 			return backup
-		}(), Target: &fakeManagedTarget{}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "not available"},
+		}(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "not available"},
+		{name: "recovery target", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetImmediate}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "does not match requested"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -336,7 +351,13 @@ func (c *fakePostRestoreChecker) Check(context.Context, model.RunningPostgres) (
 }
 
 func managedResolution(target ManagedRestoreTarget, checker PostRestoreChecker) ManagedResolution {
-	return ManagedResolution{Backup: managedBackup(), Target: target, Checks: checker, Probes: managedProbeDescriptors()}
+	return ManagedResolution{
+		Backup:         managedBackup(),
+		Target:         target,
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		Checks:         checker,
+		Probes:         managedProbeDescriptors(),
+	}
 }
 
 func managedArtifactRef(t *testing.T) model.ArtifactRef {
@@ -394,6 +415,29 @@ func managedRequest(id string) ManagedDrillRequest {
 		panic(err)
 	}
 	return ManagedDrillRequest{ID: id, Spec: spec}
+}
+
+func managedRequestWithPolicy(t *testing.T, request ManagedDrillRequest, recoveryPolicy model.RecoveryPolicy) ManagedDrillRequest {
+	t.Helper()
+	document := request.Spec.Document()
+	document.Policy = recoveryPolicy
+	spec, err := runspec.New(document)
+	if err != nil {
+		t.Fatalf("runspec.New(policy) error = %v", err)
+	}
+	request.Spec = spec
+	return request
+}
+
+func managedPolicyVerdict(t *testing.T, evaluation model.RecoveryPolicyEvaluation, assertion model.PolicyAssertion) model.PolicyVerdict {
+	t.Helper()
+	for _, verdict := range evaluation.Verdicts {
+		if verdict.Assertion == assertion {
+			return verdict
+		}
+	}
+	t.Fatalf("missing %s verdict", assertion)
+	return model.PolicyVerdict{}
 }
 
 func managedBackup() model.Backup {

@@ -64,8 +64,9 @@ func (i AttemptIdentity) OwnershipID() (string, error) {
 }
 
 type AttemptContext struct {
-	Identity AttemptIdentity `json:"identity"`
-	Target   TargetSpec      `json:"target"`
+	Identity       AttemptIdentity `json:"identity"`
+	Target         TargetSpec      `json:"target"`
+	RecoveryTarget RecoveryTarget  `json:"recovery_target"`
 }
 
 func (c AttemptContext) Validate() error {
@@ -74,6 +75,13 @@ func (c AttemptContext) Validate() error {
 	}
 	if !c.Target.Type.IsKnown() {
 		return fmt.Errorf("target type %q is unsupported", c.Target.Type)
+	}
+	recoveryTarget := c.RecoveryTarget.Normalized()
+	if !recoveryTarget.Type.IsKnown() {
+		return fmt.Errorf("recovery target type %q is unsupported", recoveryTarget.Type)
+	}
+	if err := recoveryTarget.Validate(); err != nil {
+		return fmt.Errorf("invalid recovery target: %w", err)
 	}
 	return nil
 }

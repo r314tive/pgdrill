@@ -82,6 +82,7 @@ type DrillSpec struct {
 	BackupSelection BackupSelection   `json:"backup_selection"`
 	Target          RestoreTargetSpec `json:"target"`
 	RecoveryTarget  RecoveryTarget    `json:"recovery_target"`
+	Policy          RecoveryPolicy    `json:"policy"`
 	ProbeProfile    ProbeProfileSpec  `json:"probe_profile"`
 }
 

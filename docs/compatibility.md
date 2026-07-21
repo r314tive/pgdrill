@@ -55,6 +55,11 @@ repositories still require environment-specific validation.
 The CNPG target has manifest, discovery, lifecycle, failure, evidence, and CLI
 tests behind a `kubectl` compatibility client.
 
+The current CNPG adapter implements only plain `latest` recovery. Other
+recovery-target types and timeline/inclusive options fail before resource
+creation. They are not compatibility claims until the manifest mapping and a
+live PITR drill prove them.
+
 ### CNPG Field Validation
 
 On 2026-07-20, the exact public `v0.1.0-alpha.9` Linux amd64 archive completed

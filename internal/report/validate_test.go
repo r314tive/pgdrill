@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/policy"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 func TestValidateRejectsMalformedCurrentReports(t *testing.T) {
@@ -92,6 +94,71 @@ func TestValidateAllowsLegacyFailureWithoutDetails(t *testing.T) {
 	if err := Validate(result); err != nil {
 		t.Fatalf("validate legacy failure: %v", err)
 	}
+}
+
+func TestValidateRequiresCoherentRecoveryPolicyEvaluation(t *testing.T) {
+	recoveryPolicy := model.RecoveryPolicy{MaximumRTO: "10m"}
+	result := testResultWithPolicy(t, recoveryPolicy, time.Time{})
+
+	t.Run("missing", func(t *testing.T) {
+		broken := result
+		broken.PolicyEvaluation = nil
+		if err := Validate(broken); err == nil || !strings.Contains(err.Error(), "policy_evaluation is required") {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+
+	t.Run("blocking passed report", func(t *testing.T) {
+		if verdict := result.PolicyEvaluation.BlockingVerdicts(); len(verdict) != 1 || verdict[0].Status != model.PolicyVerdictUnknown {
+			t.Fatalf("unexpected blocking verdicts %#v", verdict)
+		}
+		if err := Validate(result); err == nil || !strings.Contains(err.Error(), "passed report contains blocking policy verdict") {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+
+	t.Run("limit drift", func(t *testing.T) {
+		passing := testResultWithPolicy(t, recoveryPolicy, result.StartedAt.Add(time.Minute))
+		changed := int64((9 * time.Minute).Milliseconds())
+		passing.PolicyEvaluation.Verdicts[0].LimitMillis = &changed
+		if err := Validate(passing); err == nil || !strings.Contains(err.Error(), "does not match spec policy") {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+
+	t.Run("evaluation after finish", func(t *testing.T) {
+		passing := testResultWithPolicy(t, recoveryPolicy, result.StartedAt.Add(time.Minute))
+		passing.PolicyEvaluation.EvaluatedAt = passing.FinishedAt.Add(time.Second)
+		if err := Validate(passing); err == nil || !strings.Contains(err.Error(), "must not be later than finished_at") {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+}
+
+func testResultWithPolicy(t *testing.T, recoveryPolicy model.RecoveryPolicy, recoveryProvenAt time.Time) model.DrillResult {
+	t.Helper()
+	result := validTestResult()
+	document := *result.Spec
+	document.Policy = recoveryPolicy
+	spec, err := runspec.New(document)
+	if err != nil {
+		t.Fatalf("runspec.New() error = %v", err)
+	}
+	canonical := spec.Document()
+	result.Spec = &canonical
+	result.SpecDigest = spec.Digest()
+	evaluation, err := policy.Evaluate(recoveryPolicy, result.RecoveryTarget, policy.Facts{
+		StartedAt:        result.StartedAt,
+		EvaluatedAt:      result.FinishedAt,
+		RecoveryProvenAt: recoveryProvenAt,
+		Backup:           result.Backup,
+		Operations:       result.Operations,
+	})
+	if err != nil {
+		t.Fatalf("policy.Evaluate() error = %v", err)
+	}
+	result.PolicyEvaluation = &evaluation
+	return result
 }
 
 func TestValidateChecksOperationIdentityAndTerminalState(t *testing.T) {

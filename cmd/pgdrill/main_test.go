@@ -14,6 +14,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/artifact"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/policy"
 	"github.com/r314tive/pgdrill/internal/preflight"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/runspec"
@@ -47,6 +48,9 @@ func TestExplainJSONCommand(t *testing.T) {
 	}
 	if len(overview.Providers) == 0 {
 		t.Fatalf("expected providers in json output, got: %s", stdout.String())
+	}
+	if got, want := overview.PolicyAssertions, model.RecoveryPolicyAssertions(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected policy assertions: got %#v want %#v", got, want)
 	}
 	if got, want := overview.TargetCapabilities.Run, []model.RestoreTargetType{model.RestoreTargetLocal}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected run target capabilities: got %#v want %#v", got, want)
@@ -1781,6 +1785,8 @@ func TestReportShowCommandText(t *testing.T) {
 		"Error        one or more probes failed",
 		"Backup       wal-g:base_1",
 		"Checks       1 passed, 1 failed",
+		"POLICY",
+		"not_configured",
 		"select_1",
 		"query failed connection closed",
 	} {
@@ -1932,6 +1938,16 @@ func writeDrillReport(t *testing.T, path string, result model.DrillResult) {
 	result.AttemptID = "attempt-1"
 	result.SpecDigest = spec.Digest()
 	result.Spec = &document
+	evaluation, err := policy.Evaluate(document.Policy, document.RecoveryTarget, policy.Facts{
+		StartedAt:   result.StartedAt,
+		EvaluatedAt: result.FinishedAt,
+		Backup:      result.Backup,
+		Operations:  result.Operations,
+	})
+	if err != nil {
+		t.Fatalf("evaluate recovery policy: %v", err)
+	}
+	result.PolicyEvaluation = &evaluation
 	if err := (report.JSONFileSink{Path: path}).Write(context.Background(), result); err != nil {
 		t.Fatalf("write drill report %s: %v", path, err)
 	}

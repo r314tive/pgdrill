@@ -16,7 +16,7 @@ The three identities have different meanings:
 Run and attempt IDs are not fields in `DrillSpec` and are not part of its
 digest. Retrying an unchanged run therefore creates a new attempt ID while
 retaining the same spec digest. Changing source, selection, target, recovery,
-or probe-profile intent changes the digest.
+policy, or probe-profile intent changes the digest.
 
 ## Canonical Content
 
@@ -28,6 +28,7 @@ The spec records:
 - backup selection: `latest_available` or one canonical `backup_id`
 - target ID, driver, revision, and canonical target spec
 - normalized recovery target
+- normalized recovery policy assertions and duration limits
 - probe-profile ID, driver, revision, and ordered probe descriptors
 
 Component revisions bind inline execution configuration without embedding it.
@@ -44,6 +45,7 @@ They are not credentials and must not be treated as secret references.
 - timestamp targets are converted to UTC RFC3339Nano
 - LSN values are uppercase
 - XID and numeric timeline values use canonical decimal form
+- equivalent policy durations use `time.Duration.String()` form
 - probe names are resolved and their order is preserved
 
 The digest is encoded as `sha256:<lowercase hex>`. The immutable wrapper owns
@@ -71,8 +73,8 @@ still resolve environment and credentials locally.
 ## Validation Boundaries
 
 Before normal side effects, the engine validates the spec schema, mode,
-component references, selection semantics, recovery target, target type, and
-probe descriptors against the configured runtime implementations. Native
+component references, selection semantics, recovery target, recovery policy,
+target type, and probe descriptors against the configured runtime implementations. Native
 selection returns the canonical object from the discovered catalog. Managed
 resolution must confirm the same backup intent, target type, and probe profile
 before target startup.
@@ -81,3 +83,6 @@ New terminal reports persist `spec`, `spec_digest`, and `attempt_id`. Report
 readers recompute the digest and reject tampering or disagreement with report
 cluster, provider, target, recovery target, or exact selected backup. New run
 events carry the same digest on every event.
+
+Policy semantics and the versioned evaluation object are defined in
+[recovery-policy.md](recovery-policy.md).

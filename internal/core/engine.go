@@ -97,7 +97,16 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return lifecycle.Finish(ctx, status, err)
 	}
 
+	specValidationErr := req.Spec.Validate()
+	specValidated := specValidationErr == nil
+	var recoveryProvenAt time.Time
 	fail := func(stage model.DrillStage, runErr error) (model.DrillResult, error) {
+		if specValidated && result.PolicyEvaluation == nil {
+			policyErr := recordRecoveryPolicyEvaluation(&result, specDocument.Policy, recoveryTarget, recoveryProvenAt, clock)
+			if policyErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("evaluate recovery policy: %w", policyErr))
+			}
+		}
 		result.Failure = model.NewDrillFailure(stage, runErr, result.Evidence)
 		status := model.DrillStatusFailed
 		if contextTerminated(ctx) {
@@ -111,7 +120,8 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 			AttemptID:  result.AttemptID,
 			SpecDigest: result.SpecDigest,
 		},
-		Target: specDocument.Target.Spec,
+		Target:         specDocument.Target.Spec,
+		RecoveryTarget: recoveryTarget,
 	}
 	var operations *operationExecutor
 
@@ -125,8 +135,8 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if !providerType.IsKnown() {
 			return fmt.Errorf("backup provider type %q is unsupported", providerType)
 		}
-		if err := req.Spec.Validate(); err != nil {
-			return fmt.Errorf("validate drill spec: %w", err)
+		if specValidationErr != nil {
+			return fmt.Errorf("validate drill spec: %w", specValidationErr)
 		}
 		if specDocument.Mode != model.DrillModeNative {
 			return fmt.Errorf("native engine requires drill mode %q, got %q", model.DrillModeNative, specDocument.Mode)
@@ -380,7 +390,11 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		probeReport, probeErr := RunProbes(ctx, e.Probes, pg)
 		result.Checks = append(result.Checks, probeReport.Checks...)
 		artifactErr := appendCheckReportOutput(&result, probeReport)
-		return errors.Join(probeErr, artifactErr)
+		probeErr = errors.Join(probeErr, artifactErr)
+		if probeErr == nil {
+			recoveryProvenAt = clock().UTC()
+		}
+		return probeErr
 	})
 	if err != nil {
 		cleanupErr := cleanup()
@@ -389,6 +403,15 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 
 	if err := cleanup(); err != nil {
 		return fail(model.DrillStageTargetCleanup, err)
+	}
+	err = lifecycle.RunStage(ctx, model.DrillStagePolicyEvaluation, func() error {
+		if err := recordRecoveryPolicyEvaluation(&result, specDocument.Policy, recoveryTarget, recoveryProvenAt, clock); err != nil {
+			return fmt.Errorf("evaluate recovery policy: %w", err)
+		}
+		return enforceRecoveryPolicy(&result)
+	})
+	if err != nil {
+		return fail(model.DrillStagePolicyEvaluation, err)
 	}
 	return lifecycle.Finish(ctx, model.DrillStatusPassed, nil)
 }

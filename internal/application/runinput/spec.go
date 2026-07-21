@@ -67,6 +67,7 @@ func Native(cfg config.Config, selection model.BackupSelection) (runspec.Spec, e
 			Spec: cfg.TargetSpec(),
 		},
 		RecoveryTarget: cfg.RecoveryTarget(),
+		Policy:         cfg.RecoveryPolicy(),
 		ProbeProfile: model.ProbeProfileSpec{
 			Ref: model.ComponentRef{
 				ID:       inlineProbeProfileID(cluster),
@@ -96,6 +97,10 @@ func ManagedCNPG(cfg config.Config, discover bool) (runspec.Spec, error) {
 	sourceCluster := strings.TrimSpace(cfg.Target.CNPG.SourceCluster)
 	if sourceCluster == "" {
 		return runspec.Spec{}, fmt.Errorf("target.cnpg.source_cluster is required")
+	}
+	recoveryTarget := cfg.RecoveryTarget()
+	if recoveryTarget.Type != model.RecoveryTargetLatest || recoveryTarget.Value != "" || recoveryTarget.Timeline != "" || recoveryTarget.Inclusive != nil {
+		return runspec.Spec{}, fmt.Errorf("managed CNPG drills currently support only recovery.target %q without value, timeline, or inclusive", model.RecoveryTargetLatest)
 	}
 
 	selection := model.BackupSelection{Type: model.BackupSelectionLatestAvailable}
@@ -151,7 +156,8 @@ func ManagedCNPG(cfg config.Config, discover bool) (runspec.Spec, error) {
 			},
 			Spec: cfg.TargetSpec(),
 		},
-		RecoveryTarget: cfg.RecoveryTarget(),
+		RecoveryTarget: recoveryTarget,
+		Policy:         cfg.RecoveryPolicy(),
 		ProbeProfile: model.ProbeProfileSpec{
 			Ref: model.ComponentRef{
 				ID:       inlineProbeProfileID(cluster),

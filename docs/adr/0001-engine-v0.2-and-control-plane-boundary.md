@@ -106,6 +106,10 @@ outside this module. Engine implementation packages remain internal.
 6. publish provider/target conformance suites and real-repository matrices
 7. add explicit recovery-policy verdicts
 
+Implementation status: steps 1 through 5 and step 7 are complete. Reusable
+conformance suites and real-repository matrices remain the release gate in
+step 6.
+
 ### Control Plane
 
 1. add a daemon-free fleet planner and `plan` output

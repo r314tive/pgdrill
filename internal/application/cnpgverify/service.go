@@ -196,6 +196,9 @@ type managedResolver struct {
 
 func (r *managedResolver) Resolve(ctx context.Context, attempt model.AttemptContext) (core.ManagedResolution, model.CheckReport, error) {
 	report := model.CheckReport{}
+	if attempt.RecoveryTarget.Type != model.RecoveryTargetLatest || attempt.RecoveryTarget.Value != "" || attempt.RecoveryTarget.Timeline != "" || attempt.RecoveryTarget.Inclusive != nil {
+		return core.ManagedResolution{}, report, fmt.Errorf("CNPG resolver supports only recovery target %q", model.RecoveryTargetLatest)
+	}
 	if r.discover {
 		evidence, err := DiscoverInputs(ctx, r.cfg, &r.target, r.runner)
 		report.Evidence = append(report.Evidence, evidence...)
@@ -225,10 +228,11 @@ func (r *managedResolver) Resolve(ctx context.Context, attempt model.AttemptCont
 		return runPostRestoreChecks(ctx, r.cfg, spec, pg, r.runner)
 	})
 	return core.ManagedResolution{
-		Backup: backup(r.target, spec.Name),
-		Target: target,
-		Checks: checker,
-		Probes: append([]model.ProbeDescriptor(nil), r.probes...),
+		Backup:         backup(r.target, spec.Name),
+		Target:         target,
+		RecoveryTarget: attempt.RecoveryTarget,
+		Checks:         checker,
+		Probes:         append([]model.ProbeDescriptor(nil), r.probes...),
 	}, report, nil
 }
 

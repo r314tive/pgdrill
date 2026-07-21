@@ -217,6 +217,12 @@ should consume this report contract instead of reconstructing drill state from
 logs. Compatibility rules are defined in [report-format.md](report-format.md),
 and canonicalization is defined in [drill-spec-format.md](drill-spec-format.md).
 
+Recovery assertions are immutable spec input. The engine records a versioned
+evaluation after cleanup, uses the successful post-restore probe boundary as
+the recovery proof timestamp, and fails closed on required `failed` or
+`unknown` verdicts. Measurement and evidence-basis rules are defined in
+[recovery-policy.md](recovery-policy.md).
+
 When configured, the engine also emits ordered
 `pgdrill.run-event/v1alpha1` events around every applicable stage. Native local
 drills and operator-managed targets use the same lifecycle recorder, terminal
@@ -284,6 +290,9 @@ confirmation guard so another presentation layer cannot bypass it accidentally.
 - A managed target owns reconciliation and configured cleanup after a failed or
   ambiguous `Start`; the engine invokes `Destroy` after successful startup and
   does not duplicate target-owned failure cleanup.
+- A managed target must return the exact canonical recovery target it applied;
+  unsupported target intent must fail before mutation rather than degrade to a
+  different recovery mode.
 - Cancellation stops active provider, target, and probe work. Cleanup and report
   persistence run on separate bounded finalization contexts so a canceled
   operation can still produce an `aborted` report.

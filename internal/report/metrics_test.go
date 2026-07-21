@@ -12,6 +12,10 @@ import (
 func TestWritePrometheus(t *testing.T) {
 	started := time.Date(2026, 7, 6, 1, 2, 3, 0, time.UTC)
 	finished := started.Add(90 * time.Second)
+	policyLimit := (10 * time.Minute).Milliseconds()
+	policyObserved := (5 * time.Minute).Milliseconds()
+	policySatisfied := true
+	recoveryProvenAt := started.Add(5 * time.Minute)
 	result := model.DrillResult{
 		Cluster:  "production-main",
 		Provider: model.ProviderWALG,
@@ -43,6 +47,23 @@ func TestWritePrometheus(t *testing.T) {
 			{SizeBytes: 100, RetentionClass: model.ArtifactRetentionHistory, RedactionState: model.ArtifactRedactionNotRequired},
 			{SizeBytes: 25, RetentionClass: model.ArtifactRetentionHistory, RedactionState: model.ArtifactRedactionNotRequired},
 		},
+		PolicyEvaluation: &model.RecoveryPolicyEvaluation{RecoveryProvenAt: &recoveryProvenAt, Verdicts: []model.PolicyVerdict{
+			{
+				Assertion:      model.PolicyAssertionRTO,
+				Required:       true,
+				Status:         model.PolicyVerdictPassed,
+				Basis:          model.PolicyBasisDrillStartToRecoveryProof,
+				LimitMillis:    &policyLimit,
+				ObservedMillis: &policyObserved,
+			},
+			{
+				Assertion: model.PolicyAssertionCleanup,
+				Required:  true,
+				Status:    model.PolicyVerdictPassed,
+				Basis:     model.PolicyBasisCleanupCheckpoint,
+				Satisfied: &policySatisfied,
+			},
+		}},
 	}
 
 	var buf bytes.Buffer
@@ -67,6 +88,11 @@ func TestWritePrometheus(t *testing.T) {
 		`pgdrill_operations_total{cluster="production-main",provider="wal-g",kind="restore_step",state="succeeded",reconciled="false"} 2`,
 		`pgdrill_artifacts_total{cluster="production-main",provider="wal-g",retention="history",redaction="not_required"} 2`,
 		`pgdrill_artifact_bytes{cluster="production-main",provider="wal-g",retention="history",redaction="not_required"} 125`,
+		`pgdrill_policy_verdict_info{cluster="production-main",provider="wal-g",assertion="rto",status="passed",basis="drill_start_to_recovery_proof"} 1`,
+		`pgdrill_policy_limit_seconds{cluster="production-main",provider="wal-g",assertion="rto"} 600`,
+		`pgdrill_policy_observed_seconds{cluster="production-main",provider="wal-g",assertion="rto"} 300`,
+		`pgdrill_policy_satisfied{cluster="production-main",provider="wal-g",assertion="cleanup"} 1`,
+		`pgdrill_recovery_proven_timestamp_seconds{cluster="production-main",provider="wal-g",target_type="local",recovery_target="latest"} 1783300023`,
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected prometheus output to contain %q, got:\n%s", expected, output)
@@ -138,12 +164,17 @@ func TestWritePrometheusBoundsUnknownCanonicalEnums(t *testing.T) {
 			RetentionClass: "private-retention",
 			RedactionState: "private-redaction",
 		}},
+		PolicyEvaluation: &model.RecoveryPolicyEvaluation{Verdicts: []model.PolicyVerdict{{
+			Assertion: "private-policy",
+			Status:    "private-verdict",
+			Basis:     "private-basis",
+		}}},
 	}
 	if err := WritePrometheus(&buf, result); err != nil {
 		t.Fatalf("write prometheus: %v", err)
 	}
 	output := buf.String()
-	for _, value := range []string{"private-provider", "private-target", "private-recovery", "private-probe", "private-status", "private-kind", "private-operation", "private-operation-state", "private-retention", "private-redaction"} {
+	for _, value := range []string{"private-provider", "private-target", "private-recovery", "private-probe", "private-status", "private-kind", "private-operation", "private-operation-state", "private-retention", "private-redaction", "private-policy", "private-verdict", "private-basis"} {
 		if strings.Contains(output, value) {
 			t.Fatalf("unexpected unbounded label %q in:\n%s", value, output)
 		}
@@ -158,6 +189,8 @@ func TestWritePrometheusBoundsUnknownCanonicalEnums(t *testing.T) {
 		`state="unknown"`,
 		`retention="unknown"`,
 		`redaction="unknown"`,
+		`assertion="unknown"`,
+		`basis="unknown"`,
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected bounded label %q in:\n%s", expected, output)

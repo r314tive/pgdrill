@@ -794,6 +794,7 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 	rows = append(rows,
 		[2]string{"Provider", valueOrDash(string(result.Provider))},
 		[2]string{"Backup", valueOrDash(result.Backup.ID)},
+		[2]string{"Policy", policySummary(result.PolicyEvaluation)},
 		[2]string{"Operations", fmt.Sprintf("%d recorded", len(result.Operations))},
 		[2]string{"Artifacts", fmt.Sprintf("%d referenced", len(result.Artifacts))},
 		[2]string{"Report", valueOrDash(reportPath)},
@@ -893,14 +894,39 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 		[2]string{"Recovery", recoveryTargetSummary(result.RecoveryTarget)},
 		[2]string{"Started", timeValue(result.StartedAt)},
 		[2]string{"Finished", timeValue(result.FinishedAt)},
+		[2]string{"Proof at", policyRecoveryProvenAt(result.PolicyEvaluation)},
 		[2]string{"Checks", fmt.Sprintf("%d passed, %d failed, %d warnings, %d skipped", statusCounts.passed, statusCounts.failed, statusCounts.warning, statusCounts.skipped)},
 		[2]string{"Evidence", fmt.Sprintf("%d records", len(result.Evidence))},
+		[2]string{"Policy", policySummary(result.PolicyEvaluation)},
 		[2]string{"Operations", fmt.Sprintf("%d recorded", len(result.Operations))},
 		[2]string{"Artifacts", fmt.Sprintf("%d referenced", len(result.Artifacts))},
 	)
 	for _, row := range rows {
 		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
 			return err
+		}
+	}
+	if result.PolicyEvaluation != nil {
+		if _, err := fmt.Fprintln(table); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(table, "POLICY\tREQUIRED\tSTATUS\tLIMIT\tOBSERVED\tBASIS\tMESSAGE"); err != nil {
+			return err
+		}
+		for _, verdict := range result.PolicyEvaluation.Verdicts {
+			if _, err := fmt.Fprintf(
+				table,
+				"%s\t%t\t%s\t%s\t%s\t%s\t%s\n",
+				verdict.Assertion,
+				verdict.Required,
+				verdict.Status,
+				policyDuration(verdict.LimitMillis),
+				policyObservation(verdict),
+				verdict.Basis,
+				oneLine(verdict.Message),
+			); err != nil {
+				return err
+			}
 		}
 	}
 	if len(result.Checks) > 0 {
@@ -968,6 +994,63 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 	}
 
 	return table.Flush()
+}
+
+type policyCounts struct {
+	passed        int
+	failed        int
+	unknown       int
+	notConfigured int
+}
+
+func policySummary(evaluation *model.RecoveryPolicyEvaluation) string {
+	if evaluation == nil {
+		return "-"
+	}
+	counts := policyCounts{}
+	for _, verdict := range evaluation.Verdicts {
+		switch verdict.Status {
+		case model.PolicyVerdictPassed:
+			counts.passed++
+		case model.PolicyVerdictFailed:
+			counts.failed++
+		case model.PolicyVerdictUnknown:
+			counts.unknown++
+		case model.PolicyVerdictNotConfigured:
+			counts.notConfigured++
+		}
+	}
+	return fmt.Sprintf(
+		"%d passed, %d failed, %d unknown, %d not configured",
+		counts.passed,
+		counts.failed,
+		counts.unknown,
+		counts.notConfigured,
+	)
+}
+
+func policyRecoveryProvenAt(evaluation *model.RecoveryPolicyEvaluation) string {
+	if evaluation == nil || evaluation.RecoveryProvenAt == nil {
+		return "-"
+	}
+	return timeValue(*evaluation.RecoveryProvenAt)
+}
+
+func policyDuration(milliseconds *int64) string {
+	if milliseconds == nil {
+		return "-"
+	}
+	return (time.Duration(*milliseconds) * time.Millisecond).String()
+}
+
+func policyObservation(verdict model.PolicyVerdict) string {
+	if verdict.ObservedMillis != nil {
+		return policyDuration(verdict.ObservedMillis)
+	}
+	if verdict.Satisfied != nil {
+		return fmt.Sprintf("%t", *verdict.Satisfied)
+	}
+	return "-"
 }
 
 func timeField(value *time.Time) string {
@@ -1073,6 +1156,13 @@ restore:
 recovery:
   target: latest
 
+policy:
+  maximum_rto: 2h
+  maximum_rpo: 15m
+  maximum_backup_age: 24h
+  require_recovery_target: true
+  require_cleanup: true
+
 probes:
   - type: pg_isready
     timeout: 10s
@@ -1094,6 +1184,7 @@ const explainText = `pgdrill model:
 Provider       Discovers backup metadata and prepares provider-specific restore steps.
 RestoreTarget  Provides disposable storage and runtime for a restore drill.
 RecoveryTarget Describes what recovery point must be reached.
+RecoveryPolicy Evaluates RTO, RPO, backup age, target, and cleanup assertions.
 Probe          Runs post-restore checks against the recovered PostgreSQL instance.
 EvidenceSink   Persists drill facts, timings, command outputs, and final status.
 

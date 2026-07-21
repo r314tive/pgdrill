@@ -159,6 +159,75 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		}
 	}
 
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_verdict_info Recovery policy assertion verdict and evidence basis for the last drill."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_verdict_info gauge"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_limit_seconds Configured duration limit for a recovery policy assertion."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_limit_seconds gauge"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_observed_seconds Observed duration for a recovery policy assertion."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_observed_seconds gauge"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_satisfied Boolean recovery policy assertion result."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_satisfied gauge"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_recovery_proven_timestamp_seconds Time when PostgreSQL and required post-restore probes established recovery proof."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_recovery_proven_timestamp_seconds gauge"); err != nil {
+		return err
+	}
+	if result.PolicyEvaluation != nil {
+		if result.PolicyEvaluation.RecoveryProvenAt != nil {
+			if err := writeMetric(writer, "pgdrill_recovery_proven_timestamp_seconds", baseLabels, timestampSeconds(*result.PolicyEvaluation.RecoveryProvenAt)); err != nil {
+				return err
+			}
+		}
+		for _, verdict := range result.PolicyEvaluation.Verdicts {
+			labels := []metricLabel{
+				{name: "cluster", value: labelOrUnknown(result.Cluster)},
+				{name: "provider", value: providerLabel(result.Provider)},
+				{name: "assertion", value: policyAssertionLabel(verdict.Assertion)},
+			}
+			infoLabels := appendMetricLabel(labels, "status", policyVerdictStatusLabel(verdict.Status))
+			infoLabels = appendMetricLabel(infoLabels, "basis", policyVerdictBasisLabel(verdict.Basis))
+			if err := writeMetric(writer, "pgdrill_policy_verdict_info", infoLabels, "1"); err != nil {
+				return err
+			}
+			if verdict.LimitMillis != nil && *verdict.LimitMillis >= 0 {
+				if err := writeMetric(writer, "pgdrill_policy_limit_seconds", labels, formatFloat(float64(*verdict.LimitMillis)/1000)); err != nil {
+					return err
+				}
+			}
+			if verdict.ObservedMillis != nil && *verdict.ObservedMillis >= 0 {
+				if err := writeMetric(writer, "pgdrill_policy_observed_seconds", labels, formatFloat(float64(*verdict.ObservedMillis)/1000)); err != nil {
+					return err
+				}
+			}
+			if verdict.Satisfied != nil {
+				value := "0"
+				if *verdict.Satisfied {
+					value = "1"
+				}
+				if err := writeMetric(writer, "pgdrill_policy_satisfied", labels, value); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -353,6 +422,27 @@ func targetTypeLabel(value model.RestoreTargetType) string {
 }
 
 func recoveryTargetLabel(value model.RecoveryTargetType) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func policyAssertionLabel(value model.PolicyAssertion) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func policyVerdictStatusLabel(value model.PolicyVerdictStatus) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func policyVerdictBasisLabel(value model.PolicyVerdictBasis) string {
 	if !value.IsKnown() {
 		return "unknown"
 	}

@@ -30,6 +30,7 @@ type Config struct {
 	Target   TargetConfig   `json:"target" yaml:"target"`
 	Restore  RestoreConfig  `json:"restore" yaml:"restore"`
 	Recovery RecoveryConfig `json:"recovery" yaml:"recovery"`
+	Policy   PolicyConfig   `json:"policy,omitempty" yaml:"policy,omitempty"`
 	Probes   []ProbeConfig  `json:"probes" yaml:"probes"`
 	Report   ReportConfig   `json:"report" yaml:"report"`
 }
@@ -157,6 +158,14 @@ type RecoveryConfig struct {
 	Value     string                   `json:"value,omitempty" yaml:"value,omitempty"`
 	Timeline  string                   `json:"timeline,omitempty" yaml:"timeline,omitempty"`
 	Inclusive *bool                    `json:"inclusive,omitempty" yaml:"inclusive,omitempty"`
+}
+
+type PolicyConfig struct {
+	MaximumRTO            Duration `json:"maximum_rto,omitempty" yaml:"maximum_rto,omitempty"`
+	MaximumRPO            Duration `json:"maximum_rpo,omitempty" yaml:"maximum_rpo,omitempty"`
+	MaximumBackupAge      Duration `json:"maximum_backup_age,omitempty" yaml:"maximum_backup_age,omitempty"`
+	RequireRecoveryTarget bool     `json:"require_recovery_target,omitempty" yaml:"require_recovery_target,omitempty"`
+	RequireCleanup        bool     `json:"require_cleanup,omitempty" yaml:"require_cleanup,omitempty"`
 }
 
 type RestoreConfig struct {
@@ -500,6 +509,9 @@ func (c Config) validateDurations() error {
 		{"target.kubernetes.poll_interval", c.Target.Kubernetes.PollInterval.Duration},
 		{"restore.timeout", c.Restore.Timeout.Duration},
 		{"restore.verify_backup.timeout", c.Restore.VerifyBackup.Timeout.Duration},
+		{"policy.maximum_rto", c.Policy.MaximumRTO.Duration},
+		{"policy.maximum_rpo", c.Policy.MaximumRPO.Duration},
+		{"policy.maximum_backup_age", c.Policy.MaximumBackupAge.Duration},
 	}
 	for i, probe := range c.Probes {
 		durations = append(durations, durationField{fmt.Sprintf("probes[%d].timeout", i), probe.Timeout.Duration})
@@ -507,6 +519,15 @@ func (c Config) validateDurations() error {
 	for _, duration := range durations {
 		if duration.value < 0 {
 			return fmt.Errorf("%s must not be negative", duration.name)
+		}
+	}
+	for _, duration := range []durationField{
+		{"policy.maximum_rto", c.Policy.MaximumRTO.Duration},
+		{"policy.maximum_rpo", c.Policy.MaximumRPO.Duration},
+		{"policy.maximum_backup_age", c.Policy.MaximumBackupAge.Duration},
+	} {
+		if duration.value > 0 && duration.value < time.Millisecond {
+			return fmt.Errorf("%s must be at least 1ms", duration.name)
 		}
 	}
 
@@ -553,6 +574,16 @@ func (c Config) TargetSpec() model.TargetSpec {
 		Type:    c.Target.Type,
 		WorkDir: c.Target.WorkDir,
 		Labels:  copyStringMap(c.Target.Labels),
+	}
+}
+
+func (c Config) RecoveryPolicy() model.RecoveryPolicy {
+	return model.RecoveryPolicy{
+		MaximumRTO:            durationString(c.Policy.MaximumRTO.Duration),
+		MaximumRPO:            durationString(c.Policy.MaximumRPO.Duration),
+		MaximumBackupAge:      durationString(c.Policy.MaximumBackupAge.Duration),
+		RequireRecoveryTarget: c.Policy.RequireRecoveryTarget,
+		RequireCleanup:        c.Policy.RequireCleanup,
 	}
 }
 
@@ -616,4 +647,11 @@ func setDefaultDuration(value *Duration, fallback time.Duration) {
 	if value.Duration == 0 {
 		value.Duration = fallback
 	}
+}
+
+func durationString(value time.Duration) string {
+	if value == 0 {
+		return ""
+	}
+	return value.String()
 }

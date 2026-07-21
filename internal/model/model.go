@@ -125,6 +125,7 @@ type Overview struct {
 	RestoreTargets     []RestoreTargetType  `json:"restore_targets"`
 	TargetCapabilities TargetCapabilities   `json:"target_capabilities"`
 	RecoveryTargets    []RecoveryTargetType `json:"recovery_targets"`
+	PolicyAssertions   []PolicyAssertion    `json:"policy_assertions"`
 	Probes             []ProbeType          `json:"probes"`
 	Tools              []ToolType           `json:"tools"`
 }
@@ -161,6 +162,7 @@ func ProjectOverview() Overview {
 			RecoveryTargetXID,
 			RecoveryTargetRestorePoint,
 		},
+		PolicyAssertions: RecoveryPolicyAssertions(),
 		Probes: []ProbeType{
 			ProbePGIsReady,
 			ProbeSQL,
@@ -493,6 +495,7 @@ const (
 	DrillStageTargetDiscovery   DrillStage = "target_discovery"
 	DrillStageTargetStart       DrillStage = "target_start"
 	DrillStageTargetCleanup     DrillStage = "target_cleanup"
+	DrillStagePolicyEvaluation  DrillStage = "policy_evaluation"
 	DrillStageReportWrite       DrillStage = "report_write"
 )
 
@@ -511,6 +514,7 @@ func (s DrillStage) IsKnown() bool {
 		DrillStageTargetDiscovery,
 		DrillStageTargetStart,
 		DrillStageTargetCleanup,
+		DrillStagePolicyEvaluation,
 		DrillStageReportWrite:
 		return true
 	default:
@@ -544,25 +548,26 @@ func NewDrillFailure(stage DrillStage, err error, evidence []EvidenceRecord) *Dr
 }
 
 type DrillResult struct {
-	SchemaVersion  string                `json:"schema_version"`
-	PGDrillVersion string                `json:"pgdrill_version,omitempty"`
-	ID             string                `json:"id"`
-	AttemptID      string                `json:"attempt_id,omitempty"`
-	SpecDigest     string                `json:"spec_digest,omitempty"`
-	Spec           *DrillSpec            `json:"spec,omitempty"`
-	Cluster        string                `json:"cluster,omitempty"`
-	Provider       ProviderType          `json:"provider"`
-	Backup         Backup                `json:"backup"`
-	Target         TargetSpec            `json:"target"`
-	RecoveryTarget RecoveryTarget        `json:"recovery_target"`
-	StartedAt      time.Time             `json:"started_at"`
-	FinishedAt     time.Time             `json:"finished_at"`
-	Status         DrillStatus           `json:"status"`
-	Failure        *DrillFailure         `json:"failure,omitempty"`
-	Checks         []Check               `json:"checks,omitempty"`
-	Evidence       []EvidenceRecord      `json:"evidence,omitempty"`
-	Artifacts      []ArtifactRef         `json:"artifacts,omitempty"`
-	Operations     []OperationCheckpoint `json:"operations,omitempty"`
+	SchemaVersion    string                    `json:"schema_version"`
+	PGDrillVersion   string                    `json:"pgdrill_version,omitempty"`
+	ID               string                    `json:"id"`
+	AttemptID        string                    `json:"attempt_id,omitempty"`
+	SpecDigest       string                    `json:"spec_digest,omitempty"`
+	Spec             *DrillSpec                `json:"spec,omitempty"`
+	Cluster          string                    `json:"cluster,omitempty"`
+	Provider         ProviderType              `json:"provider"`
+	Backup           Backup                    `json:"backup"`
+	Target           TargetSpec                `json:"target"`
+	RecoveryTarget   RecoveryTarget            `json:"recovery_target"`
+	StartedAt        time.Time                 `json:"started_at"`
+	FinishedAt       time.Time                 `json:"finished_at"`
+	Status           DrillStatus               `json:"status"`
+	Failure          *DrillFailure             `json:"failure,omitempty"`
+	Checks           []Check                   `json:"checks,omitempty"`
+	Evidence         []EvidenceRecord          `json:"evidence,omitempty"`
+	Artifacts        []ArtifactRef             `json:"artifacts,omitempty"`
+	Operations       []OperationCheckpoint     `json:"operations,omitempty"`
+	PolicyEvaluation *RecoveryPolicyEvaluation `json:"policy_evaluation,omitempty"`
 }
 
 type EvidenceKind string

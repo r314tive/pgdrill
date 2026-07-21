@@ -62,6 +62,9 @@ func validateReport(result model.DrillResult, produced bool) error {
 	if err := validateOperations(result, produced); err != nil {
 		return err
 	}
+	if err := validatePolicyEvaluation(result, produced); err != nil {
+		return err
+	}
 	artifactIDs, err := validateArtifacts(result.Artifacts)
 	if err != nil {
 		return err
@@ -128,6 +131,42 @@ func validateReport(result model.DrillResult, produced bool) error {
 		return fmt.Errorf("failure message is required")
 	}
 	return validateEvidenceReferences("failure", result.Failure.EvidenceIDs, evidenceIDs)
+}
+
+func validatePolicyEvaluation(result model.DrillResult, produced bool) error {
+	if result.PolicyEvaluation == nil {
+		if produced {
+			return fmt.Errorf("policy_evaluation is required for a produced report")
+		}
+		if result.Spec != nil && result.Spec.Policy.Configured() {
+			return fmt.Errorf("policy_evaluation is required when recovery policy assertions are configured")
+		}
+		return nil
+	}
+	evaluation := *result.PolicyEvaluation
+	if err := evaluation.Validate(); err != nil {
+		return fmt.Errorf("invalid policy_evaluation: %w", err)
+	}
+	if evaluation.EvaluatedAt.Before(result.StartedAt) {
+		return fmt.Errorf("policy_evaluation evaluated_at must not be earlier than started_at")
+	}
+	if evaluation.EvaluatedAt.After(result.FinishedAt) {
+		return fmt.Errorf("policy_evaluation evaluated_at must not be later than finished_at")
+	}
+	if evaluation.RecoveryProvenAt != nil && evaluation.RecoveryProvenAt.Before(result.StartedAt) {
+		return fmt.Errorf("policy_evaluation recovery_proven_at must not be earlier than started_at")
+	}
+	if result.Spec != nil {
+		if err := evaluation.ValidateAgainst(result.Spec.Policy); err != nil {
+			return fmt.Errorf("policy_evaluation does not match spec policy: %w", err)
+		}
+	}
+	if result.Status == model.DrillStatusPassed {
+		if blocking := evaluation.BlockingVerdicts(); len(blocking) > 0 {
+			return fmt.Errorf("passed report contains blocking policy verdict %s=%s", blocking[0].Assertion, blocking[0].Status)
+		}
+	}
+	return nil
 }
 
 func validateArtifacts(artifacts []model.ArtifactRef) (map[string]struct{}, error) {

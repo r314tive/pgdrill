@@ -3,6 +3,7 @@ package runinput
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/model"
@@ -50,6 +51,9 @@ func TestNativeBuildsSecretFreeDeterministicSpec(t *testing.T) {
 	}
 	if len(document.ProbeProfile.Probes) != 1 || document.ProbeProfile.Probes[0].Name != "sql" {
 		t.Fatalf("unexpected probe profile %#v", document.ProbeProfile)
+	}
+	if document.Policy.MaximumRTO != "30m0s" || !document.Policy.RequireRecoveryTarget || !document.Policy.RequireCleanup {
+		t.Fatalf("unexpected policy %#v", document.Policy)
 	}
 }
 
@@ -106,6 +110,9 @@ func TestManagedCNPGRequiresConcreteSourceAndSelectionIntent(t *testing.T) {
 		{name: "backup", edit: func(*config.Config) {}, want: "backup_name"},
 		{name: "source", edit: func(c *config.Config) { c.Target.CNPG.SourceCluster = "" }, discover: true, want: "source_cluster"},
 		{name: "namespace", edit: func(c *config.Config) { c.Target.Kubernetes.Namespace = "" }, discover: true, want: "namespace"},
+		{name: "recovery target", edit: func(c *config.Config) {
+			c.Recovery = config.RecoveryConfig{Target: model.RecoveryTargetTimestamp, Value: "2026-07-21T00:00:00Z"}
+		}, discover: true, want: "only recovery.target"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -128,6 +135,13 @@ func nativeConfig() config.Config {
 			WorkDir: "/var/tmp/pgdrill/production-main",
 		},
 		Recovery: config.RecoveryConfig{Target: model.RecoveryTargetLatest},
+		Policy: config.PolicyConfig{
+			MaximumRTO:            config.Duration{Duration: 30 * time.Minute},
+			MaximumRPO:            config.Duration{Duration: 5 * time.Minute},
+			MaximumBackupAge:      config.Duration{Duration: 24 * time.Hour},
+			RequireRecoveryTarget: true,
+			RequireCleanup:        true,
+		},
 		Probes: []config.ProbeConfig{{
 			Type:  model.ProbeSQL,
 			Query: "select 1",
@@ -148,6 +162,13 @@ func managedConfig() config.Config {
 			},
 		},
 		Recovery: config.RecoveryConfig{Target: model.RecoveryTargetLatest},
+		Policy: config.PolicyConfig{
+			MaximumRTO:            config.Duration{Duration: 30 * time.Minute},
+			MaximumRPO:            config.Duration{Duration: 5 * time.Minute},
+			MaximumBackupAge:      config.Duration{Duration: 24 * time.Hour},
+			RequireRecoveryTarget: true,
+			RequireCleanup:        true,
+		},
 		Probes: []config.ProbeConfig{{
 			Type:  model.ProbeSQL,
 			Query: "select 1",

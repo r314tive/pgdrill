@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -13,10 +14,11 @@ import (
 )
 
 type ManagedResolution struct {
-	Backup model.Backup
-	Target ManagedRestoreTarget
-	Checks PostRestoreChecker
-	Probes []model.ProbeDescriptor
+	Backup         model.Backup
+	Target         ManagedRestoreTarget
+	RecoveryTarget model.RecoveryTarget
+	Checks         PostRestoreChecker
+	Probes         []model.ProbeDescriptor
 }
 
 type ManagedDrillRequest struct {
@@ -97,7 +99,16 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		return lifecycle.Finish(ctx, status, err)
 	}
 
+	specValidationErr := req.Spec.Validate()
+	specValidated := specValidationErr == nil
+	var recoveryProvenAt time.Time
 	fail := func(stage model.DrillStage, runErr error) (model.DrillResult, error) {
+		if specValidated && result.PolicyEvaluation == nil {
+			policyErr := recordRecoveryPolicyEvaluation(&result, specDocument.Policy, recoveryTarget, recoveryProvenAt, clock)
+			if policyErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("evaluate recovery policy: %w", policyErr))
+			}
+		}
 		result.Failure = model.NewDrillFailure(stage, runErr, result.Evidence)
 		status := model.DrillStatusFailed
 		if contextTerminated(ctx) {
@@ -111,7 +122,8 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 			AttemptID:  result.AttemptID,
 			SpecDigest: result.SpecDigest,
 		},
-		Target: specDocument.Target.Spec,
+		Target:         specDocument.Target.Spec,
+		RecoveryTarget: recoveryTarget,
 	}
 	var operations *operationExecutor
 
@@ -125,8 +137,8 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if req.AttemptID != "" && req.AttemptID != strings.TrimSpace(req.AttemptID) {
 			return fmt.Errorf("attempt id must not contain surrounding whitespace")
 		}
-		if err := req.Spec.Validate(); err != nil {
-			return fmt.Errorf("validate drill spec: %w", err)
+		if specValidationErr != nil {
+			return fmt.Errorf("validate drill spec: %w", specValidationErr)
 		}
 		if specDocument.Mode != model.DrillModeManaged {
 			return fmt.Errorf("managed engine requires drill mode %q, got %q", model.DrillModeManaged, specDocument.Mode)
@@ -209,7 +221,7 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if hasFailedChecks(discoveryReport.Checks) {
 			return fmt.Errorf("managed target discovery failed")
 		}
-		if err := validateManagedResolution(specDocument.Target.Spec, specDocument.ProbeProfile.Probes, resolution); err != nil {
+		if err := validateManagedResolution(specDocument.Target.Spec, recoveryTarget, specDocument.ProbeProfile.Probes, resolution); err != nil {
 			return fmt.Errorf("validate managed target resolution: %w", err)
 		}
 		if err := resolution.Target.BindAttempt(attempt); err != nil {
@@ -324,6 +336,7 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if hasFailedChecks(checkReport.Checks) {
 			return fmt.Errorf("post-restore checks failed")
 		}
+		recoveryProvenAt = clock().UTC()
 		return nil
 	})
 	if err != nil {
@@ -334,10 +347,19 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	if err := cleanup(); err != nil {
 		return fail(model.DrillStageTargetCleanup, err)
 	}
+	err = lifecycle.RunStage(ctx, model.DrillStagePolicyEvaluation, func() error {
+		if err := recordRecoveryPolicyEvaluation(&result, specDocument.Policy, recoveryTarget, recoveryProvenAt, clock); err != nil {
+			return fmt.Errorf("evaluate recovery policy: %w", err)
+		}
+		return enforceRecoveryPolicy(&result)
+	})
+	if err != nil {
+		return fail(model.DrillStagePolicyEvaluation, err)
+	}
 	return lifecycle.Finish(ctx, model.DrillStatusPassed, nil)
 }
 
-func validateManagedResolution(requestedTarget model.TargetSpec, expectedProbes []model.ProbeDescriptor, resolution ManagedResolution) error {
+func validateManagedResolution(requestedTarget model.TargetSpec, requestedRecovery model.RecoveryTarget, expectedProbes []model.ProbeDescriptor, resolution ManagedResolution) error {
 	if resolution.Target == nil {
 		return fmt.Errorf("managed restore target is required")
 	}
@@ -374,6 +396,15 @@ func validateManagedResolution(requestedTarget model.TargetSpec, expectedProbes 
 	}
 	if backup.Status != model.BackupStatusAvailable {
 		return fmt.Errorf("resolved backup %q is not available", backup.ID)
+	}
+	if !resolution.RecoveryTarget.Type.IsKnown() {
+		return fmt.Errorf("resolved recovery target is required")
+	}
+	if err := resolution.RecoveryTarget.Validate(); err != nil {
+		return fmt.Errorf("resolved recovery target is invalid: %w", err)
+	}
+	if !reflect.DeepEqual(resolution.RecoveryTarget.Normalized(), requestedRecovery.Normalized()) {
+		return fmt.Errorf("resolved recovery target %#v does not match requested target %#v", resolution.RecoveryTarget, requestedRecovery)
 	}
 	return nil
 }

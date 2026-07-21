@@ -159,6 +159,10 @@ Completed foundation:
 - Bounded content-addressed artifact stores and references with strict
   redaction/retention classification, report provenance validation, and exact
   CNPG manifest persistence before target creation.
+- Immutable recovery-policy assertions and versioned fail-closed verdicts for
+  RTO, RPO, backup age, recovery-target satisfaction, and configured cleanup.
+- Managed recovery-target protocol confirmation; CNPG rejects unsupported PITR
+  intent instead of silently executing latest recovery.
 - CNPG orchestration moved from `cmd/pgdrill` into
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
@@ -166,11 +170,9 @@ Completed foundation:
 
 Remaining engine gates, in order:
 
-1. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
-   target satisfaction, and required cleanup.
-2. Publish reusable provider/target conformance suites and record real
+1. Publish reusable provider/target conformance suites and record real
    repository/version matrices for WAL-G, Barman, pgBackRest, and pg_probackup.
-3. Exercise a release candidate through local native-provider drills and a
+2. Exercise a release candidate through local native-provider drills and a
    live disposable CNPG drill before calling Engine v0.2 release-ready.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this

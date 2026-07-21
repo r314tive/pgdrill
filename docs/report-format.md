@@ -50,6 +50,8 @@ The top-level object is `model.DrillResult` and contains:
 - bounded immutable artifact references linked from evidence
 - bounded terminal mutation operation records with deterministic keys,
   checkpoint state, and reconciliation status
+- a versioned recovery-policy evaluation with typed limits, observations,
+  evidence bases, and fail-closed verdicts
 
 Target-only drills may have an empty `provider` and `backup.provider`. Consumers
 must not infer a provider from the restore target or a CNPG `Backup` reference.
@@ -74,6 +76,13 @@ The optional `artifacts` array contains additive
 payloads remain outside the report. Evidence links them through
 `artifact_ids`, and every artifact must have provenance. See
 [artifact-format.md](artifact-format.md).
+
+Current producers always include
+`pgdrill.recovery-policy-evaluation/v1alpha1`, even when every assertion is
+disabled. Disabled assertions are `not_configured`, never synthetic passes.
+Reports with a configured spec policy require a matching evaluation, and a
+passed report cannot contain required `failed` or `unknown` verdicts. See
+[recovery-policy.md](recovery-policy.md).
 
 Command evidence contains redacted arguments, environment values, output, and a
 structured exit status. `path` is the configured executable name or path;
@@ -145,6 +154,7 @@ New failed and aborted reports include a `failure` object:
 - `target_discovery`
 - `target_start`
 - `target_cleanup`
+- `policy_evaluation`
 - `report_write`
 
 `message` is diagnostic text and may change; consumers must not parse it. The
@@ -172,6 +182,10 @@ metric labels.
 Artifact metrics expose count and total bytes grouped only by bounded retention
 and redaction classifications. Artifact IDs, URIs, and media types are not
 metric labels.
+
+Policy metrics expose verdict information and typed duration or boolean values.
+Only finite assertion, verdict-status, and evidence-basis values become labels;
+messages and run-specific identities do not.
 
 Canonical enum labels are bounded as well. Unknown provider, target, recovery
 target, probe, check-status, evidence-kind, operation, artifact-classification,

@@ -34,6 +34,11 @@ target:
 recovery:
   target: latest
 
+policy:
+  maximum_rto: 2h
+  require_recovery_target: true
+  require_cleanup: true
+
 probes:
   - type: sql
     name: select_1

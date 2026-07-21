@@ -34,6 +34,8 @@ of blind command replay.
 Large immutable evidence can be persisted through bounded content-addressed
 artifact references; CNPG verify runs store the exact create manifest before
 target mutation.
+Immutable recovery policy now produces explicit fail-closed verdicts for RTO,
+RPO, backup age, recovery-target satisfaction, and configured cleanup.
 
 ## Goals
 
@@ -76,6 +78,8 @@ Additional providers can be added behind the same internal provider contract.
   without assuming that a failed command had no effect.
 - **Artifact reference**: a digest, immutable URI, exact size, media type,
   retention class, and redaction classification linked from bounded evidence.
+- **Recovery policy**: immutable duration and outcome assertions evaluated from
+  typed drill facts; insufficient evidence is `unknown`, not a pass.
 
 The implemented full-drill target is `local`. Kubernetes is available through
 the guarded CloudNativePG `target manifest` and `target verify` paths;
@@ -126,6 +130,8 @@ defaults. Known fields are also validated against provider and probe semantics
 before external commands start. The provider/catalog deadline is separate from
 the physical restore deadline; see
 [docs/configuration.md](docs/configuration.md).
+Recovery policy is independent from command timeouts and is documented in
+[docs/recovery-policy.md](docs/recovery-policy.md).
 
 ## Development
 

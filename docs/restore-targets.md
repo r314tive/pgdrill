@@ -146,6 +146,12 @@ authentication and does not require reading a password or Kubernetes Secret.
 Configured probe binary paths are interpreted inside the PostgreSQL image. The
 runner image needs only pgdrill and `kubectl`.
 
+This adapter currently implements only plain `recovery.target: latest`.
+Timestamp, LSN, XID, restore-point, timeline, or inclusive intent is rejected
+before target creation until the CNPG manifest mapping and live PITR evidence
+exist. Managed resolution echoes the applied target so the engine cannot accept
+a silent fallback.
+
 The service account needs `create` on the `pods/exec` subresource in addition to
 the lifecycle and evidence permissions shown in the example. Because pod exec is
 a privileged capability, use a dedicated service account and namespace-scoped
@@ -199,6 +205,12 @@ target:
     storage_size: 20Gi
     cpu_request: 500m
     memory_request: 1Gi
+recovery:
+  target: latest
+policy:
+  maximum_rto: 2h
+  require_recovery_target: true
+  require_cleanup: true
 probes:
   - type: sql
     name: select_1

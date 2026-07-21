@@ -33,6 +33,10 @@ called out explicitly even while the major version is `0`.
 - Bounded `pgdrill.artifact-reference/v1alpha1` records, content-addressed
   in-memory and directory stores, report referential-integrity checks, and
   pre-create persistence of exact CNPG manifests.
+- Immutable recovery-policy fields and
+  `pgdrill.recovery-policy-evaluation/v1alpha1` verdicts for RTO, RPO, backup
+  age, recovery-target satisfaction, and configured cleanup, with CLI and
+  bounded Prometheus presentation.
 
 ### Changed
 
@@ -62,6 +66,12 @@ called out explicitly even while the major version is `0`.
   `<report.path>.artifacts`; artifact write failure now prevents the `kubectl
   create` mutation. Metrics expose bounded retention/redaction counts and byte
   totals.
+- Configured policy assertions now fail closed on `failed` or `unknown`
+  evidence at the `policy_evaluation` lifecycle stage. Current producers write
+  all five typed verdicts, including explicit `not_configured` outcomes.
+- Managed target resolution now confirms the exact canonical recovery target.
+  CNPG rejects non-latest PITR, timeline, or inclusive intent before resource
+  creation until those fields are implemented by its manifest adapter.
 - CNPG create confirmation is enforced by both the CLI and the application
   service. Cancellation observed during final cleanup now produces an
   `aborted` result instead of a possible false `passed` result.
