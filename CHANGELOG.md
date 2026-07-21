@@ -55,6 +55,9 @@ called out explicitly even while the major version is `0`.
 - Native local drills and CNPG target verification now use the same core
   lifecycle and structured failure semantics. `cmd/pgdrill` no longer owns a
   separate CNPG result, cleanup, or report state machine.
+- Barman catalog normalization now accepts 3.19.1 epoch timestamp fields and
+  falls through malformed display timestamps instead of silently dropping a
+  usable backup finish time required by selection and recovery policy.
 - Native engine dependencies are segregated into backup discovery, catalog
   validation, and restore planning roles. Existing adapters still implement a
   compatibility composite, while the engine can compose independent objects.

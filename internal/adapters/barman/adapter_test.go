@@ -134,6 +134,39 @@ func TestParseBackupListSupportsKeyedBackupObjectsAndFullTypes(t *testing.T) {
 	}
 }
 
+func TestParseBackupListSupportsBarman3191EpochTimestamps(t *testing.T) {
+	backups, err := ParseBackupList(readFixture(t, "testdata/list-backups-3.19.1.json"), "field")
+	if err != nil {
+		t.Fatalf("parse Barman 3.19.1 backup list: %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("expected 1 backup, got %d", len(backups))
+	}
+
+	backup := backups[0]
+	if backup.ID != "barman:field/20260721T130733" || backup.ProviderID != "field/20260721T130733" {
+		t.Fatalf("unexpected backup identity %#v", backup)
+	}
+	if backup.Kind != model.BackupKindFull || backup.Status != model.BackupStatusAvailable {
+		t.Fatalf("unexpected backup classification %#v", backup)
+	}
+	wantFinishedAt := time.Unix(1784639254, 0).UTC()
+	if backup.FinishedAt == nil || !backup.FinishedAt.Equal(wantFinishedAt) {
+		t.Fatalf("finished_at = %#v, want %s", backup.FinishedAt, wantFinishedAt)
+	}
+}
+
+func TestGetTimeFallsThroughInvalidCandidates(t *testing.T) {
+	want := mustTime(t, "2026-07-21T13:07:34Z")
+	got := getTime(map[string]any{
+		"display_time": "Tue Jul 21 13:07:34 2026",
+		"exact_time":   "2026-07-21T13:07:34Z",
+	}, "display_time", "exact_time")
+	if got == nil || !got.Equal(want) {
+		t.Fatalf("time = %#v, want %s", got, want)
+	}
+}
+
 func TestAdapterDiscoverBackupsRunsBarmanListBackups(t *testing.T) {
 	fixture := readFixture(t, "testdata/list-backups.json")
 	runner := &fakeRunner{result: successResult(fixture)}

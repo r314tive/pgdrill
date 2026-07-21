@@ -105,7 +105,9 @@ Implemented normalization:
 - kind: `full`, `rsync`, and `snapshot` backup types normalize to canonical
   `full`; incremental and differential types retain their canonical kind, and
   a parent backup ID provides an incremental fallback
-- timestamps: `begin_time`, `end_time`, `last_modified`
+- timestamps: `begin_time`, `end_time`, `last_modified`, plus Barman epoch
+  timestamp companions such as `end_time_timestamp`; parseable timestamp keys
+  take precedence over human-readable local-time display fields
 - WAL range: `begin_wal`, `end_wal`, `begin_xlog`/`begin_lsn`,
   `end_xlog`/`end_lsn`
 - PostgreSQL version, PGDATA directory, keep/permanence metadata

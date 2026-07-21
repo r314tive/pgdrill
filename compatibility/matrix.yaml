@@ -21,6 +21,8 @@ entries:
         ref: internal/adapters/barman/testdata/list-backups.json
       - kind: fixture
         ref: internal/adapters/barman/testdata/list-backups-keyed.json
+      - kind: fixture
+        ref: internal/adapters/barman/testdata/list-backups-3.19.1.json
       - kind: conformance_test
         ref: internal/adapters/barman/adapter_test.go#TestProviderConformance
     limitations:

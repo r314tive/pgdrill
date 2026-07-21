@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -505,9 +506,17 @@ func mapBackup(object map[string]any, defaultServer string) (model.Backup, error
 		providerID = server + "/" + backupID
 	}
 
-	startedAt := getTime(object, "begin_time", "start_time", "started_at")
-	finishedAt := getTime(object, "end_time", "finish_time", "finished_at")
-	lastModifiedAt := getTime(object, "last_modified", "updated_at")
+	startedAt := getTime(object,
+		"begin_time_timestamp", "start_time_timestamp", "started_at_timestamp",
+		"begin_time", "start_time", "started_at",
+	)
+	finishedAt := getTime(object,
+		"end_time_timestamp", "finish_time_timestamp", "finished_at_timestamp",
+		"end_time", "finish_time", "finished_at",
+	)
+	lastModifiedAt := getTime(object,
+		"last_modified_timestamp", "updated_at_timestamp", "last_modified", "updated_at",
+	)
 	parentID := getString(object, "parent_backup_id", "parent_id", "deduplicated_from")
 
 	return model.Backup{
@@ -677,19 +686,24 @@ func getBool(object map[string]any, keys ...string) bool {
 }
 
 func getTime(object map[string]any, keys ...string) *time.Time {
-	value := getString(object, keys...)
-	if value == "" {
-		return nil
+	for _, key := range keys {
+		value := getString(object, key)
+		if value == "" {
+			continue
+		}
+		parsed, err := parseTime(value)
+		if err == nil {
+			return &parsed
+		}
 	}
-	parsed, err := parseTime(value)
-	if err != nil {
-		return nil
-	}
-	return &parsed
+	return nil
 }
 
 func parseTime(value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		return time.Unix(seconds, 0).UTC(), nil
+	}
 	for _, layout := range []string{
 		time.RFC3339Nano,
 		time.RFC3339,
