@@ -13,6 +13,8 @@ output.
 
 - `run_id` identifies one logical drill.
 - `attempt_id` identifies one execution attempt of that run.
+- `spec_digest` binds the attempt to the immutable drill input used by the
+  terminal report.
 - `sequence` starts at 1 and increases only after the configured sink accepts
   an event durably.
 - Ordering is defined only within one attempt.
@@ -62,7 +64,9 @@ idempotency and reconciliation gate described in
 
 ## Compatibility
 
-Consumers must reject unknown schema versions and unknown enum values. Additive
+Consumers must reject unknown schema versions and unknown enum values. Current
+emitters populate `spec_digest` on every event; validators retain compatibility
+with early `v1alpha1` events where this additive field was absent. Additive
 optional fields may be introduced within `v1alpha1`; incompatible identity,
 ordering, or state-transition changes require a new schema version.
 

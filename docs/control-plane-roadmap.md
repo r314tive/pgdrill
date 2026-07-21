@@ -230,14 +230,17 @@ different repositories.
 
 ## Delivery Gates
 
-1. Complete the Engine v0.2 immutable run spec and canonical digest.
-2. Prove idempotency, checkpoint, artifact, and crash-reconciliation behavior
+Completed prerequisite: the engine now captures an internal immutable drill
+spec with a canonical digest and explicit attempt identity. It remains internal
+until an out-of-process consumer exists.
+
+1. Prove idempotency, checkpoint, artifact, and crash-reconciliation behavior
    with fault-injection tests.
-3. Complete real-repository and live-target compatibility gates.
-4. Ship daemon-free plan expansion and local history.
-5. Run one executor/controller on a single host with process-loss recovery.
-6. Add remote executors and leases only after single-host reconciliation works.
-7. Add TUI, then multi-user controller capabilities, then web UI if validated
+2. Complete real-repository and live-target compatibility gates.
+3. Ship daemon-free plan expansion and local history.
+4. Run one executor/controller on a single host with process-loss recovery.
+5. Add remote executors and leases only after single-host reconciliation works.
+6. Add TUI, then multi-user controller capabilities, then web UI if validated
    workflows require it.
 
 No gate is satisfied by UI mockups or fixture-only provider tests.

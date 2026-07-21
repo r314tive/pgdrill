@@ -25,6 +25,11 @@ func TestValidateRejectsMalformedCurrentReports(t *testing.T) {
 		want   string
 	}{
 		{name: "missing id", mutate: func(result *model.DrillResult) { result.ID = "" }, want: "id is required"},
+		{name: "attempt whitespace", mutate: func(result *model.DrillResult) { result.AttemptID = " attempt-1" }, want: "attempt_id"},
+		{name: "invalid spec digest", mutate: func(result *model.DrillResult) { result.SpecDigest = "md5:no" }, want: "spec_digest must be a sha256"},
+		{name: "missing spec", mutate: func(result *model.DrillResult) { result.Spec = nil }, want: "spec is required when spec_digest"},
+		{name: "digest mismatch", mutate: func(result *model.DrillResult) { result.SpecDigest = "sha256:" + strings.Repeat("f", 64) }, want: "does not match spec digest"},
+		{name: "mutated spec", mutate: func(result *model.DrillResult) { result.Spec.Source.Ref.Revision = "sha256:" + strings.Repeat("f", 64) }, want: "does not match spec digest"},
 		{name: "unknown provider", mutate: func(result *model.DrillResult) { result.Provider = "future" }, want: "unsupported provider"},
 		{name: "unknown target", mutate: func(result *model.DrillResult) { result.Target.Type = "future" }, want: "unsupported target type"},
 		{name: "unknown recovery target", mutate: func(result *model.DrillResult) { result.RecoveryTarget.Type = "future" }, want: "unsupported recovery_target type"},

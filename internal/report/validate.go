@@ -2,9 +2,11 @@ package report
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 // Validate checks the durable report contract while retaining compatibility
@@ -53,6 +55,9 @@ func validateReport(result model.DrillResult, produced bool) error {
 	}
 	if err := validateBackup(result.Provider, result.Backup); err != nil {
 		return fmt.Errorf("invalid backup: %w", err)
+	}
+	if err := validateRunIdentity(result, produced); err != nil {
+		return err
 	}
 
 	evidenceIDs := make(map[string]struct{}, len(result.Evidence))
@@ -107,6 +112,69 @@ func validateReport(result model.DrillResult, produced bool) error {
 		return fmt.Errorf("failure message is required")
 	}
 	return validateEvidenceReferences("failure", result.Failure.EvidenceIDs, evidenceIDs)
+}
+
+func validateRunIdentity(result model.DrillResult, produced bool) error {
+	if result.AttemptID != "" && result.AttemptID != strings.TrimSpace(result.AttemptID) {
+		return fmt.Errorf("attempt_id must not contain surrounding whitespace")
+	}
+	if result.SpecDigest != "" && !model.IsSHA256Digest(result.SpecDigest) {
+		return fmt.Errorf("spec_digest must be a sha256 digest")
+	}
+	if produced {
+		if result.AttemptID == "" {
+			return fmt.Errorf("attempt_id is required for a produced report")
+		}
+		if result.SpecDigest == "" {
+			return fmt.Errorf("spec_digest is required for a produced report")
+		}
+		if result.Spec == nil {
+			return fmt.Errorf("spec is required for a produced report")
+		}
+	}
+	if result.Spec == nil {
+		if result.SpecDigest != "" {
+			return fmt.Errorf("spec is required when spec_digest is present")
+		}
+		return nil
+	}
+	if result.SpecDigest == "" {
+		return fmt.Errorf("spec_digest is required when spec is present")
+	}
+	if result.AttemptID == "" {
+		return fmt.Errorf("attempt_id is required when spec is present")
+	}
+
+	spec, err := runspec.New(*result.Spec)
+	if err != nil {
+		return fmt.Errorf("invalid spec: %w", err)
+	}
+	if spec.Digest() != result.SpecDigest {
+		return fmt.Errorf("spec_digest %q does not match spec digest %q", result.SpecDigest, spec.Digest())
+	}
+	canonical := spec.Document()
+	if !reflect.DeepEqual(*result.Spec, canonical) {
+		return fmt.Errorf("spec must use canonical normalized values")
+	}
+	if result.Cluster != canonical.Cluster {
+		return fmt.Errorf("cluster %q does not match spec cluster %q", result.Cluster, canonical.Cluster)
+	}
+	if !reflect.DeepEqual(result.Target, canonical.Target.Spec) {
+		return fmt.Errorf("target does not match spec target")
+	}
+	if !reflect.DeepEqual(result.RecoveryTarget, canonical.RecoveryTarget) {
+		return fmt.Errorf("recovery_target does not match spec recovery_target")
+	}
+	if canonical.Mode == model.DrillModeNative && result.Provider != canonical.Source.Provider {
+		return fmt.Errorf("provider %q does not match spec source provider %q", result.Provider, canonical.Source.Provider)
+	}
+	if canonical.Mode == model.DrillModeManaged && canonical.Source.Provider != "" && result.Provider != canonical.Source.Provider {
+		return fmt.Errorf("provider %q does not match managed spec source provider %q", result.Provider, canonical.Source.Provider)
+	}
+	if canonical.BackupSelection.Type == model.BackupSelectionByID && result.Backup.ID != "" && result.Backup.ID != canonical.BackupSelection.BackupID {
+		return fmt.Errorf("backup %q does not match spec backup selection %q", result.Backup.ID, canonical.BackupSelection.BackupID)
+	}
+	return nil
 }
 
 func validateBackup(provider model.ProviderType, backup model.Backup) error {

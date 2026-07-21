@@ -65,6 +65,7 @@ type TargetValidator interface {
 
 type Probe interface {
 	Type() model.ProbeType
+	Descriptor() model.ProbeDescriptor
 	Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error)
 }
 

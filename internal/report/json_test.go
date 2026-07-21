@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
@@ -48,6 +49,7 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 			CollectedAt: finishedAt,
 		}},
 	}
+	result = attachTestSpec(result)
 
 	if err := (JSONFileSink{Path: path}).Write(context.Background(), result); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -65,6 +67,9 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 	}
 	if loaded.PGDrillVersion != result.PGDrillVersion {
 		t.Fatalf("unexpected pgdrill version %q", loaded.PGDrillVersion)
+	}
+	if loaded.AttemptID != result.AttemptID || loaded.SpecDigest != result.SpecDigest || loaded.Spec == nil {
+		t.Fatalf("unexpected persisted run identity: attempt=%q digest=%q spec=%#v", loaded.AttemptID, loaded.SpecDigest, loaded.Spec)
 	}
 	if loaded.Cluster != result.Cluster {
 		t.Fatalf("unexpected cluster %q", loaded.Cluster)
@@ -317,7 +322,7 @@ func TestReadJSONPreservesCommandOutputBounds(t *testing.T) {
 
 func validTestResult() model.DrillResult {
 	startedAt := time.Date(2026, 7, 20, 11, 59, 0, 0, time.UTC)
-	return model.DrillResult{
+	return attachTestSpec(model.DrillResult{
 		SchemaVersion: model.CurrentReportSchemaVersion,
 		ID:            "drill-valid",
 		Provider:      model.ProviderWALG,
@@ -333,5 +338,43 @@ func validTestResult() model.DrillResult {
 		StartedAt:      startedAt,
 		FinishedAt:     startedAt.Add(time.Minute),
 		Status:         model.DrillStatusPassed,
+	})
+}
+
+func attachTestSpec(result model.DrillResult) model.DrillResult {
+	selection := model.BackupSelection{Type: model.BackupSelectionLatestAvailable}
+	if result.Backup.ID != "" {
+		selection = model.BackupSelection{Type: model.BackupSelectionByID, BackupID: result.Backup.ID}
 	}
+	targetID := result.Target.WorkDir
+	if targetID == "" {
+		targetID = "test-target"
+	}
+	document := model.DrillSpec{
+		Mode:    model.DrillModeNative,
+		Cluster: result.Cluster,
+		Source: model.BackupSourceSpec{
+			Ref:      model.ComponentRef{ID: "test-source", Driver: string(result.Provider), Revision: "sha256:" + strings.Repeat("a", 64)},
+			Provider: result.Provider,
+		},
+		BackupSelection: selection,
+		Target: model.RestoreTargetSpec{
+			Ref:  model.ComponentRef{ID: targetID, Driver: string(result.Target.Type), Revision: "sha256:" + strings.Repeat("b", 64)},
+			Spec: result.Target,
+		},
+		RecoveryTarget: result.RecoveryTarget,
+		ProbeProfile: model.ProbeProfileSpec{
+			Ref:    model.ComponentRef{ID: "test-probes", Driver: "inline", Revision: "sha256:" + strings.Repeat("c", 64)},
+			Probes: []model.ProbeDescriptor{{Type: model.ProbeSQL, Name: "select_1"}},
+		},
+	}
+	spec, err := runspec.New(document)
+	if err != nil {
+		panic(err)
+	}
+	specDocument := spec.Document()
+	result.AttemptID = "attempt-1"
+	result.SpecDigest = spec.Digest()
+	result.Spec = &specDocument
+	return result
 }

@@ -37,6 +37,12 @@ into source discovery, restore planning, and target execution responsibilities.
 Publishing that spec before correcting the current abstraction would freeze
 the native-local shape into the distributed protocol.
 
+Implementation note: the provider roles are now split and the engine captures
+an internal `pgdrill.drill-spec/v1alpha1` with canonical JSON, a SHA-256 digest,
+and separate run/attempt identities. It is persisted in new reports but remains
+under `internal/`; this satisfies the engine gate without declaring the type a
+stable external wire API.
+
 ## Engine Invariants
 
 - A run ID identifies a logical run; an attempt ID identifies one execution.

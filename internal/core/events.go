@@ -16,14 +16,15 @@ func (f EventSinkFunc) WriteEvent(ctx context.Context, event model.RunEvent) err
 }
 
 type eventEmitter struct {
-	sink      EventSink
-	runID     string
-	attemptID string
-	sequence  uint64
-	clock     func() time.Time
+	sink       EventSink
+	runID      string
+	attemptID  string
+	specDigest string
+	sequence   uint64
+	clock      func() time.Time
 }
 
-func newEventEmitter(sink EventSink, runID, attemptID string, clock func() time.Time) (*eventEmitter, error) {
+func newEventEmitter(sink EventSink, runID, attemptID, specDigest string, clock func() time.Time) (*eventEmitter, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
 		return nil, fmt.Errorf("event emitter run id is required")
@@ -32,14 +33,18 @@ func newEventEmitter(sink EventSink, runID, attemptID string, clock func() time.
 	if attemptID == "" {
 		return nil, fmt.Errorf("event emitter attempt id is required")
 	}
+	if specDigest != "" && !model.IsSHA256Digest(specDigest) {
+		return nil, fmt.Errorf("event emitter spec digest must be a sha256 digest")
+	}
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 	return &eventEmitter{
-		sink:      sink,
-		runID:     runID,
-		attemptID: attemptID,
-		clock:     clock,
+		sink:       sink,
+		runID:      runID,
+		attemptID:  attemptID,
+		specDigest: specDigest,
+		clock:      clock,
 	}, nil
 }
 
@@ -83,6 +88,7 @@ func (e *eventEmitter) emit(ctx context.Context, event model.RunEvent) error {
 	event.SchemaVersion = model.CurrentRunEventSchemaVersion
 	event.RunID = e.runID
 	event.AttemptID = e.attemptID
+	event.SpecDigest = e.specDigest
 	event.Sequence = sequence
 	event.OccurredAt = e.clock().UTC()
 	event.Attributes = cloneStrings(event.Attributes)

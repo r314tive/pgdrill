@@ -12,6 +12,7 @@ import (
 
 func TestEventEmitterWritesValidatedOrderedEvents(t *testing.T) {
 	now := time.Date(2026, 7, 21, 1, 2, 3, 0, time.FixedZone("test", 5*60*60))
+	specDigest := "sha256:" + strings.Repeat("a", 64)
 	events := []model.RunEvent{}
 	emitter, err := newEventEmitter(EventSinkFunc(func(_ context.Context, event model.RunEvent) error {
 		if err := event.Validate(); err != nil {
@@ -19,7 +20,7 @@ func TestEventEmitterWritesValidatedOrderedEvents(t *testing.T) {
 		}
 		events = append(events, event)
 		return nil
-	}), " run-1 ", " attempt-1 ", func() time.Time { return now })
+	}), " run-1 ", " attempt-1 ", specDigest, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("newEventEmitter() error = %v", err)
 	}
@@ -46,6 +47,9 @@ func TestEventEmitterWritesValidatedOrderedEvents(t *testing.T) {
 		if event.RunID != "run-1" || event.AttemptID != "attempt-1" {
 			t.Fatalf("event %d identity = %q/%q", i, event.RunID, event.AttemptID)
 		}
+		if event.SpecDigest != specDigest {
+			t.Fatalf("event %d spec digest = %q, want %q", i, event.SpecDigest, specDigest)
+		}
 		if event.Sequence != uint64(i+1) {
 			t.Fatalf("event %d sequence = %d, want %d", i, event.Sequence, i+1)
 		}
@@ -62,7 +66,7 @@ func TestEventEmitterPropagatesSinkFailure(t *testing.T) {
 	wantErr := errors.New("journal unavailable")
 	emitter, err := newEventEmitter(EventSinkFunc(func(context.Context, model.RunEvent) error {
 		return wantErr
-	}), "run-1", "attempt-1", func() time.Time { return time.Now().UTC() })
+	}), "run-1", "attempt-1", "", func() time.Time { return time.Now().UTC() })
 	if err != nil {
 		t.Fatalf("newEventEmitter() error = %v", err)
 	}
@@ -84,7 +88,7 @@ func TestEventEmitterReusesSequenceAfterRejectedWrite(t *testing.T) {
 		}
 		events = append(events, event)
 		return nil
-	}), "run-1", "attempt-1", func() time.Time { return time.Now().UTC() })
+	}), "run-1", "attempt-1", "", func() time.Time { return time.Now().UTC() })
 	if err != nil {
 		t.Fatalf("newEventEmitter() error = %v", err)
 	}
@@ -102,16 +106,18 @@ func TestEventEmitterReusesSequenceAfterRejectedWrite(t *testing.T) {
 
 func TestEventEmitterRejectsInvalidConstruction(t *testing.T) {
 	for _, tt := range []struct {
-		name      string
-		runID     string
-		attemptID string
-		want      string
+		name       string
+		runID      string
+		attemptID  string
+		specDigest string
+		want       string
 	}{
 		{name: "run id", runID: " ", attemptID: "attempt-1", want: "run id"},
 		{name: "attempt id", runID: "run-1", attemptID: "", want: "attempt id"},
+		{name: "spec digest", runID: "run-1", attemptID: "attempt-1", specDigest: "md5:no", want: "spec digest"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := newEventEmitter(nil, tt.runID, tt.attemptID, nil)
+			_, err := newEventEmitter(nil, tt.runID, tt.attemptID, tt.specDigest, nil)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("newEventEmitter() error = %v, want substring %q", err, tt.want)
 			}

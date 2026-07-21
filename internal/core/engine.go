@@ -9,15 +9,13 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 type DrillRequest struct {
-	ID             string
-	AttemptID      string
-	Cluster        string
-	Target         model.TargetSpec
-	RecoveryTarget model.RecoveryTarget
-	Selector       BackupSelector
+	ID        string
+	AttemptID string
+	Spec      runspec.Spec
 }
 
 type Engine struct {
@@ -57,14 +55,22 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	targetType := e.Target.Type()
 	clock := e.clock()
 	startedAt := clock().UTC()
-	recoveryTarget := req.RecoveryTarget.Normalized()
+	specDocument := req.Spec.Document()
+	recoveryTarget := specDocument.RecoveryTarget
+	var persistedSpec *model.DrillSpec
+	if req.Spec.Digest() != "" {
+		copy := specDocument
+		persistedSpec = &copy
+	}
 	result := model.DrillResult{
 		SchemaVersion:  model.CurrentReportSchemaVersion,
 		PGDrillVersion: e.PGDrillVersion,
 		ID:             drillID(req.ID, startedAt),
-		Cluster:        strings.TrimSpace(req.Cluster),
+		SpecDigest:     req.Spec.Digest(),
+		Spec:           persistedSpec,
+		Cluster:        specDocument.Cluster,
 		Provider:       reportedProvider,
-		Target:         req.Target,
+		Target:         specDocument.Target.Spec,
 		RecoveryTarget: recoveryTarget,
 		StartedAt:      startedAt,
 		Status:         model.DrillStatusUnknown,
@@ -103,30 +109,34 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("start drill: %w", err)
 		}
-		if err := recoveryTarget.Validate(); err != nil {
-			return fmt.Errorf("validate recovery target: %w", err)
+		if req.AttemptID != "" && req.AttemptID != strings.TrimSpace(req.AttemptID) {
+			return fmt.Errorf("attempt id must not contain surrounding whitespace")
 		}
 		if !providerType.IsKnown() {
 			return fmt.Errorf("backup provider type %q is unsupported", providerType)
 		}
+		if err := req.Spec.Validate(); err != nil {
+			return fmt.Errorf("validate drill spec: %w", err)
+		}
+		if specDocument.Mode != model.DrillModeNative {
+			return fmt.Errorf("native engine requires drill mode %q, got %q", model.DrillModeNative, specDocument.Mode)
+		}
+		if specDocument.Source.Provider != providerType {
+			return fmt.Errorf("backup source provider %q does not match drill spec provider %q", providerType, specDocument.Source.Provider)
+		}
 		if !targetType.IsKnown() {
 			return fmt.Errorf("restore target implementation type %q is unsupported", targetType)
 		}
-		if req.Target.Type != targetType {
-			return fmt.Errorf("restore target type %q does not match requested target type %q", targetType, req.Target.Type)
+		if specDocument.Target.Spec.Type != targetType {
+			return fmt.Errorf("restore target type %q does not match drill spec target type %q", targetType, specDocument.Target.Spec.Type)
 		}
 		if validator, ok := e.Target.(TargetValidator); ok {
-			if err := validator.Validate(ctx, req.Target); err != nil {
+			if err := validator.Validate(ctx, specDocument.Target.Spec); err != nil {
 				return fmt.Errorf("validate restore target: %w", err)
 			}
 		}
-		if len(e.Probes) == 0 {
-			return fmt.Errorf("at least one probe is required for a restore drill")
-		}
-		for i, probe := range e.Probes {
-			if probe == nil {
-				return fmt.Errorf("probe %d is nil", i)
-			}
+		if err := validateProbeBindings(specDocument.ProbeProfile.Probes, e.Probes); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -179,11 +189,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 
 	var backup model.Backup
 	err = lifecycle.RunStage(ctx, model.DrillStageBackupSelection, func() error {
-		selector := req.Selector
-		if selector == nil {
-			selector = LatestAvailableSelector{}
-		}
-		selected, selectErr := selector.Select(catalog, recoveryTarget)
+		selected, selectErr := SelectBackup(specDocument.BackupSelection, catalog, recoveryTarget)
 		if selectErr != nil {
 			return fmt.Errorf("select backup: %w", selectErr)
 		}
@@ -226,12 +232,12 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	var plan model.RestorePlan
 	err = lifecycle.RunStage(ctx, model.DrillStageRestorePlanning, func() error {
 		var planErr error
-		plan, planErr = e.Planner.PlanRestore(ctx, backup, recoveryTarget, req.Target)
+		plan, planErr = e.Planner.PlanRestore(ctx, backup, recoveryTarget, specDocument.Target.Spec)
 		result.Evidence = append(result.Evidence, plan.Evidence...)
 		if planErr != nil {
 			return fmt.Errorf("plan restore: %w", planErr)
 		}
-		if err := validateRestorePlan(providerType, backup, recoveryTarget, req.Target, plan); err != nil {
+		if err := validateRestorePlan(providerType, backup, recoveryTarget, specDocument.Target.Spec, plan); err != nil {
 			return fmt.Errorf("validate restore plan: %w", err)
 		}
 		return nil
@@ -263,7 +269,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 
 	err = lifecycle.RunStage(ctx, model.DrillStageTargetPreparation, func() error {
-		prepareErr := e.Target.Prepare(ctx, req.Target)
+		prepareErr := e.Target.Prepare(ctx, specDocument.Target.Spec)
 		prepared = true
 		if prepareErr != nil {
 			return fmt.Errorf("prepare restore target: %w", prepareErr)

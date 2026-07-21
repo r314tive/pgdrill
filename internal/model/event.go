@@ -47,6 +47,7 @@ type RunEvent struct {
 	SchemaVersion string            `json:"schema_version"`
 	RunID         string            `json:"run_id"`
 	AttemptID     string            `json:"attempt_id"`
+	SpecDigest    string            `json:"spec_digest,omitempty"`
 	Sequence      uint64            `json:"sequence"`
 	Type          RunEventType      `json:"type"`
 	Stage         DrillStage        `json:"stage,omitempty"`
@@ -72,6 +73,9 @@ func (e RunEvent) Validate() error {
 	}
 	if e.AttemptID != strings.TrimSpace(e.AttemptID) {
 		return fmt.Errorf("run event attempt_id must not contain surrounding whitespace")
+	}
+	if e.SpecDigest != "" && !IsSHA256Digest(e.SpecDigest) {
+		return fmt.Errorf("run event spec_digest must be a sha256 digest")
 	}
 	if e.Sequence == 0 {
 		return fmt.Errorf("run event sequence must be positive")

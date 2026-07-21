@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
@@ -60,6 +61,14 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 		Checks:   []model.Check{{Name: "tool.wal-g", Status: model.CheckStatusPassed}},
 		Evidence: []model.EvidenceRecord{testEvidence("preflight")},
 	}}
+	request := nativeRequestFor(
+		" production-main ",
+		model.ProviderWALG,
+		model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill"},
+		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		model.BackupSelection{Type: model.BackupSelectionLatestAvailable},
+	)
+	request.ID = "drill-1"
 
 	result, err := Engine{
 		Source:           provider,
@@ -71,12 +80,7 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 		Sink:             sink,
 		PGDrillVersion:   "pgdrill v0.1.0-test",
 		Clock:            fixedClock("2025-01-04T00:00:00Z"),
-	}.Run(context.Background(), DrillRequest{
-		ID:             "drill-1",
-		Cluster:        " production-main ",
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill"},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), request)
 
 	if err != nil {
 		t.Fatalf("run drill: %v", err)
@@ -92,6 +96,12 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	}
 	if result.PGDrillVersion != "pgdrill v0.1.0-test" {
 		t.Fatalf("unexpected pgdrill version %q", result.PGDrillVersion)
+	}
+	if result.AttemptID != "drill-1@20250104T000000.000000000Z" {
+		t.Fatalf("unexpected attempt id %q", result.AttemptID)
+	}
+	if result.Spec == nil || result.SpecDigest != request.Spec.Digest() || !model.IsSHA256Digest(result.SpecDigest) {
+		t.Fatalf("unexpected persisted spec identity: digest=%q spec=%#v", result.SpecDigest, result.Spec)
 	}
 	if result.Cluster != "production-main" {
 		t.Fatalf("unexpected cluster %q", result.Cluster)
@@ -141,7 +151,7 @@ func TestEngineComposesSegregatedProviderRoles(t *testing.T) {
 		Planner:          planner,
 		Target:           target,
 		Probes:           []Probe{passingProbe()},
-	}.Run(context.Background(), DrillRequest{Target: targetSpec, RecoveryTarget: recoveryTarget})
+	}.Run(context.Background(), nativeRequest(model.ProviderWALG, targetSpec, recoveryTarget))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -199,6 +209,33 @@ func TestEngineRequiresEverySegregatedProviderRole(t *testing.T) {
 	}
 }
 
+func TestEngineRequiresImmutableDrillSpecBeforeExternalWork(t *testing.T) {
+	provider := &fakeProvider{catalog: model.BackupCatalog{Provider: model.ProviderWALG}}
+	target := &fakeTarget{}
+	sink := &fakeSink{}
+
+	result, err := (Engine{
+		Source:           provider,
+		CatalogValidator: provider,
+		Planner:          provider,
+		Target:           target,
+		Probes:           []Probe{passingProbe()},
+		Sink:             sink,
+	}).Run(context.Background(), DrillRequest{})
+	if err == nil || !strings.Contains(err.Error(), "drill spec is required") {
+		t.Fatalf("Run() error = %v, want missing spec error", err)
+	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if len(provider.calls) != 0 || len(target.calls) != 0 {
+		t.Fatalf("missing spec crossed execution boundary: provider=%#v target=%#v", provider.calls, target.calls)
+	}
+	if !sink.called {
+		t.Fatal("missing spec failure was not persisted")
+	}
+}
+
 func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
 	targetSpec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill-events"}
 	recoveryTarget := model.RecoveryTarget{Type: model.RecoveryTargetLatest}
@@ -211,6 +248,9 @@ func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
 	}
 	target := &fakeTarget{}
 	events := []model.RunEvent{}
+	request := nativeRequest(model.ProviderWALG, targetSpec, recoveryTarget)
+	request.ID = "run-events"
+	request.AttemptID = "attempt-events"
 
 	result, err := Engine{
 		Source:           provider,
@@ -224,12 +264,7 @@ func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
 		}),
 		PGDrillVersion: "pgdrill test",
 		Clock:          fixedClock("2026-07-21T01:00:00Z"),
-	}.Run(context.Background(), DrillRequest{
-		ID:             "run-events",
-		AttemptID:      "attempt-events",
-		Target:         targetSpec,
-		RecoveryTarget: recoveryTarget,
-	})
+	}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -257,6 +292,9 @@ func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
 		if event.RunID != "run-events" || event.AttemptID != "attempt-events" {
 			t.Fatalf("event %d identity = %q/%q", i, event.RunID, event.AttemptID)
 		}
+		if event.SpecDigest != request.Spec.Digest() {
+			t.Fatalf("event %d spec digest = %q, want %q", i, event.SpecDigest, request.Spec.Digest())
+		}
 		if event.Type == model.RunEventStageStarted {
 			gotStages = append(gotStages, event.Stage)
 		}
@@ -275,6 +313,45 @@ func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
 	}
 }
 
+func TestEngineKeepsSpecDigestAcrossDistinctAttempts(t *testing.T) {
+	targetSpec := model.TargetSpec{Type: model.RestoreTargetLocal}
+	recovery := model.RecoveryTarget{Type: model.RecoveryTargetLatest}
+	request := nativeRequest(model.ProviderWALG, targetSpec, recovery)
+	request.ID = "logical-run"
+
+	runAttempt := func(attemptID string) model.DrillResult {
+		provider := &fakeProvider{
+			catalog: model.BackupCatalog{
+				Provider: model.ProviderWALG,
+				Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+			},
+			plan: testRestorePlan(model.ProviderWALG, "base_1", targetSpec, recovery, "restore"),
+		}
+		attempt := request
+		attempt.AttemptID = attemptID
+		result, err := (Engine{
+			Source:           provider,
+			CatalogValidator: provider,
+			Planner:          provider,
+			Target:           &fakeTarget{},
+			Probes:           []Probe{passingProbe()},
+		}).Run(context.Background(), attempt)
+		if err != nil {
+			t.Fatalf("Run(%s) error = %v", attemptID, err)
+		}
+		return result
+	}
+
+	first := runAttempt("attempt-1")
+	second := runAttempt("attempt-2")
+	if first.ID != second.ID || first.SpecDigest != second.SpecDigest {
+		t.Fatalf("retry identity drifted: first=%q/%q second=%q/%q", first.ID, first.SpecDigest, second.ID, second.SpecDigest)
+	}
+	if first.AttemptID == second.AttemptID {
+		t.Fatalf("distinct attempts share attempt id %q", first.AttemptID)
+	}
+}
+
 func TestEngineRunStopsBeforeStageOperationWhenEventDeliveryFails(t *testing.T) {
 	wantErr := errors.New("journal unavailable")
 	provider := &fakeProvider{
@@ -282,6 +359,8 @@ func TestEngineRunStopsBeforeStageOperationWhenEventDeliveryFails(t *testing.T) 
 	}
 	target := &fakeTarget{}
 	sink := &fakeSink{}
+	request := nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest})
+	request.ID = "event-failure"
 
 	result, err := Engine{
 		Source:           provider,
@@ -296,11 +375,7 @@ func TestEngineRunStopsBeforeStageOperationWhenEventDeliveryFails(t *testing.T) 
 			}
 			return nil
 		}),
-	}.Run(context.Background(), DrillRequest{
-		ID:             "event-failure",
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), request)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want event sink failure", err)
 	}
@@ -346,10 +421,7 @@ func TestEngineStopsBeforeDiscoveryOnPreflightFailure(t *testing.T) {
 		Preflight:        preflight,
 		Probes:           []Probe{passingProbe()},
 		Sink:             sink,
-	}.Run(context.Background(), DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), "preflight failed") {
 		t.Fatalf("expected preflight failure, got %v", err)
@@ -387,10 +459,7 @@ func TestEngineCleansUpAndWritesFailureOnRestoreStepError(t *testing.T) {
 		Probes:           []Probe{passingProbe()},
 		Sink:             sink,
 		Clock:            fixedClock("2025-01-04T00:00:00Z"),
-	}.Run(context.Background(), DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), `execute restore step "recover"`) {
 		t.Fatalf("expected restore step error, got %v", err)
@@ -439,10 +508,7 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 		Probes:           []Probe{probe},
 		Sink:             sink,
 		Clock:            fixedClock("2025-01-04T00:00:00Z"),
-	}.Run(context.Background(), DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), nativeRequest(model.ProviderBarman, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
 		t.Fatalf("expected probe failure error, got %v", err)
@@ -479,10 +545,7 @@ func TestEngineFailsWhenProbeReturnsNoChecks(t *testing.T) {
 		Target:           target,
 		Probes:           []Probe{&fakeProbe{probeType: model.ProbeSQL}},
 		Sink:             sink,
-	}.Run(context.Background(), DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
 		t.Fatalf("expected empty probe report failure, got %v", err)
@@ -557,7 +620,7 @@ func TestEngineRejectsMalformedCatalogBeforeSelection(t *testing.T) {
 
 			result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
 				context.Background(),
-				DrillRequest{Target: model.TargetSpec{Type: model.RestoreTargetLocal}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}},
+				nativeRequest(tt.provider, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}),
 			)
 
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -576,7 +639,7 @@ func TestEngineRejectsMalformedCatalogBeforeSelection(t *testing.T) {
 	}
 }
 
-func TestEngineRejectsSelectorOutputOutsideCatalog(t *testing.T) {
+func TestEngineRejectsSelectedBackupOutsideCatalog(t *testing.T) {
 	provider := &fakeProvider{
 		catalog: model.BackupCatalog{
 			Provider: model.ProviderWALG,
@@ -588,17 +651,17 @@ func TestEngineRejectsSelectorOutputOutsideCatalog(t *testing.T) {
 
 	result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
 		context.Background(),
-		DrillRequest{
-			Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-			RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-			Selector: BackupSelectorFunc(func(model.BackupCatalog, model.RecoveryTarget) (model.Backup, error) {
-				return model.Backup{ID: "wal-g:not-discovered"}, nil
-			}),
-		},
+		nativeRequestFor(
+			"test-cluster",
+			model.ProviderWALG,
+			model.TargetSpec{Type: model.RestoreTargetLocal},
+			model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			model.BackupSelection{Type: model.BackupSelectionByID, BackupID: "wal-g:not-discovered"},
+		),
 	)
 
-	if err == nil || !strings.Contains(err.Error(), "not in the discovered catalog") {
-		t.Fatalf("expected selector protocol error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "not in the wal-g catalog") {
+		t.Fatalf("expected canonical selection error, got %v", err)
 	}
 	if result.Failure == nil || result.Failure.Stage != model.DrillStageBackupSelection {
 		t.Fatalf("unexpected selector failure %#v", result.Failure)
@@ -632,7 +695,7 @@ func TestEngineRejectsMalformedCatalogCheckReport(t *testing.T) {
 
 			result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
 				context.Background(),
-				DrillRequest{Target: model.TargetSpec{Type: model.RestoreTargetLocal}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}},
+				nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}),
 			)
 
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -682,7 +745,7 @@ func TestEngineRejectsMalformedRestorePlanBeforeTargetMutation(t *testing.T) {
 
 			result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
 				context.Background(),
-				DrillRequest{Target: targetSpec, RecoveryTarget: recovery},
+				nativeRequest(model.ProviderWALG, targetSpec, recovery),
 			)
 
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -705,10 +768,10 @@ func TestEngineRejectsTargetImplementationMismatchBeforePreflight(t *testing.T) 
 
 	result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Preflight: preflight, Probes: []Probe{passingProbe()}}.Run(
 		context.Background(),
-		DrillRequest{Target: model.TargetSpec{Type: model.RestoreTargetKubernetes}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}},
+		nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetKubernetes}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}),
 	)
 
-	if err == nil || !strings.Contains(err.Error(), "does not match requested target type") {
+	if err == nil || !strings.Contains(err.Error(), "does not match drill spec target type") {
 		t.Fatalf("expected target type protocol error, got %v", err)
 	}
 	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
@@ -735,10 +798,7 @@ func TestEngineSnapshotsAndValidatesProviderIdentityBeforePreflight(t *testing.T
 		Preflight:        preflight,
 		Probes:           []Probe{passingProbe()},
 		Sink:             sink,
-	}.Run(context.Background(), DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), nativeRequest("future-provider", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), "provider type") {
 		t.Fatalf("Run() error = %v, want provider identity error", err)
@@ -782,10 +842,7 @@ func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T
 		Target:           target,
 		Probes:           []Probe{passingProbe()},
 		Sink:             sink,
-	}.Run(ctx, DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(ctx, nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation error, got %v", err)
@@ -832,10 +889,7 @@ func TestEngineCancellationDuringCleanupCannotPass(t *testing.T) {
 		Target:           target,
 		Probes:           []Probe{passingProbe()},
 		Sink:             sink,
-	}.Run(ctx, DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(ctx, nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want cancellation", err)
@@ -859,15 +913,16 @@ func TestEngineRejectsInvalidRecoveryTargetBeforeDiscovery(t *testing.T) {
 		Planner:          provider,
 		Target:           target,
 		Sink:             sink,
-	}.Run(context.Background(), DrillRequest{
-		Target: model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{
+	}.Run(context.Background(), nativeRequest(
+		model.ProviderWALG,
+		model.TargetSpec{Type: model.RestoreTargetLocal},
+		model.RecoveryTarget{
 			Type:  model.RecoveryTargetTimestamp,
 			Value: "2026-07-20 01:02:03",
 		},
-	})
+	))
 
-	if err == nil || !strings.Contains(err.Error(), "validate recovery target") {
+	if err == nil || !strings.Contains(err.Error(), "invalid recovery target") {
 		t.Fatalf("expected recovery target validation error, got %v", err)
 	}
 	if result.Status != model.DrillStatusFailed {
@@ -898,10 +953,7 @@ func TestEngineRejectsInvalidTargetBeforePreflightAndDiscovery(t *testing.T) {
 		Target:           target,
 		Preflight:        preflight,
 		Sink:             sink,
-	}.Run(context.Background(), DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/existing"},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/existing"}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), "validate restore target") {
 		t.Fatalf("expected target validation error, got %v", err)
@@ -928,6 +980,10 @@ func TestEngineRejectsInvalidProbeSetBeforePreflightAndDiscovery(t *testing.T) {
 	}{
 		{name: "missing", want: "at least one probe is required"},
 		{name: "nil", probes: []Probe{nil}, want: "probe 0 is nil"},
+		{name: "descriptor mismatch", probes: []Probe{&fakeProbe{
+			probeType:  model.ProbeSQL,
+			descriptor: model.ProbeDescriptor{Type: model.ProbeSQL, Name: "other"},
+		}}, want: "does not match drill spec descriptor"},
 	}
 
 	for _, test := range tests {
@@ -945,10 +1001,7 @@ func TestEngineRejectsInvalidProbeSetBeforePreflightAndDiscovery(t *testing.T) {
 				Preflight:        preflight,
 				Probes:           test.probes,
 				Sink:             sink,
-			}.Run(context.Background(), DrillRequest{
-				Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-				RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-			})
+			}.Run(context.Background(), nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("expected %q error, got %v", test.want, err)
@@ -983,10 +1036,7 @@ func TestEngineReturnsReportWriteFailure(t *testing.T) {
 		Target:           &fakeTarget{},
 		Probes:           []Probe{passingProbe()},
 		Sink:             sink,
-	}.Run(context.Background(), DrillRequest{
-		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), "write evidence") {
 		t.Fatalf("expected report write error, got %v", err)
@@ -1163,13 +1213,21 @@ func (t *fakeTarget) Destroy(ctx context.Context) ([]model.EvidenceRecord, error
 }
 
 type fakeProbe struct {
-	probeType model.ProbeType
-	report    model.CheckReport
-	err       error
+	probeType  model.ProbeType
+	descriptor model.ProbeDescriptor
+	report     model.CheckReport
+	err        error
 }
 
 func (p *fakeProbe) Type() model.ProbeType {
 	return p.probeType
+}
+
+func (p *fakeProbe) Descriptor() model.ProbeDescriptor {
+	if p.descriptor.Type != "" || p.descriptor.Name != "" {
+		return p.descriptor
+	}
+	return model.ProbeDescriptor{Type: p.probeType, Name: model.DefaultProbeName(p.probeType)}
 }
 
 func (p *fakeProbe) Run(context.Context, model.RunningPostgres) (model.CheckReport, error) {
@@ -1197,6 +1255,52 @@ func testEvidence(id string) model.EvidenceRecord {
 		Source:      "test",
 		CollectedAt: time.Date(2025, 1, 4, 0, 0, 0, 0, time.UTC),
 	}
+}
+
+func nativeRequest(provider model.ProviderType, target model.TargetSpec, recovery model.RecoveryTarget) DrillRequest {
+	return nativeRequestFor("test-cluster", provider, target, recovery, model.BackupSelection{Type: model.BackupSelectionLatestAvailable})
+}
+
+func nativeRequestFor(cluster string, provider model.ProviderType, target model.TargetSpec, recovery model.RecoveryTarget, selection model.BackupSelection) DrillRequest {
+	targetID := strings.TrimSpace(target.WorkDir)
+	if targetID == "" {
+		targetID = "test-target"
+	}
+	document := model.DrillSpec{
+		Mode:    model.DrillModeNative,
+		Cluster: cluster,
+		Source: model.BackupSourceSpec{
+			Ref: model.ComponentRef{
+				ID:       "test-source",
+				Driver:   string(provider),
+				Revision: "sha256:" + strings.Repeat("a", 64),
+			},
+			Provider: provider,
+		},
+		BackupSelection: selection,
+		Target: model.RestoreTargetSpec{
+			Ref: model.ComponentRef{
+				ID:       targetID,
+				Driver:   string(target.Type),
+				Revision: "sha256:" + strings.Repeat("b", 64),
+			},
+			Spec: target,
+		},
+		RecoveryTarget: recovery,
+		ProbeProfile: model.ProbeProfileSpec{
+			Ref: model.ComponentRef{
+				ID:       "test-probes",
+				Driver:   "inline",
+				Revision: "sha256:" + strings.Repeat("c", 64),
+			},
+			Probes: []model.ProbeDescriptor{{Type: model.ProbeSQL, Name: "sql"}},
+		},
+	}
+	spec, err := runspec.Snapshot(document)
+	if err != nil {
+		panic(err)
+	}
+	return DrillRequest{Spec: spec}
 }
 
 func availableBackup(provider model.ProviderType, providerID string) model.Backup {

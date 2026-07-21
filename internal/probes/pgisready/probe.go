@@ -45,6 +45,14 @@ func (p *Probe) Type() model.ProbeType {
 	return model.ProbePGIsReady
 }
 
+func (p *Probe) Descriptor() model.ProbeDescriptor {
+	name := strings.TrimSpace(p.cfg.Name)
+	if name == "" {
+		name = model.DefaultProbeName(p.Type())
+	}
+	return model.ProbeDescriptor{Type: p.Type(), Name: name}
+}
+
 func (p *Probe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error) {
 	if pg.ConnString == "" {
 		check := p.check(model.CheckStatusFailed, "running postgres conn_string is required", nil)

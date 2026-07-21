@@ -50,7 +50,8 @@ func newRunLifecycle(
 	if attemptID == "" {
 		attemptID = derivedAttemptID(result.ID, result.StartedAt)
 	}
-	emitter, err := newEventEmitter(eventSink, result.ID, attemptID, clock)
+	result.AttemptID = attemptID
+	emitter, err := newEventEmitter(eventSink, result.ID, attemptID, result.SpecDigest, clock)
 	if err != nil {
 		return nil, err
 	}
@@ -74,11 +75,18 @@ func (l *runLifecycle) Start(ctx context.Context) error {
 		return fmt.Errorf("lifecycle already finished")
 	}
 	l.started = true
+	attributes := map[string]string{
+		"report_schema":   l.result.SchemaVersion,
+		"pgdrill_version": l.result.PGDrillVersion,
+	}
+	if l.result.Spec != nil {
+		attributes["drill_spec_schema"] = l.result.Spec.SchemaVersion
+	}
+	if l.result.SpecDigest != "" {
+		attributes["spec_digest"] = l.result.SpecDigest
+	}
 	err := l.writeEvent(ctx, func(eventCtx context.Context) error {
-		return l.events.runStarted(eventCtx, map[string]string{
-			"report_schema":   l.result.SchemaVersion,
-			"pgdrill_version": l.result.PGDrillVersion,
-		})
+		return l.events.runStarted(eventCtx, attributes)
 	})
 	if err == nil {
 		l.eventStreamStarted = true

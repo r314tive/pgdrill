@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/application/runinput"
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
@@ -68,6 +69,10 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 	}
 	startedAt := clock().UTC()
 	drillID := ID(opts.DrillID, startedAt)
+	drillSpec, err := runinput.ManagedCNPG(cfg, opts.Discover)
+	if err != nil {
+		return model.DrillResult{}, fmt.Errorf("create managed CNPG drill spec: %w", err)
+	}
 	ownershipID := s.OwnershipID
 	if ownershipID == nil {
 		ownershipID = cnpg.NewOwnershipID
@@ -78,6 +83,7 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 		target:      cfg.Target.CNPG,
 		discover:    opts.Discover,
 		drillID:     drillID,
+		probes:      drillSpec.Document().ProbeProfile.Probes,
 		runner:      s.Runner,
 		ownershipID: ownershipID,
 	}
@@ -90,13 +96,11 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 		Clock:               clock,
 		FinalizationTimeout: s.FinalizationTimeout,
 	}).Run(ctx, core.ManagedDrillRequest{
-		ID:             drillID,
-		AttemptID:      opts.AttemptID,
-		Cluster:        cfg.Cluster.Name,
-		Backup:         backup(cfg.Target.CNPG, cfg.Target.CNPG.VerifyClusterName),
-		Target:         cfg.TargetSpec(),
-		RecoveryTarget: cfg.RecoveryTarget(),
-		StartedAt:      startedAt,
+		ID:        drillID,
+		AttemptID: opts.AttemptID,
+		Spec:      drillSpec,
+		Backup:    backup(cfg.Target.CNPG, cfg.Target.CNPG.VerifyClusterName),
+		StartedAt: startedAt,
 	})
 }
 
@@ -172,6 +176,7 @@ type managedResolver struct {
 	target      config.CNPGTargetConfig
 	discover    bool
 	drillID     string
+	probes      []model.ProbeDescriptor
 	runner      command.Runner
 	ownershipID func() (string, error)
 }
@@ -210,6 +215,7 @@ func (r *managedResolver) Resolve(ctx context.Context) (core.ManagedResolution, 
 		Backup: backup(r.target, spec.Name),
 		Target: target,
 		Checks: checker,
+		Probes: append([]model.ProbeDescriptor(nil), r.probes...),
 	}, report, nil
 }
 

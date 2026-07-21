@@ -147,6 +147,12 @@ Completed foundation:
 - Segregated native roles for backup discovery, catalog validation, and restore
   planning. Current adapters remain composite implementations, while
   `core.Engine` accepts each role independently.
+- Internal immutable `pgdrill.drill-spec/v1alpha1` snapshots with canonical
+  JSON, secret-free component revisions, deterministic SHA-256 digests,
+  canonical latest/exact backup selection, and explicit attempt identity.
+- Native and managed reports persist the complete spec and digest; lifecycle
+  events bind every emitted transition to the same digest, and report readers
+  reject spec tampering or cross-field identity drift.
 - CNPG orchestration moved from `cmd/pgdrill` into
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
@@ -154,15 +160,13 @@ Completed foundation:
 
 Remaining engine gates, in order:
 
-1. Introduce an immutable concrete run spec, with a
-   canonical digest and explicit attempt identity.
-2. Add bounded artifact references, operation idempotency keys, persisted
+1. Add bounded artifact references, operation idempotency keys, persisted
    checkpoints, and reconciliation for unknown mutation outcomes.
-3. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
+2. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
    target satisfaction, and required cleanup.
-4. Publish reusable provider/target conformance suites and record real
+3. Publish reusable provider/target conformance suites and record real
    repository/version matrices for WAL-G, Barman, pgBackRest, and pg_probackup.
-5. Exercise a release candidate through local native-provider drills and a
+4. Exercise a release candidate through local native-provider drills and a
    live disposable CNPG drill before calling Engine v0.2 release-ready.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this

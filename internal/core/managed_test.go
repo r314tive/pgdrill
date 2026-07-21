@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
@@ -16,6 +17,8 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, checker)}
 	events := []model.RunEvent{}
 	sink := &fakeSink{}
+	request := managedRequest("managed-1")
+	request.AttemptID = "attempt-1"
 
 	result, err := ManagedEngine{
 		Resolver: resolver,
@@ -30,18 +33,15 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 		}),
 		PGDrillVersion: "pgdrill test",
 		Clock:          fixedClock("2026-07-21T01:00:00Z"),
-	}.Run(context.Background(), ManagedDrillRequest{
-		ID:             "managed-1",
-		AttemptID:      "attempt-1",
-		Cluster:        "source-cluster",
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if result.Status != model.DrillStatusPassed || result.Backup.ID != "cnpg:backup-1" {
 		t.Fatalf("unexpected result %#v", result)
+	}
+	if result.AttemptID != "attempt-1" || result.Spec == nil || result.SpecDigest != request.Spec.Digest() {
+		t.Fatalf("unexpected managed run identity %#v", result)
 	}
 	if got, want := target.calls, []string{"start", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("target calls = %#v, want %#v", got, want)
@@ -62,6 +62,9 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	}
 	gotStages := []model.DrillStage{}
 	for _, event := range events {
+		if event.SpecDigest != request.Spec.Digest() {
+			t.Fatalf("event spec digest = %q, want %q", event.SpecDigest, request.Spec.Digest())
+		}
 		if event.Type == model.RunEventStageStarted {
 			gotStages = append(gotStages, event.Stage)
 		}
@@ -78,11 +81,7 @@ func TestManagedEnginePersistsDiscoveryFailure(t *testing.T) {
 		err:    wantErr,
 	}
 	sink := &fakeSink{}
-	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(context.Background(), ManagedDrillRequest{
-		ID:             "managed-discovery-failure",
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(context.Background(), managedRequest("managed-discovery-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want discovery error", err)
 	}
@@ -94,20 +93,32 @@ func TestManagedEnginePersistsDiscoveryFailure(t *testing.T) {
 	}
 }
 
+func TestManagedEngineRequiresImmutableDrillSpecBeforeResolution(t *testing.T) {
+	resolver := &fakeManagedResolver{resolution: managedResolution(&fakeManagedTarget{}, &fakePostRestoreChecker{})}
+	sink := &fakeSink{}
+	result, err := (ManagedEngine{Resolver: resolver, Sink: sink}).Run(context.Background(), ManagedDrillRequest{})
+	if err == nil || !strings.Contains(err.Error(), "drill spec is required") {
+		t.Fatalf("Run() error = %v, want missing spec error", err)
+	}
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation || resolver.calls != 0 {
+		t.Fatalf("unexpected result=%#v resolver_calls=%d", result, resolver.calls)
+	}
+	if !sink.called {
+		t.Fatal("missing managed spec failure was not persisted")
+	}
+}
+
 func TestManagedEngineRejectsAndSanitizesMalformedProvisionalBackup(t *testing.T) {
 	resolver := &fakeManagedResolver{resolution: managedResolution(&fakeManagedTarget{}, &fakePostRestoreChecker{})}
 	sink := &fakeSink{}
-	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(context.Background(), ManagedDrillRequest{
-		ID: "managed-invalid-provisional-backup",
-		Backup: model.Backup{
-			Provider:   model.ProviderWALG,
-			ProviderID: "base_1",
-			Kind:       model.BackupKindFull,
-			Status:     model.BackupStatusAvailable,
-		},
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	request := managedRequest("managed-invalid-provisional-backup")
+	request.Backup = model.Backup{
+		Provider:   model.ProviderWALG,
+		ProviderID: "base_1",
+		Kind:       model.BackupKindFull,
+		Status:     model.BackupStatusAvailable,
+	}
+	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(context.Background(), request)
 	if err == nil || !strings.Contains(err.Error(), "provisional managed backup") {
 		t.Fatalf("Run() error = %v, want provisional backup error", err)
 	}
@@ -129,11 +140,7 @@ func TestManagedEngineDoesNotRepeatTargetFailureCleanup(t *testing.T) {
 	wantErr := errors.New("operator recovery failed")
 	target := &fakeManagedTarget{startErr: wantErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{})}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), ManagedDrillRequest{
-		ID:             "managed-start-failure",
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-start-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want start error", err)
 	}
@@ -150,11 +157,7 @@ func TestManagedEngineCleansUpAfterCheckFailure(t *testing.T) {
 	target := &fakeManagedTarget{}
 	checker := &fakePostRestoreChecker{err: wantErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, checker)}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), ManagedDrillRequest{
-		ID:             "managed-check-failure",
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-check-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want check error", err)
 	}
@@ -170,11 +173,7 @@ func TestManagedEngineReportsCleanupOnlyFailure(t *testing.T) {
 	wantErr := errors.New("delete failed")
 	target := &fakeManagedTarget{destroyErr: wantErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{})}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), ManagedDrillRequest{
-		ID:             "managed-cleanup-failure",
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-cleanup-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want cleanup error", err)
 	}
@@ -188,11 +187,7 @@ func TestManagedEnginePreservesPrimaryCheckStageWhenCleanupAlsoFails(t *testing.
 	cleanupErr := errors.New("delete failed")
 	target := &fakeManagedTarget{destroyErr: cleanupErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{err: checkErr})}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), ManagedDrillRequest{
-		ID:             "managed-check-cleanup-failure",
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-check-cleanup-failure"))
 	if !errors.Is(err, checkErr) || !errors.Is(err, cleanupErr) {
 		t.Fatalf("Run() error = %v, want joined check and cleanup errors", err)
 	}
@@ -207,11 +202,7 @@ func TestManagedEngineCancellationDuringCleanupCannotPass(t *testing.T) {
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{})}
 	sink := &fakeSink{}
 
-	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(ctx, ManagedDrillRequest{
-		ID:             "managed-cleanup-cancel",
-		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-	})
+	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(ctx, managedRequest("managed-cleanup-cancel"))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want cancellation", err)
 	}
@@ -229,23 +220,19 @@ func TestManagedEngineValidatesResolutionBeforeMutation(t *testing.T) {
 		resolution ManagedResolution
 		want       string
 	}{
-		{name: "target", resolution: ManagedResolution{Backup: managedBackup(), Checks: &fakePostRestoreChecker{}}, want: "target is required"},
-		{name: "checker", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}}, want: "checker is required"},
-		{name: "backup", resolution: ManagedResolution{Target: &fakeManagedTarget{}, Checks: &fakePostRestoreChecker{}}, want: "backup id"},
+		{name: "target", resolution: ManagedResolution{Backup: managedBackup(), Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "target is required"},
+		{name: "checker", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}, Probes: managedProbeDescriptors()}, want: "checker is required"},
+		{name: "backup", resolution: ManagedResolution{Target: &fakeManagedTarget{}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "backup id"},
 		{name: "status", resolution: ManagedResolution{Backup: func() model.Backup {
 			backup := managedBackup()
 			backup.Status = model.BackupStatusFailed
 			return backup
-		}(), Target: &fakeManagedTarget{}, Checks: &fakePostRestoreChecker{}}, want: "not available"},
+		}(), Target: &fakeManagedTarget{}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "not available"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resolver := &fakeManagedResolver{resolution: tt.resolution}
-			result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), ManagedDrillRequest{
-				ID:             "managed-invalid",
-				Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
-				RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-			})
+			result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-invalid"))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Run() error = %v, want substring %q", err, tt.want)
 			}
@@ -314,7 +301,46 @@ func (c *fakePostRestoreChecker) Check(context.Context, model.RunningPostgres) (
 }
 
 func managedResolution(target ManagedRestoreTarget, checker PostRestoreChecker) ManagedResolution {
-	return ManagedResolution{Backup: managedBackup(), Target: target, Checks: checker}
+	return ManagedResolution{Backup: managedBackup(), Target: target, Checks: checker, Probes: managedProbeDescriptors()}
+}
+
+func managedProbeDescriptors() []model.ProbeDescriptor {
+	return []model.ProbeDescriptor{{Type: model.ProbeSQL, Name: "select_1"}}
+}
+
+func managedRequest(id string) ManagedDrillRequest {
+	document := model.DrillSpec{
+		Mode:    model.DrillModeManaged,
+		Cluster: "source-cluster",
+		Source: model.BackupSourceSpec{Ref: model.ComponentRef{
+			ID:       "test/source-cluster",
+			Driver:   "cnpg",
+			Revision: "sha256:" + strings.Repeat("a", 64),
+		}},
+		BackupSelection: model.BackupSelection{Type: model.BackupSelectionLatestAvailable},
+		Target: model.RestoreTargetSpec{
+			Ref: model.ComponentRef{
+				ID:       "test/cnpg-disposable",
+				Driver:   "cnpg",
+				Revision: "sha256:" + strings.Repeat("b", 64),
+			},
+			Spec: model.TargetSpec{Type: model.RestoreTargetKubernetes},
+		},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		ProbeProfile: model.ProbeProfileSpec{
+			Ref: model.ComponentRef{
+				ID:       "test-probes",
+				Driver:   "inline",
+				Revision: "sha256:" + strings.Repeat("c", 64),
+			},
+			Probes: managedProbeDescriptors(),
+		},
+	}
+	spec, err := runspec.New(document)
+	if err != nil {
+		panic(err)
+	}
+	return ManagedDrillRequest{ID: id, Spec: spec}
 }
 
 func managedBackup() model.Backup {

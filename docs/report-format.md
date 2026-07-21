@@ -26,6 +26,9 @@ Schema recognition is not the only read gate. Current reports are validated for
 canonical enum values, required identity and timestamps, timestamp ordering,
 provider-scoped backup identity, valid WAL LSN/timeline values, terminal status
 coherence, unique evidence IDs, and resolvable check/failure evidence links.
+When a canonical drill spec is present, readers also recompute its digest and
+reject non-canonical values or disagreement with report cluster, provider,
+target, recovery target, or exact backup selection.
 Unknown JSON fields remain forward-compatible, but a recognized schema with
 contradictory contents is rejected rather than trusted.
 
@@ -33,8 +36,9 @@ contradictory contents is rejected rather than trusted.
 
 The top-level object is `model.DrillResult` and contains:
 
-- schema version, executing pgdrill build identity, drill ID, and configured
-  cluster name when present
+- schema version, executing pgdrill build identity, logical drill ID, attempt
+  ID, and configured cluster name when present
+- the secret-free immutable drill spec and its canonical `sha256:` digest
 - provider and selected backup, when provider discovery selected the input
 - restore target and recovery target
 - start and finish timestamps
@@ -45,6 +49,12 @@ The top-level object is `model.DrillResult` and contains:
 
 Target-only drills may have an empty `provider` and `backup.provider`. Consumers
 must not infer a provider from the restore target or a CNPG `Backup` reference.
+
+Current producers always write `attempt_id`, `spec_digest`, and `spec`. Readers
+continue to accept reports created before these additive fields existed. If any
+spec identity field is present, the complete identity must be coherent. The
+spec digest excludes logical run and attempt IDs, so another attempt of the same
+run retains the same digest. See [drill-spec-format.md](drill-spec-format.md).
 
 Command evidence contains redacted arguments, environment values, output, and a
 structured exit status. `path` is the configured executable name or path;

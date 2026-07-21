@@ -3,9 +3,61 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/r314tive/pgdrill/internal/model"
 )
+
+func validateProbeBindings(expected []model.ProbeDescriptor, configured []Probe) error {
+	if len(configured) == 0 {
+		return fmt.Errorf("at least one probe is required for a restore drill")
+	}
+	if len(configured) != len(expected) {
+		return fmt.Errorf("configured probe count %d does not match drill spec probe count %d", len(configured), len(expected))
+	}
+	for i, probe := range configured {
+		if probe == nil {
+			return fmt.Errorf("probe %d is nil", i)
+		}
+		probeType := probe.Type()
+		if !probeType.IsKnown() {
+			return fmt.Errorf("probe %d has unsupported type %q", i, probeType)
+		}
+		descriptor := probe.Descriptor()
+		descriptor.Name = strings.TrimSpace(descriptor.Name)
+		if descriptor.Type != probeType {
+			return fmt.Errorf("probe %d descriptor type %q does not match implementation type %q", i, descriptor.Type, probeType)
+		}
+		if err := validateProbeDescriptor(i, expected[i], descriptor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateProbeDescriptors(expected, actual []model.ProbeDescriptor) error {
+	if len(actual) != len(expected) {
+		return fmt.Errorf("resolved probe count %d does not match drill spec probe count %d", len(actual), len(expected))
+	}
+	for i, descriptor := range actual {
+		descriptor.Type = model.ProbeType(strings.TrimSpace(string(descriptor.Type)))
+		descriptor.Name = strings.TrimSpace(descriptor.Name)
+		if !descriptor.Type.IsKnown() {
+			return fmt.Errorf("resolved probe %d has unsupported type %q", i, descriptor.Type)
+		}
+		if err := validateProbeDescriptor(i, expected[i], descriptor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateProbeDescriptor(index int, expected, actual model.ProbeDescriptor) error {
+	if actual != expected {
+		return fmt.Errorf("probe %d descriptor %#v does not match drill spec descriptor %#v", index, actual, expected)
+	}
+	return nil
+}
 
 func RunProbes(ctx context.Context, configured []Probe, pg model.RunningPostgres) (model.CheckReport, error) {
 	report := model.CheckReport{}

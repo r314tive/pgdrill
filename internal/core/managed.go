@@ -9,24 +9,24 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 type ManagedResolution struct {
 	Backup model.Backup
 	Target ManagedRestoreTarget
 	Checks PostRestoreChecker
+	Probes []model.ProbeDescriptor
 }
 
 type ManagedDrillRequest struct {
 	ID        string
 	AttemptID string
-	Cluster   string
+	Spec      runspec.Spec
 	// Backup is a provisional identity used in reports before Resolve returns
 	// the authoritative available backup.
-	Backup         model.Backup
-	Target         model.TargetSpec
-	RecoveryTarget model.RecoveryTarget
-	StartedAt      time.Time
+	Backup    model.Backup
+	StartedAt time.Time
 }
 
 type ManagedEngine struct {
@@ -49,20 +49,28 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	if req.StartedAt.IsZero() {
 		startedAt = clock().UTC()
 	}
-	recoveryTarget := req.RecoveryTarget.Normalized()
+	specDocument := req.Spec.Document()
+	recoveryTarget := specDocument.RecoveryTarget
 	initialBackup := req.Backup
 	initialBackupErr := validateProvisionalManagedBackup(initialBackup)
 	if initialBackupErr != nil {
 		initialBackup = model.Backup{}
 	}
+	var persistedSpec *model.DrillSpec
+	if req.Spec.Digest() != "" {
+		copy := specDocument
+		persistedSpec = &copy
+	}
 	result := model.DrillResult{
 		SchemaVersion:  model.CurrentReportSchemaVersion,
 		PGDrillVersion: e.PGDrillVersion,
 		ID:             drillID(req.ID, startedAt),
-		Cluster:        strings.TrimSpace(req.Cluster),
+		SpecDigest:     req.Spec.Digest(),
+		Spec:           persistedSpec,
+		Cluster:        specDocument.Cluster,
 		Provider:       initialBackup.Provider,
 		Backup:         initialBackup,
-		Target:         req.Target,
+		Target:         specDocument.Target.Spec,
 		RecoveryTarget: recoveryTarget,
 		StartedAt:      startedAt,
 		Status:         model.DrillStatusUnknown,
@@ -104,14 +112,20 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if e.Resolver == nil {
 			return fmt.Errorf("managed drill resolver is required")
 		}
+		if req.AttemptID != "" && req.AttemptID != strings.TrimSpace(req.AttemptID) {
+			return fmt.Errorf("attempt id must not contain surrounding whitespace")
+		}
+		if err := req.Spec.Validate(); err != nil {
+			return fmt.Errorf("validate drill spec: %w", err)
+		}
+		if specDocument.Mode != model.DrillModeManaged {
+			return fmt.Errorf("managed engine requires drill mode %q, got %q", model.DrillModeManaged, specDocument.Mode)
+		}
 		if initialBackupErr != nil {
 			return fmt.Errorf("validate provisional managed backup: %w", initialBackupErr)
 		}
-		if !req.Target.Type.IsKnown() {
-			return fmt.Errorf("managed restore target type %q is unsupported", req.Target.Type)
-		}
-		if err := recoveryTarget.Validate(); err != nil {
-			return fmt.Errorf("validate recovery target: %w", err)
+		if err := validateManagedBackupSelection(specDocument.BackupSelection, initialBackup, true); err != nil {
+			return fmt.Errorf("validate provisional managed backup selection: %w", err)
 		}
 		return nil
 	})
@@ -166,8 +180,11 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if hasFailedChecks(discoveryReport.Checks) {
 			return fmt.Errorf("managed target discovery failed")
 		}
-		if err := validateManagedResolution(req.Target, resolution); err != nil {
+		if err := validateManagedResolution(specDocument.Target.Spec, specDocument.ProbeProfile.Probes, resolution); err != nil {
 			return fmt.Errorf("validate managed target resolution: %w", err)
+		}
+		if err := validateManagedBackupSelection(specDocument.BackupSelection, resolution.Backup, false); err != nil {
+			return fmt.Errorf("validate resolved managed backup selection: %w", err)
 		}
 		result.Provider = resolution.Backup.Provider
 		result.Backup = resolution.Backup
@@ -259,7 +276,7 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	return lifecycle.Finish(ctx, model.DrillStatusPassed, nil)
 }
 
-func validateManagedResolution(requestedTarget model.TargetSpec, resolution ManagedResolution) error {
+func validateManagedResolution(requestedTarget model.TargetSpec, expectedProbes []model.ProbeDescriptor, resolution ManagedResolution) error {
 	if resolution.Target == nil {
 		return fmt.Errorf("managed restore target is required")
 	}
@@ -268,6 +285,9 @@ func validateManagedResolution(requestedTarget model.TargetSpec, resolution Mana
 	}
 	if resolution.Target.Type() != requestedTarget.Type {
 		return fmt.Errorf("managed restore target type %q does not match requested target type %q", resolution.Target.Type(), requestedTarget.Type)
+	}
+	if err := validateProbeDescriptors(expectedProbes, resolution.Probes); err != nil {
+		return err
 	}
 	backup := resolution.Backup
 	if strings.TrimSpace(backup.ID) == "" {
@@ -293,6 +313,19 @@ func validateManagedResolution(requestedTarget model.TargetSpec, resolution Mana
 	}
 	if backup.Status != model.BackupStatusAvailable {
 		return fmt.Errorf("resolved backup %q is not available", backup.ID)
+	}
+	return nil
+}
+
+func validateManagedBackupSelection(selection model.BackupSelection, backup model.Backup, allowEmpty bool) error {
+	if backup.ID == "" {
+		if allowEmpty && selection.Type == model.BackupSelectionLatestAvailable {
+			return nil
+		}
+		return fmt.Errorf("managed backup selection requires a resolved backup")
+	}
+	if selection.Type == model.BackupSelectionByID && backup.ID != selection.BackupID {
+		return fmt.Errorf("resolved backup %q does not match requested backup %q", backup.ID, selection.BackupID)
 	}
 	return nil
 }

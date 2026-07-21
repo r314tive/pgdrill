@@ -46,6 +46,14 @@ func (p *Probe) Type() model.ProbeType {
 	return model.ProbeSQL
 }
 
+func (p *Probe) Descriptor() model.ProbeDescriptor {
+	name := strings.TrimSpace(p.cfg.Name)
+	if name == "" {
+		name = model.DefaultProbeName(p.Type())
+	}
+	return model.ProbeDescriptor{Type: p.Type(), Name: name}
+}
+
 func (p *Probe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error) {
 	if strings.TrimSpace(p.cfg.Query) == "" {
 		return model.CheckReport{Checks: []model.Check{p.check(model.CheckStatusFailed, "sql probe query is required", nil)}}, nil

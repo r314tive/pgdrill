@@ -15,6 +15,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/preflight"
 	"github.com/r314tive/pgdrill/internal/report"
+	"github.com/r314tive/pgdrill/internal/runspec"
 	"gopkg.in/yaml.v3"
 )
 
@@ -744,7 +745,7 @@ report:
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
-	if output := stdout.String(); !strings.Contains(output, "Status    passed") || !strings.Contains(output, "Report    "+reportPath) {
+	if output := stdout.String(); !strings.Contains(output, "Status       passed") || !strings.Contains(output, "Report       "+reportPath) {
 		t.Fatalf("unexpected verify summary:\n%s", output)
 	}
 
@@ -755,7 +756,7 @@ report:
 	if result.ID != "cnpg-drill-1" || result.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected result id/status %#v", result)
 	}
-	if result.Cluster != "altbox" || !strings.Contains(stdout.String(), "Cluster   altbox") {
+	if result.Cluster != "altbox" || !strings.Contains(stdout.String(), "Cluster      altbox") {
 		t.Fatalf("expected configured cluster in report and summary: cluster=%q summary=%s", result.Cluster, stdout.String())
 	}
 	if result.SchemaVersion != model.CurrentReportSchemaVersion {
@@ -1088,7 +1089,7 @@ report:
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
-	if output := stdout.String(); !strings.Contains(output, "Status    passed") || !strings.Contains(output, "Report    "+reportPath) {
+	if output := stdout.String(); !strings.Contains(output, "Status       passed") || !strings.Contains(output, "Report       "+reportPath) {
 		t.Fatalf("unexpected run summary:\n%s", output)
 	}
 	result, err := report.ReadJSONFile(reportPath)
@@ -1486,7 +1487,7 @@ report:
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed report, got %#v", result)
 	}
-	if result.Cluster != "test-main" || !strings.Contains(stdout.String(), "Cluster   test-main") {
+	if result.Cluster != "test-main" || !strings.Contains(stdout.String(), "Cluster      test-main") {
 		t.Fatalf("expected configured cluster in report and summary: cluster=%q summary=%s", result.Cluster, stdout.String())
 	}
 	for _, name := range []string{"tool.pgbackrest", "tool.postgres", "tool.pg_isready"} {
@@ -1759,14 +1760,16 @@ func TestReportShowCommandText(t *testing.T) {
 	output := stdout.String()
 	for _, expected := range []string{
 		model.CurrentReportSchemaVersion,
-		"pgdrill   pgdrill v0.1.0-test",
-		"ID        drill-1",
-		"Cluster   production-main",
-		"Status    failed",
-		"Stage     probe_execution",
-		"Error     one or more probes failed",
-		"Backup    wal-g:base_1",
-		"Checks    1 passed, 1 failed",
+		"pgdrill      pgdrill v0.1.0-test",
+		"ID           drill-1",
+		"Attempt      attempt-1",
+		"Spec digest  sha256:",
+		"Cluster      production-main",
+		"Status       failed",
+		"Stage        probe_execution",
+		"Error        one or more probes failed",
+		"Backup       wal-g:base_1",
+		"Checks       1 passed, 1 failed",
 		"select_1",
 		"query failed connection closed",
 	} {
@@ -1885,6 +1888,39 @@ func writeExecutable(t *testing.T, path, content string) {
 
 func writeDrillReport(t *testing.T, path string, result model.DrillResult) {
 	t.Helper()
+	selection := model.BackupSelection{Type: model.BackupSelectionLatestAvailable}
+	if result.Backup.ID != "" {
+		selection = model.BackupSelection{Type: model.BackupSelectionByID, BackupID: result.Backup.ID}
+	}
+	targetID := result.Target.WorkDir
+	if targetID == "" {
+		targetID = "test-target"
+	}
+	spec, err := runspec.New(model.DrillSpec{
+		Mode:    model.DrillModeNative,
+		Cluster: result.Cluster,
+		Source: model.BackupSourceSpec{
+			Ref:      model.ComponentRef{ID: "test-source", Driver: string(result.Provider), Revision: "sha256:" + strings.Repeat("a", 64)},
+			Provider: result.Provider,
+		},
+		BackupSelection: selection,
+		Target: model.RestoreTargetSpec{
+			Ref:  model.ComponentRef{ID: targetID, Driver: string(result.Target.Type), Revision: "sha256:" + strings.Repeat("b", 64)},
+			Spec: result.Target,
+		},
+		RecoveryTarget: result.RecoveryTarget,
+		ProbeProfile: model.ProbeProfileSpec{
+			Ref:    model.ComponentRef{ID: "test-probes", Driver: "inline", Revision: "sha256:" + strings.Repeat("c", 64)},
+			Probes: []model.ProbeDescriptor{{Type: model.ProbeSQL, Name: "select_1"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create drill spec: %v", err)
+	}
+	document := spec.Document()
+	result.AttemptID = "attempt-1"
+	result.SpecDigest = spec.Digest()
+	result.Spec = &document
 	if err := (report.JSONFileSink{Path: path}).Write(context.Background(), result); err != nil {
 		t.Fatalf("write drill report %s: %v", path, err)
 	}

@@ -183,6 +183,10 @@ func (p *testProbe) Type() model.ProbeType {
 	return p.probeType
 }
 
+func (p *testProbe) Descriptor() model.ProbeDescriptor {
+	return model.ProbeDescriptor{Type: p.probeType, Name: model.DefaultProbeName(p.probeType)}
+}
+
 func (p *testProbe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error) {
 	p.calls++
 	if p.run != nil {

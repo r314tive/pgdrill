@@ -173,6 +173,8 @@ Release discipline is described in [docs/release.md](docs/release.md), and
 the versioned JSON report contract is documented in
 [docs/report-format.md](docs/report-format.md). The optional lifecycle stream is
 documented in [docs/run-event-format.md](docs/run-event-format.md), and the
+internal immutable run input is documented in
+[docs/drill-spec-format.md](docs/drill-spec-format.md). The
 engine/control-plane boundary is recorded in
 [ADR 0001](docs/adr/0001-engine-v0.2-and-control-plane-boundary.md).
 The typed topology and CLI/TUI/web sequence are expanded in

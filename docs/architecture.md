@@ -94,6 +94,7 @@ type TargetValidator interface {
 
 type Probe interface {
     Type() model.ProbeType
+    Descriptor() model.ProbeDescriptor
     Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error)
 }
 
@@ -119,18 +120,38 @@ boundary.
 
 ## Canonical Model
 
-The canonical model starts with `BackupCatalog`, `Backup`, `WALRange`,
-`RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`, `RunEvent`, and
-`EvidenceRecord`.
+The canonical model starts with `DrillSpec`, `BackupCatalog`, `Backup`,
+`WALRange`, `RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`,
+`RunEvent`, and `EvidenceRecord`.
+
+Every native or managed engine attempt receives an immutable internal
+`pgdrill.drill-spec/v1alpha1` snapshot. It records execution mode, safe
+source/target/profile references and revisions, canonical backup-selection
+intent, target and recovery semantics, and the ordered resolved probe profile.
+`internal/runspec` owns normalized canonical JSON and a `sha256:` digest without
+exposing mutable backing maps or slices. Run and attempt IDs are intentionally
+outside the digest: retries of one logical run preserve the spec digest while
+using distinct attempt IDs. The format remains internal until an out-of-process
+consumer justifies a public type under `api/`.
+
+`internal/application/runinput` derives inline component revisions from the
+normalized CLI configuration. Sensitive environment values and explicitly
+redacted literals are replaced before hashing, so credential rotation does not
+leak into or perturb run identity; non-secret repository, target, and probe
+semantics do. Reports contain only refs, revisions, and the canonical spec, not
+the fingerprint input or resolved secret values.
 
 Recovery targets are normalized and validated before repository access. A
 timestamp target is an RFC3339 value with an explicit timezone; LSN, XID,
 timeline, value, and inclusive semantics are checked once in the canonical
 model rather than interpreted differently by each adapter. For timestamp PITR,
-the default selector considers only available backups with a known
+the `latest_available` selection strategy considers only available backups with a known
 `finished_at` strictly before the requested stop time. This enforces
 PostgreSQL's base-backup stop-point boundary without pretending that catalog
-metadata alone proves WAL continuity.
+metadata alone proves WAL continuity. `backup_id` selection uses a canonical
+catalog ID and enforces the same availability and timestamp boundary. Arbitrary
+selector implementations are not part of `DrillRequest`, so selection intent
+is serializable and digestible.
 
 Strict decoding rejects unknown field names. Provider and probe registries then
 validate type-specific required fields, modes, profiles, and named arguments
@@ -155,10 +176,10 @@ pg_probackup:<instance>/<backup-id>
 
 The engine validates every in-process protocol boundary before target mutation.
 Catalog provider identities, provider-scoped backup IDs, enum values, duplicate
-IDs, selector membership, terminal check statuses, and restore-plan identity
-must agree with the request. A selector chooses an ID; the engine then uses the
-matching canonical catalog object rather than trusting fields returned by the
-selector. Restore plans must contain a runtime data directory and at least one
+IDs, canonical selection membership, probe descriptors, terminal check
+statuses, and restore-plan identity must agree with the immutable spec. The
+engine always uses the matching canonical catalog object. Restore plans must
+contain a runtime data directory and at least one
 executable command or file step. Violations fail at the corresponding stable
 lifecycle stage and are persisted like native-tool failures.
 
@@ -170,9 +191,11 @@ make incomplete capture explicit; raw-limit overflow fails the operation before
 an adapter can parse partial output.
 
 The initial report format is the versioned JSON encoding of
-`model.DrillResult`. CLI, TUI, and future UI surfaces should consume this report
-contract instead of reconstructing drill state from logs. Compatibility rules
-are defined in [report-format.md](report-format.md).
+`model.DrillResult`. New reports persist the canonical spec, its digest, and the
+attempt ID alongside the logical drill ID. CLI, TUI, and future UI surfaces
+should consume this report contract instead of reconstructing drill state from
+logs. Compatibility rules are defined in [report-format.md](report-format.md),
+and canonicalization is defined in [drill-spec-format.md](drill-spec-format.md).
 
 When configured, the engine also emits ordered
 `pgdrill.run-event/v1alpha1` events around every applicable stage. Native local
@@ -211,7 +234,7 @@ confirmation guard so another presentation layer cannot bypass it accidentally.
 ## Design Rules
 
 - Provider adapters call external tools and normalize facts into the core model.
-- Adapter, selector, preflight, and probe outputs are untrusted protocol data;
+- Adapter, preflight, and probe outputs are untrusted protocol data;
   validate them before they can authorize target mutation or a passed result.
 - Restore targets own storage and runtime lifecycle.
 - Destructive cleanup must be opt-in and guarded by per-run target ownership

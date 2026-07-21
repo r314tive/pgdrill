@@ -94,6 +94,7 @@ func TestRunEventValidateRejectsMalformedEvents(t *testing.T) {
 		{name: "run id whitespace", edit: func(e *RunEvent) { e.RunID = " run-1" }, want: "surrounding whitespace"},
 		{name: "attempt id", edit: func(e *RunEvent) { e.AttemptID = "" }, want: "attempt_id"},
 		{name: "attempt id whitespace", edit: func(e *RunEvent) { e.AttemptID = "attempt-1 " }, want: "surrounding whitespace"},
+		{name: "spec digest", edit: func(e *RunEvent) { e.SpecDigest = "md5:no" }, want: "spec_digest"},
 		{name: "sequence", edit: func(e *RunEvent) { e.Sequence = 0 }, want: "sequence"},
 		{name: "type", edit: func(e *RunEvent) { e.Type = "future" }, want: "type"},
 		{name: "time", edit: func(e *RunEvent) { e.OccurredAt = time.Time{} }, want: "occurred_at"},

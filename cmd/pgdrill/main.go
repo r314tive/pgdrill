@@ -16,6 +16,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/adapters"
 	"github.com/r314tive/pgdrill/internal/application/cnpgverify"
+	"github.com/r314tive/pgdrill/internal/application/runinput"
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
@@ -133,6 +134,11 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "create preflight: %v\n", err)
 		return 1
 	}
+	drillSpec, err := runinput.Native(cfg, model.BackupSelection{Type: model.BackupSelectionLatestAvailable})
+	if err != nil {
+		fmt.Fprintf(stderr, "create drill spec: %v\n", err)
+		return 1
+	}
 
 	result, runErr := core.Engine{
 		Source:           provider,
@@ -143,11 +149,7 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		Probes:           configuredProbes,
 		Sink:             report.JSONFileSink{Path: cfg.Report.Path},
 		PGDrillVersion:   version.String(),
-	}.Run(ctx, core.DrillRequest{
-		Cluster:        cfg.Cluster.Name,
-		Target:         cfg.TargetSpec(),
-		RecoveryTarget: cfg.RecoveryTarget(),
-	})
+	}.Run(ctx, core.DrillRequest{Spec: drillSpec})
 	if err := writeRunSummary(stdout, result, cfg.Report.Path); err != nil {
 		fmt.Fprintf(stderr, "write run summary: %v\n", err)
 		return 1
@@ -769,6 +771,8 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"pgdrill", valueOrDash(result.PGDrillVersion)},
 		{"ID", valueOrDash(result.ID)},
+		{"Attempt", valueOrDash(result.AttemptID)},
+		{"Spec digest", valueOrDash(result.SpecDigest)},
 		{"Cluster", valueOrDash(result.Cluster)},
 		{"Status", string(result.Status)},
 	}
@@ -860,6 +864,8 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 		{"Schema", valueOrDash(result.SchemaVersion)},
 		{"pgdrill", valueOrDash(result.PGDrillVersion)},
 		{"ID", valueOrDash(result.ID)},
+		{"Attempt", valueOrDash(result.AttemptID)},
+		{"Spec digest", valueOrDash(result.SpecDigest)},
 		{"Cluster", valueOrDash(result.Cluster)},
 		{"Status", string(result.Status)},
 	}

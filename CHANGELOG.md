@@ -20,6 +20,9 @@ called out explicitly even while the major version is `0`.
   cleanup outside the CLI package.
 - ADR and roadmap documentation defining the Engine v0.2 hardening gates, the
   future typed fleet control plane, and the repository/module boundary.
+- Internal `pgdrill.drill-spec/v1alpha1` snapshots with normalized canonical
+  JSON, defensive copies, secret-free component revisions, deterministic
+  SHA-256 digests, and separate logical run and attempt identities.
 
 ### Changed
 
@@ -29,6 +32,14 @@ called out explicitly even while the major version is `0`.
 - Native engine dependencies are segregated into backup discovery, catalog
   validation, and restore planning roles. Existing adapters still implement a
   compatibility composite, while the engine can compose independent objects.
+- Native and managed engine requests now carry a concrete immutable spec.
+  Arbitrary selector implementations were replaced with canonical
+  `latest_available` and `backup_id` intent, and runtime probe descriptors must
+  agree with the resolved profile before mutation.
+- New reports persist `attempt_id`, `spec_digest`, and the complete secret-free
+  spec. New lifecycle events carry the same digest, while readers remain
+  compatible with earlier additive-field-absent `v1alpha1` records and reject
+  tampered or internally inconsistent spec identity.
 - CNPG create confirmation is enforced by both the CLI and the application
   service. Cancellation observed during final cleanup now produces an
   `aborted` result instead of a possible false `passed` result.
