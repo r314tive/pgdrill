@@ -623,43 +623,6 @@ func TestTargetVerifyRequiresCreateConfirmation(t *testing.T) {
 	}
 }
 
-func TestTargetVerifyIDIsTrimmedAndNanosecondUnique(t *testing.T) {
-	startedAt := time.Date(2026, 7, 20, 12, 34, 56, 123456789, time.UTC)
-
-	if got, want := targetVerifyID("  explicit-id  ", startedAt), "explicit-id"; got != want {
-		t.Fatalf("targetVerifyID() = %q, want %q", got, want)
-	}
-	if got, want := targetVerifyID("", startedAt), "target-verify-20260720T123456.123456789Z"; got != want {
-		t.Fatalf("targetVerifyID() = %q, want %q", got, want)
-	}
-	if first, second := targetVerifyID("", startedAt), targetVerifyID("", startedAt.Add(time.Nanosecond)); first == second {
-		t.Fatalf("generated target verify IDs must distinguish concurrent starts, both were %q", first)
-	}
-}
-
-func TestMergeCNPGCleanupFailurePreservesPrimaryStage(t *testing.T) {
-	probeErr := errors.New("probe failed")
-	cleanupErr := errors.New("delete failed")
-
-	stage, err := mergeCNPGCleanupFailure(model.DrillStageProbeExecution, probeErr, cleanupErr)
-	if stage != model.DrillStageProbeExecution {
-		t.Fatalf("cleanup changed primary failure stage to %q", stage)
-	}
-	if !errors.Is(err, probeErr) || !errors.Is(err, cleanupErr) || !strings.Contains(err.Error(), "destroy cnpg verify target") {
-		t.Fatalf("expected joined probe and cleanup errors, got %v", err)
-	}
-
-	stage, err = mergeCNPGCleanupFailure(model.DrillStageProbeExecution, nil, cleanupErr)
-	if stage != model.DrillStageTargetCleanup || !errors.Is(err, cleanupErr) {
-		t.Fatalf("cleanup-only failure = (%q, %v), want target cleanup", stage, err)
-	}
-
-	stage, err = mergeCNPGCleanupFailure(model.DrillStageProbeExecution, probeErr, nil)
-	if stage != model.DrillStageProbeExecution || !errors.Is(err, probeErr) {
-		t.Fatalf("nil cleanup changed operation failure: (%q, %v)", stage, err)
-	}
-}
-
 func TestTargetVerifyCommandRunsCNPGLifecycleAndProbes(t *testing.T) {
 	dir := t.TempDir()
 	kubectlPath := filepath.Join(dir, "kubectl")
@@ -886,6 +849,9 @@ target:
   cnpg:
     source_cluster: altbox
     image_name: ghcr.io/cloudnative-pg/postgresql:16
+probes:
+  - type: sql
+    query: "select 1"
 report:
   format: json
   path: `+reportPath+`
@@ -934,6 +900,9 @@ target:
   cnpg:
     source_cluster: altbox
     image_name: ghcr.io/cloudnative-pg/postgresql:16
+probes:
+  - type: sql
+    query: "select 1"
 report:
   format: json
   path: `+reportPath+`
@@ -957,8 +926,8 @@ report:
 	if result.Status != model.DrillStatusAborted {
 		t.Fatalf("expected aborted report, got %#v", result)
 	}
-	if result.Failure == nil || result.Failure.Stage != model.DrillStagePreflight {
-		t.Fatalf("expected aborted preflight failure, got %#v", result.Failure)
+	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("expected aborted request validation failure, got %#v", result.Failure)
 	}
 	if len(result.Evidence) != 0 {
 		t.Fatalf("context canceled before command start must not invent evidence, got %#v", result.Evidence)

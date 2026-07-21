@@ -15,16 +15,15 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/adapters"
+	"github.com/r314tive/pgdrill/internal/application/cnpgverify"
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
-	"github.com/r314tive/pgdrill/internal/finalize"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/preflight"
 	"github.com/r314tive/pgdrill/internal/probes"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/targets"
-	"github.com/r314tive/pgdrill/internal/targets/cnpg"
 	"github.com/r314tive/pgdrill/internal/version"
 )
 
@@ -414,13 +413,13 @@ func runTargetManifest(ctx context.Context, args []string, stdout, stderr io.Wri
 
 	cnpgTarget := cfg.Target.CNPG
 	if discover {
-		if _, err := discoverCNPGManifestInputs(ctx, cfg, &cnpgTarget); err != nil {
+		if _, err := cnpgverify.DiscoverInputs(ctx, cfg, &cnpgTarget, nil); err != nil {
 			fmt.Fprintf(stderr, "discover target manifest inputs: %v\n", err)
 			return failureExitCode(ctx, model.DrillStatusUnknown)
 		}
 	}
 
-	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, drillID, "", "")
+	spec, err := cnpgverify.BuildSpec(cfg, cnpgTarget, drillID, "", "")
 	if err != nil {
 		fmt.Fprintf(stderr, "build target manifest: %v\n", err)
 		return 1
@@ -485,91 +484,19 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 		return 2
 	}
 
-	startedAt := time.Now().UTC()
-	effectiveDrillID := targetVerifyID(drillID, startedAt)
-	cnpgTarget := cfg.Target.CNPG
-	if _, err := probes.ResolveConfigs(cfg.Probes); err != nil {
-		fmt.Fprintf(stderr, "validate probes: %v\n", err)
-		return 1
+	result, runErr := (cnpgverify.Service{}).Run(ctx, cfg, cnpgverify.Options{
+		DrillID:       drillID,
+		Discover:      discover,
+		ConfirmCreate: confirmCreate,
+	})
+	if result.ID == "" {
+		fmt.Fprintf(stderr, "prepare target verify: %v\n", runErr)
+		return failureExitCode(ctx, model.DrillStatusUnknown)
 	}
-	preflightRequirements, err := preflight.Requirements(cfg)
-	if err != nil {
-		fmt.Fprintf(stderr, "create preflight: %v\n", err)
-		return 1
-	}
-	preflightReport, preflightErr := preflight.NewSuite(preflightRequirements, nil, 0).Check(ctx)
-	if preflightErr != nil || hasFailedChecks(preflightReport.Checks) {
-		runErr := preflightErr
-		if runErr != nil {
-			runErr = fmt.Errorf("run target preflight: %w", runErr)
-		} else {
-			runErr = fmt.Errorf("target preflight failed")
-		}
-		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
-		result.FinishedAt = time.Now().UTC()
-		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
-		result.Checks = append(result.Checks, preflightReport.Checks...)
-		result.Evidence = append(result.Evidence, preflightReport.Evidence...)
-		result.Failure = model.NewDrillFailure(model.DrillStagePreflight, runErr, result.Evidence)
-		return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
-	}
-	initialChecks := append([]model.Check{}, preflightReport.Checks...)
-	initialEvidence := append([]model.EvidenceRecord{}, preflightReport.Evidence...)
-	discoveryEvidence := []model.EvidenceRecord{}
-	if discover {
-		discoveryEvidence, err = discoverCNPGManifestInputs(ctx, cfg, &cnpgTarget)
-		if err != nil {
-			runErr := fmt.Errorf("discover target verify inputs: %w", err)
-			result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
-			result.FinishedAt = time.Now().UTC()
-			result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
-			result.Evidence = append(initialEvidence, discoveryEvidence...)
-			result.Checks = append(initialChecks, model.Check{
-				Name:        "cnpg-input-discovery",
-				Status:      model.CheckStatusFailed,
-				Message:     runErr.Error(),
-				EvidenceIDs: evidenceRecordIDs(discoveryEvidence),
-			})
-			result.Failure = model.NewDrillFailure(model.DrillStageTargetDiscovery, runErr, result.Evidence)
-			return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
-		}
-	}
-	initialEvidence = append(initialEvidence, discoveryEvidence...)
-	ownershipID, err := cnpg.NewOwnershipID()
-	if err != nil {
-		runErr := fmt.Errorf("create CNPG target ownership id: %w", err)
-		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
-		result.FinishedAt = time.Now().UTC()
-		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
-		result.Checks = append(result.Checks, initialChecks...)
-		result.Evidence = append(result.Evidence, initialEvidence...)
-		result.Failure = model.NewDrillFailure(model.DrillStageTargetStart, runErr, result.Evidence)
-		return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
-	}
-	nameSeed := effectiveDrillID + ":" + ownershipID
-	spec, err := buildCNPGVerifyClusterSpec(cfg, cnpgTarget, effectiveDrillID, nameSeed, ownershipID)
-	if err != nil {
-		runErr := fmt.Errorf("build target verify spec: %w", err)
-		result := newCNPGTargetVerifyResult(cfg, cnpgTarget.SourceCluster, cnpgTarget.BackupName, cnpgTarget.VerifyClusterName, effectiveDrillID, startedAt)
-		result.FinishedAt = time.Now().UTC()
-		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
-		result.Checks = append(result.Checks, initialChecks...)
-		result.Evidence = append(result.Evidence, initialEvidence...)
-		result.Failure = model.NewDrillFailure(model.DrillStageRequestValidation, runErr, result.Evidence)
-		return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
-	}
-	result, runErr := executeCNPGTargetVerify(ctx, cfg, spec, effectiveDrillID, startedAt, initialChecks, initialEvidence)
 	return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
 }
 
 func finishCNPGTargetVerify(ctx context.Context, stdout, stderr io.Writer, reportPath string, result model.DrillResult, runErr error) int {
-	sinkCtx, cancel := finalize.Context(ctx, 0)
-	sinkErr := (report.JSONFileSink{Path: reportPath}).Write(sinkCtx, result)
-	cancel()
-	if sinkErr != nil {
-		fmt.Fprintf(stderr, "write report: %v\n", sinkErr)
-		return 1
-	}
 	if err := writeRunSummary(stdout, result, reportPath); err != nil {
 		fmt.Fprintf(stderr, "write target verify summary: %v\n", err)
 		return 1
@@ -587,271 +514,6 @@ func finishCNPGTargetVerify(ctx context.Context, stdout, stderr io.Writer, repor
 		return failureExitCode(ctx, result.Status)
 	}
 	return 0
-}
-
-func discoverCNPGManifestInputs(ctx context.Context, cfg config.Config, target *config.CNPGTargetConfig) ([]model.EvidenceRecord, error) {
-	if strings.TrimSpace(target.SourceCluster) == "" {
-		return nil, fmt.Errorf("target.cnpg.source_cluster is required for discovery")
-	}
-
-	client := cnpg.NewKubectlClient(cnpg.KubectlConfig{
-		Binary:       cfg.Target.Kubernetes.KubectlBinary,
-		Namespace:    cfg.Target.Kubernetes.Namespace,
-		Kubeconfig:   cfg.Target.Kubernetes.Kubeconfig,
-		Context:      cfg.Target.Kubernetes.Context,
-		Timeout:      cfg.Target.Kubernetes.CommandTimeout.Duration,
-		RedactValues: cfg.Target.RedactValues,
-	}, nil)
-	discoverySpec := cnpg.VerifyClusterSpec{
-		Namespace:     cfg.Target.Kubernetes.Namespace,
-		SourceCluster: target.SourceCluster,
-	}
-	evidence := []model.EvidenceRecord{}
-
-	if strings.TrimSpace(target.BackupName) == "" {
-		backupName, backupEvidence, err := client.LatestCompletedBackup(ctx, discoverySpec)
-		evidence = append(evidence, backupEvidence...)
-		if err != nil {
-			return evidence, fmt.Errorf("discover latest completed CNPG Backup: %w", err)
-		}
-		target.BackupName = backupName
-	}
-	if strings.TrimSpace(target.ImageName) == "" {
-		imageName, imageEvidence, err := client.SourceClusterImage(ctx, discoverySpec)
-		evidence = append(evidence, imageEvidence...)
-		if err != nil {
-			return evidence, fmt.Errorf("discover CNPG source image: %w", err)
-		}
-		target.ImageName = imageName
-	}
-	return evidence, nil
-}
-
-func buildCNPGVerifyClusterSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameSeed, ownershipID string) (cnpg.VerifyClusterSpec, error) {
-	return cnpg.BuildVerifyClusterSpec(cnpg.Config{
-		Namespace:         cfg.Target.Kubernetes.Namespace,
-		SourceCluster:     target.SourceCluster,
-		VerifyClusterName: target.VerifyClusterName,
-		NameSeed:          nameSeed,
-		OwnershipID:       ownershipID,
-		BackupName:        target.BackupName,
-		ImageName:         target.ImageName,
-		StorageSize:       target.StorageSize,
-		StorageClass:      target.StorageClass,
-		CPURequest:        target.CPURequest,
-		MemoryRequest:     target.MemoryRequest,
-		CPULimit:          target.CPULimit,
-		MemoryLimit:       target.MemoryLimit,
-		NodeLabelKey:      target.NodeLabelKey,
-		NodeLabelValue:    target.NodeLabelValue,
-		Labels:            cfg.Target.Labels,
-	}, drillID)
-}
-
-func executeCNPGTargetVerify(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, drillID string, startedAt time.Time, initialChecks []model.Check, initialEvidence []model.EvidenceRecord) (model.DrillResult, error) {
-	result := newCNPGTargetVerifyResult(cfg, spec.SourceCluster, spec.BackupName, spec.Name, drillID, startedAt)
-	result.Checks = append([]model.Check{}, initialChecks...)
-	result.Evidence = append([]model.EvidenceRecord{}, initialEvidence...)
-
-	client := cnpg.NewKubectlClient(cnpg.KubectlConfig{
-		Binary:       cfg.Target.Kubernetes.KubectlBinary,
-		Namespace:    cfg.Target.Kubernetes.Namespace,
-		Kubeconfig:   cfg.Target.Kubernetes.Kubeconfig,
-		Context:      cfg.Target.Kubernetes.Context,
-		Timeout:      cfg.Target.Kubernetes.CommandTimeout.Duration,
-		RedactValues: cfg.Target.RedactValues,
-	}, nil)
-	controller := cnpg.Controller{
-		Spec:   spec,
-		Client: client,
-		Options: cnpg.LifecycleOptions{
-			WaitTimeout:     cfg.Target.Kubernetes.WaitTimeout.Duration,
-			PollInterval:    cfg.Target.Kubernetes.PollInterval.Duration,
-			CleanupPVC:      cfg.Target.Kubernetes.CleanupPVC,
-			CleanupOnFail:   cfg.Target.Kubernetes.CleanupOnFail,
-			CaptureLogs:     cfg.Target.Kubernetes.CaptureLogs,
-			EventsTail:      cfg.Target.Kubernetes.EventsTail,
-			PostgresLogTail: cfg.Target.Kubernetes.PostgresLogTail,
-		},
-	}
-
-	pg, startEvidence, startErr := controller.Start(ctx)
-	result.Evidence = append(result.Evidence, startEvidence...)
-	if startErr != nil {
-		result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusFailed, startErr.Error(), spec, pg))
-		result.FinishedAt = time.Now().UTC()
-		result.Status = drillStatusForContext(ctx, model.DrillStatusFailed)
-		result.Failure = model.NewDrillFailure(model.DrillStageTargetStart, startErr, result.Evidence)
-		return result, startErr
-	}
-	result.Checks = append(result.Checks, cnpgReadyCheck(model.CheckStatusPassed, "CNPG verify cluster is Ready", spec, pg))
-
-	probeReport, operationErr := runCNPGTargetProbes(ctx, cfg, spec, pg)
-	result.Checks = append(result.Checks, probeReport.Checks...)
-	result.Evidence = append(result.Evidence, probeReport.Evidence...)
-	operationStage := model.DrillStageProbeExecution
-
-	destroyCtx, cancel := finalize.Context(ctx, 0)
-	destroyEvidence, destroyErr := controller.Destroy(destroyCtx)
-	cancel()
-	result.Evidence = append(result.Evidence, destroyEvidence...)
-	result.FinishedAt = time.Now().UTC()
-	operationStage, operationErr = mergeCNPGCleanupFailure(operationStage, operationErr, destroyErr)
-
-	switch {
-	case ctx.Err() != nil:
-		if operationErr == nil {
-			operationErr = fmt.Errorf("target verify: %w", ctx.Err())
-			operationStage = model.DrillStageTargetCleanup
-		}
-		result.Status = model.DrillStatusAborted
-		result.Failure = model.NewDrillFailure(operationStage, operationErr, result.Evidence)
-		return result, operationErr
-	case operationErr != nil:
-		result.Status = model.DrillStatusFailed
-		result.Failure = model.NewDrillFailure(operationStage, operationErr, result.Evidence)
-		return result, operationErr
-	default:
-		result.Status = model.DrillStatusPassed
-		return result, nil
-	}
-}
-
-func runCNPGTargetProbes(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, pg model.RunningPostgres) (model.CheckReport, error) {
-	runner := cnpg.NewPodExecRunner(cnpg.KubectlConfig{
-		Binary:       cfg.Target.Kubernetes.KubectlBinary,
-		Namespace:    cfg.Target.Kubernetes.Namespace,
-		Kubeconfig:   cfg.Target.Kubernetes.Kubeconfig,
-		Context:      cfg.Target.Kubernetes.Context,
-		Timeout:      cfg.Target.Kubernetes.CommandTimeout.Duration,
-		RedactValues: cfg.Target.RedactValues,
-	}, spec, nil)
-
-	requirements, err := preflight.ProbeRequirements(cfg.Probes)
-	if err != nil {
-		return model.CheckReport{}, fmt.Errorf("build restored target probe preflight: %w", err)
-	}
-	for i := range requirements {
-		requirements[i].RedactValues = append(requirements[i].RedactValues, cfg.Target.RedactValues...)
-	}
-	report, preflightErr := preflight.NewSuite(requirements, runner, 0).Check(ctx)
-	if preflightErr != nil {
-		return report, fmt.Errorf("run restored target probe preflight: %w", preflightErr)
-	}
-	if hasFailedChecks(report.Checks) {
-		return report, fmt.Errorf("restored target probe preflight failed")
-	}
-
-	configuredProbes, err := probes.NewProbesWithRunner(cfg.Probes, runner)
-	if err != nil {
-		return report, fmt.Errorf("create restored target probes: %w", err)
-	}
-	probeReport, probeErr := core.RunProbes(ctx, configuredProbes, pg)
-	report.Checks = append(report.Checks, probeReport.Checks...)
-	report.Evidence = append(report.Evidence, probeReport.Evidence...)
-	return report, probeErr
-}
-
-func mergeCNPGCleanupFailure(operationStage model.DrillStage, operationErr, destroyErr error) (model.DrillStage, error) {
-	if destroyErr == nil {
-		return operationStage, operationErr
-	}
-	cleanupErr := fmt.Errorf("destroy cnpg verify target: %w", destroyErr)
-	if operationErr == nil {
-		return model.DrillStageTargetCleanup, cleanupErr
-	}
-	return operationStage, errors.Join(operationErr, cleanupErr)
-}
-
-func newCNPGTargetVerifyResult(cfg config.Config, sourceCluster, backupName, verifyCluster, drillID string, startedAt time.Time) model.DrillResult {
-	backupStatus := model.BackupStatusUnknown
-	backupID := ""
-	if backupName != "" {
-		backupStatus = model.BackupStatusAvailable
-		backupID = "cnpg:" + backupName
-	}
-	metadata := map[string]string{}
-	for key, value := range map[string]string{
-		"cnpg_backup":         backupName,
-		"cnpg_source_cluster": sourceCluster,
-		"cnpg_verify_cluster": verifyCluster,
-	} {
-		if value != "" {
-			metadata[key] = value
-		}
-	}
-
-	return model.DrillResult{
-		SchemaVersion:  model.CurrentReportSchemaVersion,
-		PGDrillVersion: version.String(),
-		ID:             targetVerifyID(drillID, startedAt),
-		Cluster:        strings.TrimSpace(cfg.Cluster.Name),
-		Provider:       "",
-		Backup: model.Backup{
-			ID:          backupID,
-			Provider:    "",
-			ProviderID:  backupName,
-			ClusterName: sourceCluster,
-			Kind:        model.BackupKindUnknown,
-			Status:      backupStatus,
-			Metadata:    metadata,
-		},
-		Target: model.TargetSpec{
-			Type:   model.RestoreTargetKubernetes,
-			Labels: cfg.TargetSpec().Labels,
-		},
-		RecoveryTarget: cfg.RecoveryTarget(),
-		StartedAt:      startedAt,
-		Status:         model.DrillStatusUnknown,
-	}
-}
-
-func evidenceRecordIDs(records []model.EvidenceRecord) []string {
-	ids := make([]string, 0, len(records))
-	for _, record := range records {
-		if record.ID != "" {
-			ids = append(ids, record.ID)
-		}
-	}
-	return ids
-}
-
-func targetVerifyID(id string, startedAt time.Time) string {
-	if trimmed := strings.TrimSpace(id); trimmed != "" {
-		return trimmed
-	}
-	return "target-verify-" + startedAt.UTC().Format("20060102T150405.000000000Z")
-}
-
-func cnpgReadyCheck(status model.CheckStatus, message string, spec cnpg.VerifyClusterSpec, pg model.RunningPostgres) model.Check {
-	return model.Check{
-		Name:    "cnpg-instance-ready",
-		Status:  status,
-		Message: message,
-		Attributes: map[string]string{
-			"backup":         spec.BackupName,
-			"instance_pod":   spec.InstancePodName,
-			"postgres_host":  pg.Host,
-			"source_cluster": spec.SourceCluster,
-			"verify_cluster": spec.Name,
-		},
-	}
-}
-
-func hasFailedChecks(checks []model.Check) bool {
-	for _, check := range checks {
-		if check.Status == model.CheckStatusFailed {
-			return true
-		}
-	}
-	return false
-}
-
-func drillStatusForContext(ctx context.Context, fallback model.DrillStatus) model.DrillStatus {
-	if ctx != nil && ctx.Err() != nil {
-		return model.DrillStatusAborted
-	}
-	return fallback
 }
 
 func failureExitCode(ctx context.Context, status model.DrillStatus) int {

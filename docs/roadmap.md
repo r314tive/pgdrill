@@ -130,22 +130,91 @@ progress.
   `generate-manifest`.
 - Additional `pg_verifybackup` profiles, if real drills prove they are useful.
 
-## Phase 5: UI / TUI
+## Phase 5: Engine v0.2 Hardening
 
-Status: deliberately deferred. The report now has a versioned schema, but real
-drill history and operator workflows must establish the storage and comparison
-requirements before a new surface is justified.
+Status: in progress. The lifecycle foundation is implemented; public planning
+and crash-recovery contracts remain intentionally unpublished.
+
+Completed foundation:
+
+- Validated `pgdrill.run-event/v1alpha1` model with run/attempt identity and
+  accepted-write sequence semantics.
+- One lifecycle recorder for native local drills and managed targets.
+- Fail-closed event delivery around side effects, cancellation-safe cleanup,
+  and terminal report/event reconciliation.
+- Managed-target core contracts for read-only resolution, operator-owned
+  restore/start, post-restore checks, and cleanup.
+- CNPG orchestration moved from `cmd/pgdrill` into
+  `internal/application/cnpgverify` and `core.ManagedEngine`.
+- Explicit engine/control-plane boundary in
+  [ADR 0001](adr/0001-engine-v0.2-and-control-plane-boundary.md).
+
+Remaining engine gates, in order:
+
+1. Split the current `BackupProvider` aggregate into backup source, catalog
+   validation, restore planning, and executor-facing target contracts.
+2. Introduce an immutable concrete run spec only after that split, with a
+   canonical digest and explicit attempt identity.
+3. Add bounded artifact references, operation idempotency keys, persisted
+   checkpoints, and reconciliation for unknown mutation outcomes.
+4. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
+   target satisfaction, and required cleanup.
+5. Publish reusable provider/target conformance suites and record real
+   repository/version matrices for WAL-G, Barman, pgBackRest, and pg_probackup.
+6. Exercise a release candidate through local native-provider drills and a
+   live disposable CNPG drill before calling Engine v0.2 release-ready.
+
+`pgdrill.report/v1alpha1` remains the durable terminal contract during this
+migration. The event sink is injectable but the CLI does not persist an event
+journal by default yet.
+
+## Phase 6: Fleet Control Plane
+
+Status: architecture only. Do not implement a daemon before the Engine v0.2
+spec, idempotency, reconciliation, and real-repository gates are complete.
+
+The control plane will compile typed fleet resources into independent immutable
+engine runs:
+
+- `BackupSource`: logical PostgreSQL cluster, repository driver/reference, and
+  execution location.
+- `TargetPool`: compatible disposable destinations and placement labels.
+- `ProbeProfile`: required post-restore proof.
+- `RecoveryPolicy`: selection, recovery target, assertions, and cleanup rules.
+- `DrillSet`: source selectors, target pool, schedule, and concurrency policy.
+- `DrillRun`: one concrete planner output and its attempt history.
+
+Implementation order:
+
+1. Daemon-free `plan` command that expands selectors and placement without
+   mutating infrastructure.
+2. Local durable run/event history and bounded artifact index.
+3. Controller and executor binaries with leases, heartbeats, idempotency, and
+   executor-local secret resolution.
+4. Schedules, concurrency controls, RBAC, audit, notifications, and retention.
+
+Keep these binaries in this repository and Go module while contracts evolve
+together. Split a module or repository only when versioning, ownership,
+security boundary, release cadence, or licensing genuinely diverges.
+Topology semantics, persistence boundaries, and interface sequencing are
+detailed in [control-plane-roadmap.md](control-plane-roadmap.md).
+
+## Phase 7: Operator Interfaces
+
+Status: CLI implemented; TUI and web UI deliberately deferred. Real drill
+history and operator workflows must establish storage and comparison
+requirements before another surface is justified.
 
 Recommended order:
 
 - CLI first: required for automation and simplest to make reliable.
-- Optional TUI later: useful for browsing local reports and comparing drill
-  history without running a service.
-- Web UI last: only if persistent report storage, multi-cluster history, teams,
-  or hosted mode become real requirements.
+- TUI second: browse plans, active attempts, local reports, and comparisons
+  after durable history exists.
+- Web UI last: only after a multi-user control plane creates real RBAC, audit,
+  fleet-history, and hosted-mode requirements.
 
-The UI should consume the same JSON evidence reports as the CLI. It should not
-be a separate control plane.
+All interfaces consume the same run specs, events, reports, and control-plane
+API. A UI must not become a second orchestration engine.
 
 ## Release Readiness
 

@@ -13,6 +13,7 @@ import (
 
 type DrillRequest struct {
 	ID             string
+	AttemptID      string
 	Cluster        string
 	Target         model.TargetSpec
 	RecoveryTarget model.RecoveryTarget
@@ -25,6 +26,7 @@ type Engine struct {
 	Preflight      Preflight
 	Probes         []Probe
 	Sink           EvidenceSink
+	EventSink      EventSink
 	PGDrillVersion string
 	Clock          func() time.Time
 
@@ -39,139 +41,195 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return model.DrillResult{}, fmt.Errorf("restore target is required")
 	}
 
+	providerType := e.Provider.Type()
+	reportedProvider := providerType
+	if !providerType.IsKnown() {
+		reportedProvider = ""
+	}
+	targetType := e.Target.Type()
 	clock := e.clock()
-	startedAt := clock()
+	startedAt := clock().UTC()
 	recoveryTarget := req.RecoveryTarget.Normalized()
 	result := model.DrillResult{
 		SchemaVersion:  model.CurrentReportSchemaVersion,
 		PGDrillVersion: e.PGDrillVersion,
 		ID:             drillID(req.ID, startedAt),
 		Cluster:        strings.TrimSpace(req.Cluster),
-		Provider:       e.Provider.Type(),
+		Provider:       reportedProvider,
 		Target:         req.Target,
 		RecoveryTarget: recoveryTarget,
 		StartedAt:      startedAt,
 		Status:         model.DrillStatusUnknown,
 	}
 
-	finish := func(status model.DrillStatus, err error) (model.DrillResult, error) {
-		result.FinishedAt = clock()
-		result.Status = status
-		if e.Sink != nil {
-			sinkCtx, cancel := finalize.Context(ctx, e.FinalizationTimeout)
-			sinkErr := e.Sink.Write(sinkCtx, result)
-			cancel()
-			if sinkErr != nil {
-				writeErr := fmt.Errorf("write evidence: %w", sinkErr)
-				err = errors.Join(err, writeErr)
-				if result.Failure == nil {
-					result.Failure = model.NewDrillFailure(model.DrillStageReportWrite, writeErr, result.Evidence)
-				}
-				if result.Status == model.DrillStatusPassed {
-					result.Status = model.DrillStatusFailed
-				}
-			}
+	lifecycle, err := newRunLifecycle(
+		&result,
+		req.AttemptID,
+		e.Sink,
+		e.EventSink,
+		clock,
+		e.FinalizationTimeout,
+	)
+	if err != nil {
+		return result, fmt.Errorf("create drill lifecycle: %w", err)
+	}
+	if err := lifecycle.Start(ctx); err != nil {
+		result.Failure = model.NewDrillFailure(model.DrillStageReportWrite, err, result.Evidence)
+		status := model.DrillStatusFailed
+		if contextTerminated(ctx) {
+			status = model.DrillStatusAborted
 		}
-		return result, err
+		return lifecycle.Finish(ctx, status, err)
 	}
 
-	fail := func(stage model.DrillStage, err error) (model.DrillResult, error) {
-		result.Failure = model.NewDrillFailure(stage, err, result.Evidence)
-		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return finish(model.DrillStatusAborted, err)
+	fail := func(stage model.DrillStage, runErr error) (model.DrillResult, error) {
+		result.Failure = model.NewDrillFailure(stage, runErr, result.Evidence)
+		status := model.DrillStatusFailed
+		if contextTerminated(ctx) {
+			status = model.DrillStatusAborted
 		}
-		return finish(model.DrillStatusFailed, err)
+		return lifecycle.Finish(ctx, status, runErr)
 	}
-	if err := ctx.Err(); err != nil {
-		return fail(model.DrillStageRequestValidation, fmt.Errorf("start drill: %w", err))
-	}
-	if err := recoveryTarget.Validate(); err != nil {
-		return fail(model.DrillStageRequestValidation, fmt.Errorf("validate recovery target: %w", err))
-	}
-	if req.Target.Type != e.Target.Type() {
-		return fail(model.DrillStageRequestValidation, fmt.Errorf("restore target type %q does not match requested target type %q", e.Target.Type(), req.Target.Type))
-	}
-	if validator, ok := e.Target.(TargetValidator); ok {
-		if err := validator.Validate(ctx, req.Target); err != nil {
-			return fail(model.DrillStageRequestValidation, fmt.Errorf("validate restore target: %w", err))
+
+	err = lifecycle.RunStage(ctx, model.DrillStageRequestValidation, func() error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("start drill: %w", err)
 		}
-	}
-	if len(e.Probes) == 0 {
-		return fail(model.DrillStageRequestValidation, fmt.Errorf("at least one probe is required for a restore drill"))
-	}
-	for i, probe := range e.Probes {
-		if probe == nil {
-			return fail(model.DrillStageRequestValidation, fmt.Errorf("probe %d is nil", i))
+		if err := recoveryTarget.Validate(); err != nil {
+			return fmt.Errorf("validate recovery target: %w", err)
 		}
+		if !providerType.IsKnown() {
+			return fmt.Errorf("backup provider type %q is unsupported", providerType)
+		}
+		if !targetType.IsKnown() {
+			return fmt.Errorf("restore target implementation type %q is unsupported", targetType)
+		}
+		if req.Target.Type != targetType {
+			return fmt.Errorf("restore target type %q does not match requested target type %q", targetType, req.Target.Type)
+		}
+		if validator, ok := e.Target.(TargetValidator); ok {
+			if err := validator.Validate(ctx, req.Target); err != nil {
+				return fmt.Errorf("validate restore target: %w", err)
+			}
+		}
+		if len(e.Probes) == 0 {
+			return fmt.Errorf("at least one probe is required for a restore drill")
+		}
+		for i, probe := range e.Probes {
+			if probe == nil {
+				return fmt.Errorf("probe %d is nil", i)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fail(model.DrillStageRequestValidation, err)
 	}
+
 	if e.Preflight != nil {
-		preflightReport, err := e.Preflight.Check(ctx)
-		result.Evidence = append(result.Evidence, preflightReport.Evidence...)
-		if err != nil {
-			if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
-				result.Checks = append(result.Checks, preflightReport.Checks...)
-			} else {
-				err = errors.Join(err, fmt.Errorf("invalid partial preflight report: %w", reportErr))
+		err = lifecycle.RunStage(ctx, model.DrillStagePreflight, func() error {
+			preflightReport, preflightErr := e.Preflight.Check(ctx)
+			result.Evidence = append(result.Evidence, preflightReport.Evidence...)
+			if preflightErr != nil {
+				if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
+					result.Checks = append(result.Checks, preflightReport.Checks...)
+				} else {
+					preflightErr = errors.Join(preflightErr, fmt.Errorf("invalid partial preflight report: %w", reportErr))
+				}
+				return fmt.Errorf("run preflight: %w", preflightErr)
 			}
-			return fail(model.DrillStagePreflight, fmt.Errorf("run preflight: %w", err))
-		}
-		if err := validateCheckReport(preflightReport, true); err != nil {
-			return fail(model.DrillStagePreflight, fmt.Errorf("validate preflight report: %w", err))
-		}
-		result.Checks = append(result.Checks, preflightReport.Checks...)
-		if hasFailedChecks(preflightReport.Checks) {
-			return fail(model.DrillStagePreflight, fmt.Errorf("preflight failed"))
+			if err := validateCheckReport(preflightReport, true); err != nil {
+				return fmt.Errorf("validate preflight report: %w", err)
+			}
+			result.Checks = append(result.Checks, preflightReport.Checks...)
+			if hasFailedChecks(preflightReport.Checks) {
+				return fmt.Errorf("preflight failed")
+			}
+			return nil
+		})
+		if err != nil {
+			return fail(model.DrillStagePreflight, err)
 		}
 	}
 
-	catalog, err := e.Provider.DiscoverBackups(ctx)
-	result.Evidence = append(result.Evidence, catalog.Evidence...)
-	if err != nil {
-		return fail(model.DrillStageBackupDiscovery, fmt.Errorf("discover backups: %w", err))
-	}
-	if err := validateBackupCatalog(e.Provider.Type(), catalog); err != nil {
-		return fail(model.DrillStageBackupDiscovery, fmt.Errorf("validate provider catalog: %w", err))
-	}
-
-	selector := req.Selector
-	if selector == nil {
-		selector = LatestAvailableSelector{}
-	}
-	selected, err := selector.Select(catalog, recoveryTarget)
-	if err != nil {
-		return fail(model.DrillStageBackupSelection, fmt.Errorf("select backup: %w", err))
-	}
-	backup, err := canonicalSelectedBackup(catalog, selected)
-	if err != nil {
-		return fail(model.DrillStageBackupSelection, fmt.Errorf("validate selected backup: %w", err))
-	}
-	result.Backup = backup
-
-	checkReport, err := e.Provider.ValidateCatalog(ctx, catalog, backup, recoveryTarget)
-	result.Evidence = append(result.Evidence, checkReport.Evidence...)
-	if err != nil {
-		if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
-			result.Checks = append(result.Checks, checkReport.Checks...)
-		} else {
-			err = errors.Join(err, fmt.Errorf("invalid partial catalog check report: %w", reportErr))
+	var catalog model.BackupCatalog
+	err = lifecycle.RunStage(ctx, model.DrillStageBackupDiscovery, func() error {
+		var discoverErr error
+		catalog, discoverErr = e.Provider.DiscoverBackups(ctx)
+		result.Evidence = append(result.Evidence, catalog.Evidence...)
+		if discoverErr != nil {
+			return fmt.Errorf("discover backups: %w", discoverErr)
 		}
-		return fail(model.DrillStageCatalogValidation, fmt.Errorf("validate catalog: %w", err))
-	}
-	if err := validateCheckReport(checkReport, true); err != nil {
-		return fail(model.DrillStageCatalogValidation, fmt.Errorf("validate catalog check report: %w", err))
-	}
-	result.Checks = append(result.Checks, checkReport.Checks...)
-	if hasFailedChecks(checkReport.Checks) {
-		return fail(model.DrillStageCatalogValidation, fmt.Errorf("catalog validation failed"))
+		if err := validateBackupCatalog(providerType, catalog); err != nil {
+			return fmt.Errorf("validate provider catalog: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fail(model.DrillStageBackupDiscovery, err)
 	}
 
-	plan, err := e.Provider.PlanRestore(ctx, backup, recoveryTarget, req.Target)
-	result.Evidence = append(result.Evidence, plan.Evidence...)
+	var backup model.Backup
+	err = lifecycle.RunStage(ctx, model.DrillStageBackupSelection, func() error {
+		selector := req.Selector
+		if selector == nil {
+			selector = LatestAvailableSelector{}
+		}
+		selected, selectErr := selector.Select(catalog, recoveryTarget)
+		if selectErr != nil {
+			return fmt.Errorf("select backup: %w", selectErr)
+		}
+		var canonicalErr error
+		backup, canonicalErr = canonicalSelectedBackup(catalog, selected)
+		if canonicalErr != nil {
+			return fmt.Errorf("validate selected backup: %w", canonicalErr)
+		}
+		result.Backup = backup
+		return nil
+	})
 	if err != nil {
-		return fail(model.DrillStageRestorePlanning, fmt.Errorf("plan restore: %w", err))
+		return fail(model.DrillStageBackupSelection, err)
 	}
-	if err := validateRestorePlan(e.Provider.Type(), backup, recoveryTarget, req.Target, plan); err != nil {
-		return fail(model.DrillStageRestorePlanning, fmt.Errorf("validate restore plan: %w", err))
+
+	err = lifecycle.RunStage(ctx, model.DrillStageCatalogValidation, func() error {
+		checkReport, validateErr := e.Provider.ValidateCatalog(ctx, catalog, backup, recoveryTarget)
+		result.Evidence = append(result.Evidence, checkReport.Evidence...)
+		if validateErr != nil {
+			if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
+				result.Checks = append(result.Checks, checkReport.Checks...)
+			} else {
+				validateErr = errors.Join(validateErr, fmt.Errorf("invalid partial catalog check report: %w", reportErr))
+			}
+			return fmt.Errorf("validate catalog: %w", validateErr)
+		}
+		if err := validateCheckReport(checkReport, true); err != nil {
+			return fmt.Errorf("validate catalog check report: %w", err)
+		}
+		result.Checks = append(result.Checks, checkReport.Checks...)
+		if hasFailedChecks(checkReport.Checks) {
+			return fmt.Errorf("catalog validation failed")
+		}
+		return nil
+	})
+	if err != nil {
+		return fail(model.DrillStageCatalogValidation, err)
+	}
+
+	var plan model.RestorePlan
+	err = lifecycle.RunStage(ctx, model.DrillStageRestorePlanning, func() error {
+		var planErr error
+		plan, planErr = e.Provider.PlanRestore(ctx, backup, recoveryTarget, req.Target)
+		result.Evidence = append(result.Evidence, plan.Evidence...)
+		if planErr != nil {
+			return fmt.Errorf("plan restore: %w", planErr)
+		}
+		if err := validateRestorePlan(providerType, backup, recoveryTarget, req.Target, plan); err != nil {
+			return fmt.Errorf("validate restore plan: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fail(model.DrillStageRestorePlanning, err)
 	}
 
 	prepared := false
@@ -179,61 +237,85 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if !prepared {
 			return nil
 		}
-		cleanupCtx, cancel := finalize.Context(ctx, e.FinalizationTimeout)
-		evidence, err := e.Target.Destroy(cleanupCtx)
-		cancel()
-		result.Evidence = append(result.Evidence, evidence...)
-		if err != nil {
-			return fmt.Errorf("destroy restore target: %w", err)
+		return lifecycle.RunFinalizationStage(ctx, model.DrillStageTargetCleanup, func() error {
+			cleanupCtx, cancel := finalize.Context(ctx, e.FinalizationTimeout)
+			evidence, destroyErr := e.Target.Destroy(cleanupCtx)
+			cancel()
+			result.Evidence = append(result.Evidence, evidence...)
+			prepared = false
+			var cleanupErr error
+			if destroyErr != nil {
+				cleanupErr = fmt.Errorf("destroy restore target: %w", destroyErr)
+			}
+			if err := ctx.Err(); err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restore drill canceled during target cleanup: %w", err))
+			}
+			return cleanupErr
+		})
+	}
+
+	err = lifecycle.RunStage(ctx, model.DrillStageTargetPreparation, func() error {
+		prepareErr := e.Target.Prepare(ctx, req.Target)
+		prepared = true
+		if prepareErr != nil {
+			return fmt.Errorf("prepare restore target: %w", prepareErr)
 		}
 		return nil
-	}
-
-	if err := e.Target.Prepare(ctx, req.Target); err != nil {
-		prepared = true
-		cleanupErr := cleanup()
-		if cleanupErr != nil {
-			return fail(model.DrillStageTargetPreparation, errors.Join(fmt.Errorf("prepare restore target: %w", err), cleanupErr))
-		}
-		return fail(model.DrillStageTargetPreparation, fmt.Errorf("prepare restore target: %w", err))
-	}
-	prepared = true
-
-	for _, step := range plan.Steps {
-		evidence, err := e.Target.Execute(ctx, step)
-		result.Evidence = append(result.Evidence, evidence...)
-		if err != nil {
-			cleanupErr := cleanup()
-			if cleanupErr != nil {
-				return fail(model.DrillStageRestoreExecution, errors.Join(fmt.Errorf("execute restore step %q: %w", step.Name, err), cleanupErr))
-			}
-			return fail(model.DrillStageRestoreExecution, fmt.Errorf("execute restore step %q: %w", step.Name, err))
-		}
-	}
-
-	pg, startEvidence, err := e.Target.StartPostgres(ctx, plan.Runtime)
-	result.Evidence = append(result.Evidence, startEvidence...)
+	})
 	if err != nil {
 		cleanupErr := cleanup()
 		if cleanupErr != nil {
-			return fail(model.DrillStagePostgresStart, errors.Join(fmt.Errorf("start postgres: %w", err), cleanupErr))
+			return fail(model.DrillStageTargetPreparation, errors.Join(err, cleanupErr))
 		}
-		return fail(model.DrillStagePostgresStart, fmt.Errorf("start postgres: %w", err))
+		return fail(model.DrillStageTargetPreparation, err)
 	}
 
-	probeReport, probeErr := RunProbes(ctx, e.Probes, pg)
-	result.Checks = append(result.Checks, probeReport.Checks...)
-	result.Evidence = append(result.Evidence, probeReport.Evidence...)
-	if probeErr != nil {
+	err = lifecycle.RunStage(ctx, model.DrillStageRestoreExecution, func() error {
+		for _, step := range plan.Steps {
+			evidence, executeErr := e.Target.Execute(ctx, step)
+			result.Evidence = append(result.Evidence, evidence...)
+			if executeErr != nil {
+				return fmt.Errorf("execute restore step %q: %w", step.Name, executeErr)
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		cleanupErr := cleanup()
-		return fail(model.DrillStageProbeExecution, errors.Join(probeErr, cleanupErr))
+		return fail(model.DrillStageRestoreExecution, errors.Join(err, cleanupErr))
 	}
 
-	cleanupErr := cleanup()
-	if cleanupErr != nil {
-		return fail(model.DrillStageTargetCleanup, cleanupErr)
+	var pg model.RunningPostgres
+	err = lifecycle.RunStage(ctx, model.DrillStagePostgresStart, func() error {
+		var startErr error
+		var startEvidence []model.EvidenceRecord
+		pg, startEvidence, startErr = e.Target.StartPostgres(ctx, plan.Runtime)
+		result.Evidence = append(result.Evidence, startEvidence...)
+		if startErr != nil {
+			return fmt.Errorf("start postgres: %w", startErr)
+		}
+		return nil
+	})
+	if err != nil {
+		cleanupErr := cleanup()
+		return fail(model.DrillStagePostgresStart, errors.Join(err, cleanupErr))
 	}
-	return finish(model.DrillStatusPassed, nil)
+
+	err = lifecycle.RunStage(ctx, model.DrillStageProbeExecution, func() error {
+		probeReport, probeErr := RunProbes(ctx, e.Probes, pg)
+		result.Checks = append(result.Checks, probeReport.Checks...)
+		result.Evidence = append(result.Evidence, probeReport.Evidence...)
+		return probeErr
+	})
+	if err != nil {
+		cleanupErr := cleanup()
+		return fail(model.DrillStageProbeExecution, errors.Join(err, cleanupErr))
+	}
+
+	if err := cleanup(); err != nil {
+		return fail(model.DrillStageTargetCleanup, err)
+	}
+	return lifecycle.Finish(ctx, model.DrillStatusPassed, nil)
 }
 
 func (e Engine) clock() func() time.Time {

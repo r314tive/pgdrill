@@ -119,6 +119,118 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	}
 }
 
+func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
+	targetSpec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/pgdrill-events"}
+	recoveryTarget := model.RecoveryTarget{Type: model.RecoveryTargetLatest}
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+		},
+		plan: testRestorePlan(model.ProviderWALG, "base_1", targetSpec, recoveryTarget, "restore"),
+	}
+	target := &fakeTarget{}
+	events := []model.RunEvent{}
+
+	result, err := Engine{
+		Provider: provider,
+		Target:   target,
+		Probes:   []Probe{passingProbe()},
+		EventSink: EventSinkFunc(func(_ context.Context, event model.RunEvent) error {
+			events = append(events, event)
+			return nil
+		}),
+		PGDrillVersion: "pgdrill test",
+		Clock:          fixedClock("2026-07-21T01:00:00Z"),
+	}.Run(context.Background(), DrillRequest{
+		ID:             "run-events",
+		AttemptID:      "attempt-events",
+		Target:         targetSpec,
+		RecoveryTarget: recoveryTarget,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Status != model.DrillStatusPassed {
+		t.Fatalf("result status = %q, want passed", result.Status)
+	}
+
+	wantStages := []model.DrillStage{
+		model.DrillStageRequestValidation,
+		model.DrillStageBackupDiscovery,
+		model.DrillStageBackupSelection,
+		model.DrillStageCatalogValidation,
+		model.DrillStageRestorePlanning,
+		model.DrillStageTargetPreparation,
+		model.DrillStageRestoreExecution,
+		model.DrillStagePostgresStart,
+		model.DrillStageProbeExecution,
+		model.DrillStageTargetCleanup,
+	}
+	gotStages := []model.DrillStage{}
+	for i, event := range events {
+		if event.Sequence != uint64(i+1) {
+			t.Fatalf("event %d sequence = %d, want %d", i, event.Sequence, i+1)
+		}
+		if event.RunID != "run-events" || event.AttemptID != "attempt-events" {
+			t.Fatalf("event %d identity = %q/%q", i, event.RunID, event.AttemptID)
+		}
+		if event.Type == model.RunEventStageStarted {
+			gotStages = append(gotStages, event.Stage)
+		}
+	}
+	if !reflect.DeepEqual(gotStages, wantStages) {
+		t.Fatalf("stage order = %#v, want %#v", gotStages, wantStages)
+	}
+	if len(events) != 2+2*len(wantStages) {
+		t.Fatalf("event count = %d, want %d", len(events), 2+2*len(wantStages))
+	}
+	if events[0].Type != model.RunEventStarted {
+		t.Fatalf("first event = %#v, want run_started", events[0])
+	}
+	if last := events[len(events)-1]; last.Type != model.RunEventFinished || last.Status != model.DrillStatusPassed {
+		t.Fatalf("last event = %#v, want passed run_finished", last)
+	}
+}
+
+func TestEngineRunStopsBeforeStageOperationWhenEventDeliveryFails(t *testing.T) {
+	wantErr := errors.New("journal unavailable")
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{Provider: model.ProviderWALG},
+	}
+	target := &fakeTarget{}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Provider: provider,
+		Target:   target,
+		Probes:   []Probe{passingProbe()},
+		Sink:     sink,
+		EventSink: EventSinkFunc(func(_ context.Context, event model.RunEvent) error {
+			if event.Type == model.RunEventStageStarted && event.Stage == model.DrillStageBackupDiscovery {
+				return wantErr
+			}
+			return nil
+		}),
+	}.Run(context.Background(), DrillRequest{
+		ID:             "event-failure",
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Run() error = %v, want event sink failure", err)
+	}
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageBackupDiscovery {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if len(provider.calls) != 0 {
+		t.Fatalf("provider calls = %#v, want none", provider.calls)
+	}
+	if !sink.called {
+		t.Fatal("terminal failure report was not written")
+	}
+}
+
 func TestDrillIDIsTrimmedAndNanosecondUnique(t *testing.T) {
 	startedAt := time.Date(2026, 7, 20, 12, 34, 56, 123456789, time.UTC)
 
@@ -515,6 +627,42 @@ func TestEngineRejectsTargetImplementationMismatchBeforePreflight(t *testing.T) 
 	}
 }
 
+func TestEngineSnapshotsAndValidatesProviderIdentityBeforePreflight(t *testing.T) {
+	provider := &changingTypeProvider{
+		fakeProvider: fakeProvider{providerType: "future-provider"},
+	}
+	target := &fakeTarget{}
+	preflight := &fakePreflight{}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Provider:  provider,
+		Target:    target,
+		Preflight: preflight,
+		Probes:    []Probe{passingProbe()},
+		Sink:      sink,
+	}.Run(context.Background(), DrillRequest{
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "provider type") {
+		t.Fatalf("Run() error = %v, want provider identity error", err)
+	}
+	if provider.typeCalls != 1 {
+		t.Fatalf("Provider.Type() calls = %d, want one immutable snapshot", provider.typeCalls)
+	}
+	if result.Provider != "" || result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if preflight.called || len(provider.calls) != 0 || len(target.calls) != 0 {
+		t.Fatalf("invalid provider crossed request boundary: preflight=%v provider=%#v target=%#v", preflight.called, provider.calls, target.calls)
+	}
+	if !sink.called || sink.result.Provider != "" {
+		t.Fatalf("canonical failure result was not persisted: %#v", sink)
+	}
+}
+
 func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	provider := &fakeProvider{
@@ -566,6 +714,39 @@ func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T
 	}
 	if sink.result.Status != model.DrillStatusAborted {
 		t.Fatalf("expected aborted result in sink, got %q", sink.result.Status)
+	}
+}
+
+func TestEngineCancellationDuringCleanupCannotPass(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+		},
+		plan: testRestorePlan(model.ProviderWALG, "base_1", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}, "fetch"),
+	}
+	target := &fakeTarget{destroyHook: cancel}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Provider: provider,
+		Target:   target,
+		Probes:   []Probe{passingProbe()},
+		Sink:     sink,
+	}.Run(ctx, DrillRequest{
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want cancellation", err)
+	}
+	if result.Status != model.DrillStatusAborted || result.Failure == nil || result.Failure.Stage != model.DrillStageTargetCleanup {
+		t.Fatalf("unexpected result %#v", result)
+	}
+	if !sink.called || sink.result.Status != model.DrillStatusAborted {
+		t.Fatalf("aborted cleanup result was not persisted: %#v", sink)
 	}
 }
 
@@ -723,6 +904,16 @@ type fakeProvider struct {
 	calls          []string
 }
 
+type changingTypeProvider struct {
+	fakeProvider
+	typeCalls int
+}
+
+func (p *changingTypeProvider) Type() model.ProviderType {
+	p.typeCalls++
+	return p.fakeProvider.Type()
+}
+
 func passingProbe() Probe {
 	return &fakeProbe{
 		probeType: model.ProbeSQL,
@@ -777,6 +968,7 @@ type fakeTarget struct {
 	prepareErr        error
 	startErr          error
 	destroyErr        error
+	destroyHook       func()
 	destroyContextErr error
 	destroyEvidence   []model.EvidenceRecord
 }
@@ -824,6 +1016,9 @@ func (t *fakeTarget) StartPostgres(context.Context, model.RuntimeConfig) (model.
 func (t *fakeTarget) Destroy(ctx context.Context) ([]model.EvidenceRecord, error) {
 	t.calls = append(t.calls, "destroy")
 	t.destroyContextErr = ctx.Err()
+	if t.destroyHook != nil {
+		t.destroyHook()
+	}
 	return t.destroyEvidence, t.destroyErr
 }
 

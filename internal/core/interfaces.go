@@ -21,6 +21,27 @@ type RestoreTarget interface {
 	Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
 }
 
+// ManagedDrillResolver performs read-only discovery and constructs an
+// operator-managed restore target. Resolve must not create target resources.
+type ManagedDrillResolver interface {
+	Resolve(ctx context.Context) (ManagedResolution, model.CheckReport, error)
+}
+
+// ManagedRestoreTarget owns an operator-managed recovery lifecycle where the
+// target system, rather than a native provider command plan, performs the
+// physical restore and PostgreSQL startup. Start must reconcile or clean up
+// its own failed and ambiguous mutations; the engine calls Destroy after a
+// successful Start and must not duplicate target-owned failure cleanup.
+type ManagedRestoreTarget interface {
+	Type() model.RestoreTargetType
+	Start(ctx context.Context) (model.RunningPostgres, model.CheckReport, error)
+	Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
+}
+
+type PostRestoreChecker interface {
+	Check(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error)
+}
+
 // TargetValidator performs read-only target precondition checks before native
 // tool preflight or backup repository access. Prepare must still recheck any
 // mutable filesystem or remote-state assumptions.
@@ -35,6 +56,15 @@ type Probe interface {
 
 type EvidenceSink interface {
 	Write(ctx context.Context, result model.DrillResult) error
+}
+
+// EventSink receives an ordered append-only lifecycle stream for one run
+// attempt. Implementations must return an error when an event was not durably
+// accepted and must make run/attempt/sequence writes idempotent when acceptance
+// can be uncertain. The engine does not silently discard configured event
+// delivery failures.
+type EventSink interface {
+	WriteEvent(ctx context.Context, event model.RunEvent) error
 }
 
 type Preflight interface {

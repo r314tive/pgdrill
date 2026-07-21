@@ -25,7 +25,9 @@ probe presets, strict
 `pg_verifybackup` profile support, Prometheus metrics export from JSON reports,
 first useful CLI surfaces for catalog, report, and drill execution, and initial
 CNPG verify-cluster manifest, discovery, lifecycle, and guarded target
-verification surfaces for the Kubernetes restore target.
+verification surfaces for the Kubernetes restore target. Native and CNPG
+execution now share one core lifecycle recorder; an injectable versioned run
+event contract is available for future durable history and control-plane work.
 
 ## Goals
 
@@ -61,6 +63,8 @@ Additional providers can be added behind the same internal provider contract.
   timings, logs, checks, and final status.
 - **Failure stage**: a stable lifecycle stage and human-readable reason for a
   failed or aborted drill, linked to the evidence collected before failure.
+- **Run event**: an optional ordered stage transition identified by logical run
+  and execution attempt; the CLI does not persist an event journal by default.
 
 The implemented full-drill target is `local`. Kubernetes is available through
 the guarded CloudNativePG `target manifest` and `target verify` paths;
@@ -167,10 +171,15 @@ A local pg_probackup drill example is available in
 
 Release discipline is described in [docs/release.md](docs/release.md), and
 the versioned JSON report contract is documented in
-[docs/report-format.md](docs/report-format.md). User-visible changes are tracked
-in [CHANGELOG.md](CHANGELOG.md). Contribution and security reporting guidance
-is available in [CONTRIBUTING.md](CONTRIBUTING.md) and
-[SECURITY.md](SECURITY.md).
+[docs/report-format.md](docs/report-format.md). The optional lifecycle stream is
+documented in [docs/run-event-format.md](docs/run-event-format.md), and the
+engine/control-plane boundary is recorded in
+[ADR 0001](docs/adr/0001-engine-v0.2-and-control-plane-boundary.md).
+The typed topology and CLI/TUI/web sequence are expanded in
+[docs/control-plane-roadmap.md](docs/control-plane-roadmap.md).
+User-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md). Contribution
+and security reporting guidance is available in
+[CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 

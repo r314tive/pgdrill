@@ -127,8 +127,10 @@ pgdrill target verify -f pgdrill-cnpg.yaml -discover -confirm-create
 pod to become Ready, runs the configured probe set inside the restored
 `postgres` container, writes the standard JSON report, and destroys the verify
 cluster. It refuses to run without `-confirm-create` because it mutates
-Kubernetes resources. Backup-provider configuration is optional for target-only
-commands because the referenced CNPG `Backup` is the restore input; read-only
+Kubernetes resources. At least one post-restore probe is required and validated
+before local preflight or resource creation. Backup-provider configuration is
+optional for target-only commands because the referenced CNPG `Backup` is the
+restore input; read-only
 discovery commands are retained as report evidence when `-discover` is used,
 including when discovery itself fails.
 

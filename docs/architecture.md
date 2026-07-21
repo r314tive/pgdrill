@@ -10,10 +10,13 @@ probes, and evidence, not in terms of one provider's command output.
 
 - `internal/model`: canonical data model shared by the engine, adapters, probes,
   restore targets, and report sinks.
+- `internal/application/*`: use-case wiring that composes config, core
+  interfaces, and concrete adapters without putting orchestration in the CLI.
 - `internal/config`: strict YAML/JSON shape, common value, duration, and path
   validation plus conversion into canonical runtime specs.
-- `internal/core`: provider, target, probe, evidence sink interfaces, backup
-  selection, shared probe execution semantics, and the drill engine lifecycle.
+- `internal/core`: native and managed-target interfaces, backup selection,
+  shared probe execution semantics, ordered run events, and the common drill
+  lifecycle recorder.
 - `internal/command`: direct command runner with timeout, bounded raw
   stdout/stderr, bounded redacted evidence, and structured exit status.
 - `internal/preflight`: config-derived executable requirements and native
@@ -33,9 +36,13 @@ probes, and evidence, not in terms of one provider's command output.
   results.
 - `docs/report-format.md`: versioning and compatibility contract for durable
   drill reports.
+- `docs/run-event-format.md`: identity, ordering, and delivery contract for the
+  optional append-only lifecycle stream.
 - `docs/restore-targets.md`: lifecycle requirements for disposable restore
   environments, including Kubernetes/CNPG notes.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.
+- `docs/control-plane-roadmap.md`: typed fleet topology, persistence,
+  interfaces, and repository/module decision for the future control plane.
 
 ## Main Interfaces
 
@@ -55,6 +62,20 @@ type RestoreTarget interface {
     Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
 }
 
+type ManagedDrillResolver interface {
+    Resolve(ctx context.Context) (ManagedResolution, model.CheckReport, error)
+}
+
+type ManagedRestoreTarget interface {
+    Type() model.RestoreTargetType
+    Start(ctx context.Context) (model.RunningPostgres, model.CheckReport, error)
+    Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
+}
+
+type PostRestoreChecker interface {
+    Check(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error)
+}
+
 type TargetValidator interface {
     Validate(ctx context.Context, spec model.TargetSpec) error
 }
@@ -68,6 +89,10 @@ type EvidenceSink interface {
     Write(ctx context.Context, result model.DrillResult) error
 }
 
+type EventSink interface {
+    WriteEvent(ctx context.Context, event model.RunEvent) error
+}
+
 type Preflight interface {
     Check(ctx context.Context) (model.CheckReport, error)
 }
@@ -76,7 +101,7 @@ type Preflight interface {
 ## Canonical Model
 
 The canonical model starts with `BackupCatalog`, `Backup`, `WALRange`,
-`RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`, and
+`RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`, `RunEvent`, and
 `EvidenceRecord`.
 
 Recovery targets are normalized and validated before repository access. A
@@ -130,6 +155,15 @@ The initial report format is the versioned JSON encoding of
 contract instead of reconstructing drill state from logs. Compatibility rules
 are defined in [report-format.md](report-format.md).
 
+When configured, the engine also emits ordered
+`pgdrill.run-event/v1alpha1` events around every applicable stage. Native local
+drills and operator-managed targets use the same lifecycle recorder, terminal
+status rules, cancellation handling, and report finalization. Event delivery
+is fail-closed before normal stage side effects; cleanup remains mandatory even
+when its event journal is unavailable. The standalone CLI has no default event
+journal yet. The provisional delivery contract is defined in
+[run-event-format.md](run-event-format.md).
+
 The durable report is validated at both producer and consumer boundaries. This
 gate covers top-level terminal-state coherence, canonical identities and enums,
 command evidence shape, unique evidence IDs, and every check/failure evidence
@@ -146,6 +180,14 @@ Failed and aborted results carry a structured `DrillFailure`. Its finite
 lifecycle `stage` is suitable for automation and metrics; `message` is
 human-readable context and must not be parsed as a protocol. Failure records
 link the evidence IDs accumulated through that stage.
+
+The CNPG path is composed by `internal/application/cnpgverify`, not by
+`cmd/pgdrill`. It resolves read-only target inputs, creates an ownership-scoped
+managed target, runs in-pod checks, and delegates lifecycle, cleanup,
+cancellation, events, and terminal persistence to `core.ManagedEngine`. The
+CLI retains only flags, config loading, the explicit mutation confirmation,
+summary rendering, and exit-code mapping. The application service repeats the
+confirmation guard so another presentation layer cannot bypass it accidentally.
 
 ## Design Rules
 
@@ -165,9 +207,14 @@ link the evidence IDs accumulated through that stage.
 - Evidence keeps bounded redacted command output previews, byte counts,
   truncation state, and normalized status.
 - Cleanup must be explicit and observable.
+- Native and managed-target execution must use the common lifecycle recorder;
+  presentation layers must not assemble result or cleanup state machines.
 - A mutating command error is an uncertain outcome, not proof that no resource
   exists; cleanup after such commands must be idempotent, retryable, and scoped
   to a random per-run ownership identity.
+- A managed target owns reconciliation and configured cleanup after a failed or
+  ambiguous `Start`; the engine invokes `Destroy` after successful startup and
+  does not duplicate target-owned failure cleanup.
 - Cancellation stops active provider, target, and probe work. Cleanup and report
   persistence run on separate bounded finalization contexts so a canceled
   operation can still produce an `aborted` report.
@@ -183,3 +230,6 @@ Start with in-process Go adapters that shell out to existing tools. Add an
 external plugin protocol later if the adapter surface stabilizes.
 
 The shell should remain a compatibility layer, not the control plane.
+
+The engine/control-plane ownership boundary and migration sequence are recorded
+in [ADR 0001](adr/0001-engine-v0.2-and-control-plane-boundary.md).

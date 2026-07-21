@@ -8,8 +8,33 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- Validated `pgdrill.run-event/v1alpha1` lifecycle events with logical run and
+  attempt identities, monotonic accepted-write sequences, finite stage
+  outcomes, and an injectable fail-closed event sink.
+- A shared core lifecycle recorder for stage transitions, cancellation,
+  cleanup, terminal report persistence, and terminal event reconciliation.
+- Managed-target engine contracts and a CNPG application service that composes
+  read-only discovery, ownership-scoped target startup, in-pod checks, and
+  cleanup outside the CLI package.
+- ADR and roadmap documentation defining the Engine v0.2 hardening gates, the
+  future typed fleet control plane, and the repository/module boundary.
+
 ### Changed
 
+- Native local drills and CNPG target verification now use the same core
+  lifecycle and structured failure semantics. `cmd/pgdrill` no longer owns a
+  separate CNPG result, cleanup, or report state machine.
+- CNPG create confirmation is enforced by both the CLI and the application
+  service. Cancellation observed during final cleanup now produces an
+  `aborted` result instead of a possible false `passed` result.
+- CNPG target verification now rejects an empty post-restore probe set before
+  local preflight or Kubernetes mutation; read-only manifest rendering remains
+  probe-independent.
+- Rejected event writes no longer consume a sequence number. A rejected passed
+  terminal event fails and rewrites the result before a failed terminal event
+  is attempted with the same unaccepted sequence.
 - CNPG readiness evidence now compacts repeated identical polling states while
   retaining each raw state transition, observation count, and first/last
   observation timestamps.
