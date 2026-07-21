@@ -46,6 +46,9 @@ called out explicitly even while the major version is `0`.
 - A strict `pgdrill.compatibility-matrix/v1alpha1` file separating fixture,
   controlled, and dated exact-version field evidence, with validated file,
   test-function, and Markdown references.
+- Native-provider field evidence that retains and parses a passed drill report,
+  binds exact pgdrill commits, and rejects version, provider, date, or recovery
+  target claims not demonstrated by that report.
 
 ### Changed
 
@@ -97,6 +100,11 @@ called out explicitly even while the major version is `0`.
   field drill: the exact public `v0.1.0-alpha.9` Linux amd64 artifact restored a
   latest backup on CNPG 1.26.0 and PostgreSQL 15.13, passed in-pod readiness and
   SQL probes, captured evidence, and completed ownership-scoped cleanup.
+- Compatibility evidence now records the first native WAL-G field drill:
+  pgdrill at exact commit `8d69347e688efe33d53371c0d94953a89fd20495`
+  restored a WAL-G 3.0.8 full backup into PostgreSQL 18.3 on Linux arm64,
+  replayed a post-backup sentinel WAL segment, passed readiness, SQL, and
+  schema-dump probes, and completed policy-checked cleanup.
 - Release archives now include the compatibility document and validated
   machine-readable evidence matrix.
 

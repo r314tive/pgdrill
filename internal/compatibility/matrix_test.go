@@ -22,8 +22,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 7 {
-		t.Fatalf("matrix entry count = %d, want 7", len(matrix.Entries))
+	if len(matrix.Entries) != 8 {
+		t.Fatalf("matrix entry count = %d, want 8", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -42,6 +42,9 @@ func TestCommittedMatrix(t *testing.T) {
 	}
 	if levels["target.cnpg.field"] != EvidenceLevelField {
 		t.Fatalf("CNPG field level = %q, want field", levels["target.cnpg.field"])
+	}
+	if levels["provider.wal-g.field"] != EvidenceLevelField {
+		t.Fatalf("WAL-G field level = %q, want field", levels["provider.wal-g.field"])
 	}
 
 	fixtureProviders := make(map[model.ProviderType]Entry)
@@ -94,6 +97,10 @@ entries:
 	if _, err := Parse([]byte(withVersion)); err == nil || !strings.Contains(err.Error(), "must not make version") {
 		t.Fatalf("fixture version-claim error = %v", err)
 	}
+	withDrillReport := strings.Replace(base, "kind: fixture", "kind: drill_report", 1)
+	if _, err := Parse([]byte(withDrillReport)); err == nil || !strings.Contains(err.Error(), "allowed only for field") {
+		t.Fatalf("fixture drill-report error = %v", err)
+	}
 }
 
 func TestValidateReferencesRejectsTraversalAndMissingAnchor(t *testing.T) {
@@ -124,5 +131,60 @@ func TestValidateReferencesRejectsTraversalAndMissingAnchor(t *testing.T) {
 	matrix.Entries[0].Evidence[0].Ref = "target_test.go#TestTargetConformance"
 	if err := matrix.ValidateReferences(root); err == nil || !strings.Contains(err.Error(), "was not found") {
 		t.Fatalf("missing-anchor error = %v", err)
+	}
+}
+
+func TestValidateDrillReportRejectsUnprovenClaims(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	payload, err := os.ReadFile(filepath.Join(root, "compatibility", "matrix.yaml"))
+	if err != nil {
+		t.Fatalf("read committed matrix: %v", err)
+	}
+	matrix, err := Parse(payload)
+	if err != nil {
+		t.Fatalf("parse committed matrix: %v", err)
+	}
+
+	var field Entry
+	for _, entry := range matrix.Entries {
+		if entry.ID == "provider.wal-g.field" {
+			field = entry
+			break
+		}
+	}
+	if field.ID == "" {
+		t.Fatal("WAL-G field entry was not found")
+	}
+	var reportPath string
+	for _, evidence := range field.Evidence {
+		if evidence.Kind == EvidenceKindDrillReport {
+			reportPath = filepath.Join(root, evidence.Ref)
+			break
+		}
+	}
+	if reportPath == "" {
+		t.Fatal("WAL-G drill report reference was not found")
+	}
+
+	wrongCommit := field
+	wrongCommit.PGDrillCommits = []string{strings.Repeat("0", 40)}
+	if err := validateDrillReport(wrongCommit, reportPath); err == nil || !strings.Contains(err.Error(), "does not match claimed commit") {
+		t.Fatalf("wrong-commit error = %v", err)
+	}
+
+	wrongToolVersion := field
+	wrongToolVersion.ImplementationVersions = []string{"0.0.0"}
+	if err := validateDrillReport(wrongToolVersion, reportPath); err == nil || !strings.Contains(err.Error(), "no passed wal-g version check") {
+		t.Fatalf("wrong-tool-version error = %v", err)
+	}
+
+	for index := range matrix.Entries {
+		if matrix.Entries[index].ID == field.ID {
+			matrix.Entries[index].PGDrillVersions = append(matrix.Entries[index].PGDrillVersions, "v0.1.1")
+			break
+		}
+	}
+	if err := matrix.Validate(); err == nil || !strings.Contains(err.Error(), "one exact") {
+		t.Fatalf("ambiguous-field-point error = %v", err)
 	}
 }

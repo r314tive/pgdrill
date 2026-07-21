@@ -14,14 +14,19 @@ The source of truth is
   version is claimed
 - `controlled`: target lifecycle and reconciliation against controlled
   executables or clients
-- `field`: a dated external observation with exact pgdrill, component,
-  PostgreSQL, and platform versions
+- `field`: a dated external observation with exact pgdrill version and commit,
+  component, PostgreSQL, and platform versions
 
 Every entry records demonstrated capabilities, direct evidence references, and
-explicit limitations. Repository tests resolve those references and all
+explicit limitations. Each field entry represents one exact implementation,
+pgdrill commit, PostgreSQL, platform, and recovery-target point; another point
+requires another entry. Repository tests resolve those references and all
 current adapters run the same canonical provider suite. The local and CNPG
 targets run native and managed process-loss reconciliation suites respectively.
-Release packaging validates and includes the matrix and this document.
+Native-provider field entries must reference a passed drill report. Repository
+tests parse it and cross-check the provider, recovery target, observation date,
+tool versions, pgdrill version, and full commit. Release packaging validates
+and includes the matrix and this document.
 
 ## Release Platforms
 
@@ -56,6 +61,24 @@ Before claiming a native version as validated:
 
 Add new output shapes as sanitized fixtures when they change parser behavior.
 
+### WAL-G Field Validation
+
+On 2026-07-21, pgdrill `v0.1.0-dev` at commit
+`8d69347e688efe33d53371c0d94953a89fd20495` completed one native Linux arm64
+drill with WAL-G 3.0.8 and PostgreSQL 18.3. A real `backup-push` captured 100
+rows; a 101st sentinel row was committed after the base backup and archived in
+the next WAL segment. The drill passed catalog discovery, `wal-verify
+integrity`, `backup-fetch`, latest recovery, readiness, a SQL assertion that
+required the post-backup sentinel, schema-only `pg_dump`, all five policy
+verdicts, and ownership-scoped cleanup.
+
+The exact secret-free config, validated report, checksums, image digest, and
+limitations are retained under
+[`compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64`](../compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64/README.md).
+This is one local file-repository observation. It does not establish remote
+object-storage, PITR, incremental/delta backup, cross-version, or production
+RTO compatibility.
+
 `pgdrill doctor` proves that the config is structurally valid for its target,
 that each required executable starts, and that its bounded version command
 succeeds. It deliberately does not access repositories, database servers, or
@@ -71,8 +94,9 @@ continuity; retain the provider check and completed restore evidence.
 ## Restore Targets
 
 The local target is covered by process, filesystem-boundary, cleanup, and probe
-tests using controlled executables. Real PostgreSQL startup and provider
-repositories still require environment-specific validation.
+tests using controlled executables. The WAL-G field point above additionally
+exercises real PostgreSQL startup and one native repository; other provider,
+version, storage, and recovery-target combinations remain external gates.
 
 The CNPG target has manifest, discovery, lifecycle, failure, evidence, and CLI
 tests behind a `kubectl` compatibility client.

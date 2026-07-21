@@ -72,6 +72,39 @@ entries:
     limitations:
       - No native pgBackRest version or real repository has been validated.
       - Planning evidence does not prove WAL continuity or a completed restore.
+  - id: provider.wal-g.field
+    component: provider
+    implementation: wal-g
+    evidence_level: field
+    capabilities:
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "3.0.8"
+    pgdrill_versions:
+      - v0.1.0-dev
+    pgdrill_commits:
+      - 8d69347e688efe33d53371c0d94953a89fd20495
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-21"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64/report.json
+      - kind: field_note
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64/README.md#validated-scope
+    limitations:
+      - One disposable local file repository does not establish remote object-storage compatibility.
+      - Only latest recovery from one full backup with one post-backup WAL segment was exercised.
+      - The tested pgdrill binary was a development build at an exact commit, not a published release artifact.
   - id: provider.wal-g.fixture
     component: provider
     implementation: wal-g
@@ -93,7 +126,7 @@ entries:
       - kind: conformance_test
         ref: internal/adapters/walg/adapter_test.go#TestProviderConformance
     limitations:
-      - No native WAL-G version or real repository has been validated.
+      - This fixture entry makes no native WAL-G version claim; exact field observations are recorded separately.
       - Planning evidence does not prove WAL continuity or a completed restore.
   - id: target.cnpg.controlled
     component: target
@@ -125,6 +158,8 @@ entries:
       - "1.26.0"
     pgdrill_versions:
       - v0.1.0-alpha.9
+    pgdrill_commits:
+      - e5025d7fa4b129091b08a47cf58186c4565df855
     postgresql_versions:
       - "15.13"
     platforms:
