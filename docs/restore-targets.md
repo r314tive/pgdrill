@@ -4,6 +4,13 @@ Restore targets own the lifecycle of disposable recovery environments. Provider
 adapters should not know whether a restore happens in a local directory,
 container, or Kubernetes cluster.
 
+Executable targets must also pass the shared native or managed target suite in
+`internal/testkit/conformance`. The suite replaces the executor between
+mutations, reconstructs state from attempt identity and durable target facts,
+reconciles operation checkpoints, and proves owned cleanup. Controlled target
+tests and external field observations remain distinct evidence levels in
+[`compatibility/matrix.yaml`](../compatibility/matrix.yaml).
+
 ## Kubernetes / CNPG Notes
 
 CloudNativePG is useful as a Kubernetes restore target because a temporary

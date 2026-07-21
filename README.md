@@ -36,6 +36,10 @@ artifact references; CNPG verify runs store the exact create manifest before
 target mutation.
 Immutable recovery policy now produces explicit fail-closed verdicts for RTO,
 RPO, backup age, recovery-target satisfaction, and configured cleanup.
+All four provider adapters and both executable target paths run shared
+conformance suites. Compatibility evidence is recorded separately as fixture,
+controlled, or exact-version field observations instead of a blanket support
+claim.
 
 ## Goals
 
@@ -112,7 +116,8 @@ provider, target, and probe binaries must be installed in the execution
 environment. CNPG probe binaries run inside the restored `postgres` container;
 the pgdrill runner needs `kubectl`, not a duplicate PostgreSQL client toolchain.
 See [docs/compatibility.md](docs/compatibility.md) for the current validation
-boundary.
+boundary and [compatibility/matrix.yaml](compatibility/matrix.yaml) for the
+versioned machine-readable evidence matrix. Release archives include both.
 
 Validate the config and capture the required client versions without touching a
 backup repository, PostgreSQL server, or Kubernetes API:

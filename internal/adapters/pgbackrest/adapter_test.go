@@ -3,6 +3,7 @@ package pgbackrest
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,7 +12,30 @@ import (
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
+	"github.com/r314tive/pgdrill/internal/testkit/conformance"
 )
+
+func TestProviderConformance(t *testing.T) {
+	fixture := readFixture(t, "testdata/info-output.json")
+	conformance.Provider(t, func(t *testing.T) conformance.ProviderCase {
+		return conformance.ProviderCase{
+			Provider: New(Config{
+				Binary:         "/usr/local/bin/pgbackrest",
+				Stanza:         "main",
+				Timeout:        time.Minute,
+				RestoreTimeout: 30 * time.Minute,
+			}, &fakeRunner{result: successResult(fixture)}),
+			Type: model.ProviderPGBackRest,
+			Target: model.TargetSpec{
+				Type:    model.RestoreTargetLocal,
+				WorkDir: filepath.Join(t.TempDir(), "restore"),
+			},
+			RecoveryTarget:   model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			PlanningTargets:  conformance.CanonicalRecoveryTargets(),
+			ExpectedBackupID: "pgbackrest:main/20240502-030405F_20240503-030405D",
+		}
+	})
+}
 
 func TestParseInfo(t *testing.T) {
 	data := readFixture(t, "testdata/info-output.json")

@@ -23,6 +23,8 @@ probes, and evidence, not in terms of one provider's command output.
   monotonic transition validation and process-local or durable implementations.
 - `internal/artifact`: bounded content-addressed artifact sinks with streaming
   disk publication, deduplication, and verified reads.
+- `internal/compatibility`: strict validation for the versioned compatibility
+  evidence matrix and its repository references.
 - `internal/preflight`: config-derived executable requirements and native
   version checks used by read-only `pgdrill doctor` and target-aware execution
   preflight.
@@ -36,6 +38,8 @@ probes, and evidence, not in terms of one provider's command output.
   exec.
 - `internal/probes/*`: probe registry and post-restore checks over a running
   PostgreSQL instance, including type-specific semantic config validation.
+- `internal/testkit/conformance`: reusable provider, native-target, and
+  managed-target protocol suites used by every current implementation.
 - `internal/report`: report readers and evidence sinks for durable drill
   results.
 - `docs/report-format.md`: versioning and compatibility contract for durable
@@ -51,6 +55,8 @@ probes, and evidence, not in terms of one provider's command output.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.
 - `docs/control-plane-roadmap.md`: typed fleet topology, persistence,
   interfaces, and repository/module decision for the future control plane.
+- `compatibility/matrix.yaml`: machine-readable fixture, controlled, and field
+  evidence without implicit version-range claims.
 
 ## Main Interfaces
 
@@ -202,6 +208,15 @@ engine always uses the matching canonical catalog object. Restore plans must
 contain a runtime data directory and at least one
 executable command or file step. Violations fail at the corresponding stable
 lifecycle stage and are persisted like native-tool failures.
+
+The reusable conformance suites exercise the same boundaries independently of
+implementation-specific command tests. Provider suites cover canonical backup
+identity, selection, terminal validation reports, evidence links, and planning
+for every canonical recovery target. Target suites reconstruct fresh executors
+from attempt identity and durable external state, reconcile completed
+mutations, and prove owned cleanup. Passing these suites is a protocol claim,
+not a real-repository compatibility claim; those observations live in the
+versioned evidence matrix.
 
 Bounded raw command stdout/stderr stay available to adapter code as
 `command.RawEvidence`. Reports and logs use `model.CommandEvidence`, where

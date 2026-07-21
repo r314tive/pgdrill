@@ -37,6 +37,15 @@ called out explicitly even while the major version is `0`.
   `pgdrill.recovery-policy-evaluation/v1alpha1` verdicts for RTO, RPO, backup
   age, recovery-target satisfaction, and configured cleanup, with CLI and
   bounded Prometheus presentation.
+- Reusable provider conformance suites for canonical catalogs, selection,
+  validation reports, evidence references, foreign-provider rejection, and
+  restore planning across every recovery-target type.
+- Reusable native and managed restore-target conformance suites that replace
+  executors between mutations, reconcile durable operation state, and prove
+  ownership-scoped cleanup.
+- A strict `pgdrill.compatibility-matrix/v1alpha1` file separating fixture,
+  controlled, and dated exact-version field evidence, with validated file,
+  test-function, and Markdown references.
 
 ### Changed
 
@@ -88,6 +97,8 @@ called out explicitly even while the major version is `0`.
   field drill: the exact public `v0.1.0-alpha.9` Linux amd64 artifact restored a
   latest backup on CNPG 1.26.0 and PostgreSQL 15.13, passed in-pod readiness and
   SQL probes, captured evidence, and completed ownership-scoped cleanup.
+- Release archives now include the compatibility document and validated
+  machine-readable evidence matrix.
 
 ## [0.1.0-alpha.9] - 2026-07-20
 
@@ -273,8 +284,9 @@ called out explicitly even while the major version is `0`.
   replace validation against real WAL-G, Barman, pgBackRest, and pg_probackup
   repositories. No native provider-version support matrix is claimed yet.
 - CNPG verification has automated manifest, lifecycle, ownership, failure, and
-  evidence coverage, but still requires a disposable live-cluster drill before
-  it can be described as production-ready.
+  evidence coverage plus one exact-version disposable field observation.
+  Broader versions, PITR modes, storage classes, and failure scenarios remain
+  external gates before a production-ready claim.
 - Full `pgdrill run` execution currently supports the local target. Kubernetes
   is exposed through guarded target manifest/verify commands; the canonical
   container target and UI/TUI remain deliberately unimplemented.

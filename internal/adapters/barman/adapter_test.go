@@ -3,6 +3,7 @@ package barman
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,7 +12,42 @@ import (
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
+	"github.com/r314tive/pgdrill/internal/testkit/conformance"
 )
+
+func TestProviderConformance(t *testing.T) {
+	fixture := readFixture(t, "testdata/list-backups.json")
+	showBackup := []byte(`{
+  "backup_id": "20240502T030405",
+  "server_name": "main",
+  "status": "DONE",
+  "backup_type": "full"
+}`)
+	conformance.Provider(t, func(t *testing.T) conformance.ProviderCase {
+		runner := &fakeRunner{results: []command.Result{
+			successResult(fixture),
+			successResult([]byte("server main: OK\n")),
+			successResult([]byte("backup 20240502T030405: OK\n")),
+			successResult(showBackup),
+		}}
+		return conformance.ProviderCase{
+			Provider: New(Config{
+				Binary:         "/usr/local/bin/barman",
+				Server:         "main",
+				Timeout:        time.Minute,
+				RestoreTimeout: 30 * time.Minute,
+			}, runner),
+			Type: model.ProviderBarman,
+			Target: model.TargetSpec{
+				Type:    model.RestoreTargetLocal,
+				WorkDir: filepath.Join(t.TempDir(), "restore"),
+			},
+			RecoveryTarget:   model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			PlanningTargets:  conformance.CanonicalRecoveryTargets(),
+			ExpectedBackupID: "barman:main/20240502T030405",
+		}
+	})
+}
 
 func TestParseBackupList(t *testing.T) {
 	data := readFixture(t, "testdata/list-backups.json")

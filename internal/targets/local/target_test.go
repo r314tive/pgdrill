@@ -11,8 +11,87 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/core"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/testkit/conformance"
 )
+
+func TestTargetConformance(t *testing.T) {
+	conformance.NativeTarget(t, func(t *testing.T) conformance.NativeTargetCase {
+		root := t.TempDir()
+		workDir := filepath.Join(root, "restore")
+		dataDir := filepath.Join(workDir, "data")
+		postgresPath := filepath.Join(root, "postgres")
+		writeExecutable(t, postgresPath, `#!/bin/sh
+data_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -D) data_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+echo $$ > "$data_dir/postmaster.pid"
+trap 'rm -f "$data_dir/postmaster.pid"; exit 0' TERM INT
+while true; do sleep 0.1; done
+`)
+
+		attempt := model.AttemptContext{
+			Identity: model.AttemptIdentity{
+				RunID:      t.Name(),
+				AttemptID:  "attempt-1",
+				SpecDigest: "sha256:" + strings.Repeat("a", 64),
+			},
+			Target: model.TargetSpec{
+				Type:    model.RestoreTargetLocal,
+				WorkDir: workDir,
+			},
+			RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		}
+		return conformance.NativeTargetCase{
+			NewTarget: func() core.RestoreTarget {
+				return New(Config{
+					RemoveWorkDir:   true,
+					PostgresBinary:  postgresPath,
+					Port:            15432,
+					StartupTimeout:  250 * time.Millisecond,
+					ShutdownTimeout: 2 * time.Second,
+				}, nil)
+			},
+			Attempt: attempt,
+			Step: model.RestoreStep{
+				Name: "write-recovery-config",
+				Files: []model.FileSpec{{
+					Path:    filepath.Join(dataDir, "postgresql.auto.conf"),
+					Content: "recovery_target_timeline = 'latest'\n",
+					Mode:    "0600",
+				}},
+			},
+			Runtime: model.RuntimeConfig{
+				DataDirectory: dataDir,
+				Port:          15432,
+			},
+			AwaitStarted: func(t testing.TB) {
+				t.Helper()
+				path := filepath.Join(dataDir, "postmaster.pid")
+				deadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(deadline) {
+					payload, err := os.ReadFile(path)
+					if err == nil && strings.TrimSpace(string(payload)) != "" {
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				t.Fatalf("controlled postgres did not publish %s", path)
+			},
+			AssertDestroyed: func(t testing.TB) {
+				t.Helper()
+				if _, err := os.Stat(workDir); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("owned work_dir still exists after cleanup: %v", err)
+				}
+			},
+		}
+	})
+}
 
 func TestPrepareCreatesWorkDirAndMarker(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")

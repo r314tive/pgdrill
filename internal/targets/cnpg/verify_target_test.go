@@ -9,8 +9,59 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/artifact"
+	"github.com/r314tive/pgdrill/internal/core"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/testkit/conformance"
 )
+
+func TestTargetConformance(t *testing.T) {
+	conformance.ManagedTarget(t, func(t *testing.T) conformance.ManagedTargetCase {
+		spec := testVerifyClusterSpec(t)
+		client := &fakeLifecycleClient{instance: Instance{
+			PodName:    spec.InstancePodName,
+			Host:       spec.Name + "-rw.d003-db.svc",
+			Port:       5432,
+			ConnString: "host=/controller/run dbname=postgres user=postgres",
+		}}
+		identity := model.AttemptIdentity{
+			RunID:      t.Name(),
+			AttemptID:  "attempt-1",
+			SpecDigest: "sha256:" + strings.Repeat("a", 64),
+		}
+		ownerID, err := identity.OwnershipID()
+		if err != nil {
+			t.Fatalf("derive ownership id: %v", err)
+		}
+		spec.OwnershipID = ownerID
+		spec.Labels[labelOwnershipID] = ownerID
+		attempt := model.AttemptContext{
+			Identity: identity,
+			Target: model.TargetSpec{
+				Type: model.RestoreTargetKubernetes,
+			},
+			RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		}
+
+		return conformance.ManagedTargetCase{
+			NewTarget: func() core.ManagedRestoreTarget {
+				return NewVerifyTarget(spec, client, artifact.NewMemoryStore(), LifecycleOptions{CleanupPVC: true})
+			},
+			Attempt: attempt,
+			AfterStart: func() {
+				client.ownedCluster = OwnedCluster{Found: true, Name: spec.Name}
+			},
+			AfterDestroy: func() {
+				client.ownedCluster = OwnedCluster{}
+			},
+			AssertDestroyed: func(t testing.TB) {
+				t.Helper()
+				if !slices.Contains(client.calls, "delete-cluster") || !slices.Contains(client.calls, "delete-pvcs") {
+					t.Fatalf("owned CNPG resources were not deleted: %v", client.calls)
+				}
+			},
+		}
+	})
+}
 
 func TestVerifyTargetReportsReadyAndDestroysOwnedTarget(t *testing.T) {
 	spec := testVerifyClusterSpec(t)

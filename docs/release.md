@@ -55,8 +55,9 @@ source commit, release compiler, version, and commit timestamp:
 - macOS amd64
 - macOS arm64
 
-Each `.tar.gz` contains `pgdrill`, `README.md`, `LICENSE`, and the release
-`.go-version` compiler pin. Archive paths, modes, ordering, timestamps,
+Each `.tar.gz` contains `pgdrill`, `README.md`, `LICENSE`, the release
+`.go-version` compiler pin, `COMPATIBILITY.md`, and the validated
+`compatibility-matrix.yaml`. Archive paths, modes, ordering, timestamps,
 architecture levels, Go workspace settings, and build flags are normalized.
 The bundle also includes a SHA256 checksum file:
 

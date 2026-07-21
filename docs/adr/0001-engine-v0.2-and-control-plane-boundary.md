@@ -106,9 +106,12 @@ outside this module. Engine implementation packages remain internal.
 6. publish provider/target conformance suites and real-repository matrices
 7. add explicit recovery-policy verdicts
 
-Implementation status: steps 1 through 5 and step 7 are complete. Reusable
-conformance suites and real-repository matrices remain the release gate in
-step 6.
+Implementation status: steps 1 through 5 and step 7 are complete. Step 6 now
+has reusable provider/native-target/managed-target suites and a strict
+`pgdrill.compatibility-matrix/v1alpha1` evidence format. Exact-version field
+entries for real WAL-G, Barman, pgBackRest, and pg_probackup repositories
+remain the external release gate; fixture evidence is not promoted to those
+claims.
 
 ### Control Plane
 

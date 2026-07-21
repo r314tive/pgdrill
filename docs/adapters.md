@@ -24,6 +24,15 @@ plans must match the selected backup, requested target, and recovery target.
 Malformed output fails closed before target preparation; adapters cannot extend
 the canonical enums implicitly.
 
+Every implemented provider invokes the shared suite in
+`internal/testkit/conformance`. It checks provider identity, canonical backup
+IDs, temporal and WAL metadata, latest and exact selection, terminal validation
+reports, evidence links, foreign-provider rejection, and restore plans for all
+canonical recovery targets. Native command construction and parser edge cases
+still require adapter-specific tests. Passing either test layer is fixture
+evidence, not a native-version claim; those claims are tracked separately in
+[`compatibility/matrix.yaml`](../compatibility/matrix.yaml).
+
 ## Canonical Recovery Targets
 
 Provider adapters receive a validated canonical recovery target. Timestamp

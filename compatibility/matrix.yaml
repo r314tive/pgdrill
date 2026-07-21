@@ -1,0 +1,153 @@
+schema_version: pgdrill.compatibility-matrix/v1alpha1
+updated_at: "2026-07-21"
+entries:
+  - id: provider.barman.fixture
+    component: provider
+    implementation: barman
+    evidence_level: fixture
+    capabilities:
+      - catalog_discovery
+      - catalog_validation_contract
+      - local_restore_planning
+    recovery_targets:
+      - latest
+      - immediate
+      - timestamp
+      - lsn
+      - xid
+      - restore_point
+    evidence:
+      - kind: fixture
+        ref: internal/adapters/barman/testdata/list-backups.json
+      - kind: fixture
+        ref: internal/adapters/barman/testdata/list-backups-keyed.json
+      - kind: conformance_test
+        ref: internal/adapters/barman/adapter_test.go#TestProviderConformance
+    limitations:
+      - No native Barman version or real repository has been validated.
+      - Planning evidence does not prove WAL continuity or a completed restore.
+  - id: provider.pg-probackup.fixture
+    component: provider
+    implementation: pg_probackup
+    evidence_level: fixture
+    capabilities:
+      - catalog_discovery
+      - catalog_validation_contract
+      - local_restore_planning
+    recovery_targets:
+      - latest
+      - immediate
+      - timestamp
+      - lsn
+      - xid
+      - restore_point
+    evidence:
+      - kind: fixture
+        ref: internal/adapters/pgprobackup/testdata/show-output.json
+      - kind: conformance_test
+        ref: internal/adapters/pgprobackup/adapter_test.go#TestProviderConformance
+    limitations:
+      - No native pg_probackup version or real repository has been validated.
+      - Planning evidence does not prove WAL continuity or a completed restore.
+  - id: provider.pgbackrest.fixture
+    component: provider
+    implementation: pgbackrest
+    evidence_level: fixture
+    capabilities:
+      - catalog_discovery
+      - catalog_validation_contract
+      - local_restore_planning
+    recovery_targets:
+      - latest
+      - immediate
+      - timestamp
+      - lsn
+      - xid
+      - restore_point
+    evidence:
+      - kind: fixture
+        ref: internal/adapters/pgbackrest/testdata/info-output.json
+      - kind: conformance_test
+        ref: internal/adapters/pgbackrest/adapter_test.go#TestProviderConformance
+    limitations:
+      - No native pgBackRest version or real repository has been validated.
+      - Planning evidence does not prove WAL continuity or a completed restore.
+  - id: provider.wal-g.fixture
+    component: provider
+    implementation: wal-g
+    evidence_level: fixture
+    capabilities:
+      - catalog_discovery
+      - catalog_validation_contract
+      - local_restore_planning
+    recovery_targets:
+      - latest
+      - immediate
+      - timestamp
+      - lsn
+      - xid
+      - restore_point
+    evidence:
+      - kind: fixture
+        ref: internal/adapters/walg/testdata/backup-list-detail.json
+      - kind: conformance_test
+        ref: internal/adapters/walg/adapter_test.go#TestProviderConformance
+    limitations:
+      - No native WAL-G version or real repository has been validated.
+      - Planning evidence does not prove WAL continuity or a completed restore.
+  - id: target.cnpg.controlled
+    component: target
+    implementation: cnpg
+    evidence_level: controlled
+    capabilities:
+      - managed_restore_lifecycle
+      - mutation_reconciliation
+      - owned_cleanup
+    recovery_targets:
+      - latest
+    evidence:
+      - kind: conformance_test
+        ref: internal/targets/cnpg/verify_target_test.go#TestTargetConformance
+    limitations:
+      - The conformance client is controlled and does not contact a Kubernetes API.
+      - Non-latest recovery targets are rejected before resource creation.
+  - id: target.cnpg.field
+    component: target
+    implementation: cnpg
+    evidence_level: field
+    capabilities:
+      - end_to_end_restore
+      - owned_cleanup
+      - readiness_and_sql_probes
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "1.26.0"
+    pgdrill_versions:
+      - v0.1.0-alpha.9
+    postgresql_versions:
+      - "15.13"
+    platforms:
+      - linux/amd64
+    observed_at: "2026-07-20"
+    evidence:
+      - kind: field_note
+        ref: docs/compatibility.md#cnpg-field-validation
+    limitations:
+      - This is one disposable-environment observation, not a production support claim or RTO guarantee.
+      - Timestamp PITR, other PostgreSQL and CNPG versions, storage classes, and failure modes remain unvalidated.
+      - The CNPG barmanObjectStore bootstrap does not validate the native Barman CLI adapter.
+  - id: target.local.controlled
+    component: target
+    implementation: local
+    evidence_level: controlled
+    capabilities:
+      - filesystem_ownership
+      - mutation_reconciliation
+      - postgres_process_lifecycle
+    evidence:
+      - kind: conformance_test
+        ref: internal/targets/local/target_test.go#TestTargetConformance
+    limitations:
+      - PostgreSQL is represented by a controlled executable with a postmaster.pid contract.
+      - Real PostgreSQL startup and native provider repositories remain environment-specific gates.

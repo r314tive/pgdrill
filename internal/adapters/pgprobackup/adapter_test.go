@@ -12,7 +12,31 @@ import (
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
+	"github.com/r314tive/pgdrill/internal/testkit/conformance"
 )
+
+func TestProviderConformance(t *testing.T) {
+	fixture := readFixture(t, "testdata/show-output.json")
+	conformance.Provider(t, func(t *testing.T) conformance.ProviderCase {
+		return conformance.ProviderCase{
+			Provider: New(Config{
+				Binary:         "/usr/local/bin/pg_probackup",
+				BackupDir:      "/srv/pg_probackup",
+				Instance:       "main",
+				Timeout:        time.Minute,
+				RestoreTimeout: 30 * time.Minute,
+			}, &fakeRunner{result: successResult(fixture)}),
+			Type: model.ProviderPGProbackup,
+			Target: model.TargetSpec{
+				Type:    model.RestoreTargetLocal,
+				WorkDir: filepath.Join(t.TempDir(), "restore"),
+			},
+			RecoveryTarget:   model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			PlanningTargets:  conformance.CanonicalRecoveryTargets(),
+			ExpectedBackupID: "pg_probackup:main/SBOL8S",
+		}
+	})
+}
 
 func TestParseShow(t *testing.T) {
 	backups, err := ParseShow(readFixture(t, "testdata/show-output.json"), "")
@@ -355,6 +379,8 @@ func successResult(stdout []byte) command.Result {
 	return command.Result{
 		Raw: command.RawEvidence{Stdout: append([]byte{}, stdout...)},
 		Evidence: model.CommandEvidence{
+			Path:       "pg_probackup",
+			StartedAt:  finishedAt.Add(-time.Second),
 			FinishedAt: finishedAt,
 			Stdout:     string(stdout),
 			ExitStatus: model.ExitStatus{Started: true, Exited: true, Success: true, ExitCode: 0},

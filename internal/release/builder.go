@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/r314tive/pgdrill/internal/compatibility"
 )
 
 const versionPackage = "github.com/r314tive/pgdrill/internal/version"
@@ -114,6 +116,21 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read LICENSE: %w", err)
 	}
+	compatibilityDocument, err := os.ReadFile(filepath.Join(opts.SourceDir, "docs", "compatibility.md"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read compatibility document: %w", err)
+	}
+	compatibilityMatrix, err := os.ReadFile(filepath.Join(opts.SourceDir, "compatibility", "matrix.yaml"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read compatibility matrix: %w", err)
+	}
+	matrix, err := compatibility.Parse(compatibilityMatrix)
+	if err != nil {
+		return Result{}, fmt.Errorf("validate compatibility matrix: %w", err)
+	}
+	if err := matrix.ValidateReferences(opts.SourceDir); err != nil {
+		return Result{}, fmt.Errorf("validate compatibility evidence references: %w", err)
+	}
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create release output directory: %w", err)
 	}
@@ -148,8 +165,10 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 		archivePath := filepath.Join(workDir, archiveName)
 		entries := []archiveEntry{
 			{Name: filepath.ToSlash(filepath.Join(rootName, ".go-version")), Mode: 0o644, Body: goVersion},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "COMPATIBILITY.md")), Mode: 0o644, Body: compatibilityDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "LICENSE")), Mode: 0o644, Body: license},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "README.md")), Mode: 0o644, Body: readme},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "compatibility-matrix.yaml")), Mode: 0o644, Body: compatibilityMatrix},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "pgdrill")), Mode: 0o755, Body: binary},
 		}
 		if err := writeTarGz(archivePath, releaseTime, entries); err != nil {

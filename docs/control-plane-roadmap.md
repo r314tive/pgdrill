@@ -250,6 +250,11 @@ spec and produce typed fail-closed verdicts for RTO, RPO, backup age,
 recovery-target satisfaction, and configured cleanup. Fleet policy references
 still need planner-side revision resolution and history storage.
 
+Completed prerequisite: every current provider and executable target path now
+runs a reusable protocol conformance suite, including fresh-executor mutation
+reconciliation. A strict versioned matrix separates fixture, controlled, and
+field evidence; native real-repository entries remain an external gate.
+
 1. Complete real-repository and live-target compatibility gates.
 2. Ship daemon-free plan expansion and local history.
 3. Run one executor/controller on a single host with process-loss recovery.

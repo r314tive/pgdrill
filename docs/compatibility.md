@@ -4,6 +4,25 @@
 test coverage, and real-environment validation so a green unit test is not
 mistaken for a production support claim.
 
+## Machine-Readable Evidence
+
+The source of truth is
+[`compatibility/matrix.yaml`](../compatibility/matrix.yaml), using
+`pgdrill.compatibility-matrix/v1alpha1`. It distinguishes:
+
+- `fixture`: committed native output plus provider conformance; no native tool
+  version is claimed
+- `controlled`: target lifecycle and reconciliation against controlled
+  executables or clients
+- `field`: a dated external observation with exact pgdrill, component,
+  PostgreSQL, and platform versions
+
+Every entry records demonstrated capabilities, direct evidence references, and
+explicit limitations. Repository tests resolve those references and all
+current adapters run the same canonical provider suite. The local and CNPG
+targets run native and managed process-loss reconciliation suites respectively.
+Release packaging validates and includes the matrix and this document.
+
 ## Release Platforms
 
 The release pipeline builds static `CGO_ENABLED=0` CLI archives for:
@@ -20,9 +39,12 @@ archives are therefore not published.
 WAL-G, Barman, pgBackRest, and pg_probackup catalog parsers have fixture-driven
 tests, including numeric and textual WAL-G LSN representations, keyed Barman
 backup objects, and multi-history pgBackRest metadata. Restore planning and
-provider checks have command-construction and evidence tests. These tests prove
-normalization against the committed fixtures; they do not prove compatibility
-with every historical or future native tool version.
+provider checks have command-construction and evidence tests. A shared suite
+also enforces canonical IDs, selection, report/evidence integrity, foreign
+provider rejection, and restore planning for all six canonical recovery-target
+types. These tests prove normalization and protocol behavior against committed
+fixtures; they do not prove compatibility with any historical or future native
+tool version.
 
 Before claiming a native version as validated:
 

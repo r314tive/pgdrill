@@ -27,6 +27,11 @@ make -s release-check VERSION=v0.0.0-dev
 - Execute commands through `internal/command` so timeout, redaction, raw adapter
   output, and structured exit evidence remain consistent.
 - Add sanitized fixtures for every provider output shape that changes parsing.
+- Run new providers and restore targets through the reusable suites in
+  `internal/testkit/conformance`; implementation-specific tests remain
+  required for native command semantics.
+- Update `compatibility/matrix.yaml` without promoting fixture evidence to a
+  version claim. Exact versions belong only in a retained field observation.
 - Preserve provider-scoped backup IDs and explicit cleanup evidence.
 - Treat report JSON as a versioned consumer contract. Follow
   `docs/report-format.md` for compatibility changes.

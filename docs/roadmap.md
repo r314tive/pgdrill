@@ -85,7 +85,8 @@ pgdrill catalog list -f pgdrill.yaml
 ## Phase 3: Kubernetes / CNPG Target
 
 Status: implemented and field-exercised in one disposable CNPG 1.26.0 /
-PostgreSQL 15.13 environment; a broader compatibility matrix remains pending.
+PostgreSQL 15.13 environment. That exact observation is recorded in the
+versioned evidence matrix; broader field coverage remains pending.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
@@ -132,8 +133,9 @@ progress.
 
 ## Phase 5: Engine v0.2 Hardening
 
-Status: in progress. The lifecycle foundation is implemented; public planning
-and crash-recovery contracts remain intentionally unpublished.
+Status: locally complete for protocol hardening. External native-repository and
+release-candidate field gates remain before an Engine v0.2 readiness claim;
+public planning contracts remain intentionally unpublished.
 
 Completed foundation:
 
@@ -163,15 +165,23 @@ Completed foundation:
   RTO, RPO, backup age, recovery-target satisfaction, and configured cleanup.
 - Managed recovery-target protocol confirmation; CNPG rejects unsupported PITR
   intent instead of silently executing latest recovery.
+- Reusable provider conformance across WAL-G, Barman, pgBackRest, and
+  pg_probackup, including canonical discovery/selection/evidence contracts and
+  restore planning for all recovery-target types.
+- Reusable native and managed target conformance with fresh-executor mutation
+  reconciliation, durable ownership proof, and owned cleanup.
+- Strict `pgdrill.compatibility-matrix/v1alpha1` evidence with separate
+  fixture, controlled, and exact-version field levels, validated references,
+  and inclusion in release archives.
 - CNPG orchestration moved from `cmd/pgdrill` into
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
   [ADR 0001](adr/0001-engine-v0.2-and-control-plane-boundary.md).
 
-Remaining engine gates, in order:
+Remaining external engine gates, in order:
 
-1. Publish reusable provider/target conformance suites and record real
-   repository/version matrices for WAL-G, Barman, pgBackRest, and pg_probackup.
+1. Run completed drills against real, version-recorded WAL-G, Barman,
+   pgBackRest, and pg_probackup repositories and add field matrix entries.
 2. Exercise a release candidate through local native-provider drills and a
    live disposable CNPG drill before calling Engine v0.2 release-ready.
 
@@ -238,6 +248,8 @@ published assets, and checksum verification.
 - Race detector, CLI smoke, and workflow lint release gate.
 - Deterministic Linux/macOS archives with embedded version metadata and SHA256
   checksums.
+- Strict compatibility evidence validation and packaged compatibility document
+  plus machine-readable matrix in every release archive.
 - Changelog-derived release notes and annotated-tag validation.
 - Read-only build job separated from the write-enabled publication job.
 - Cross-host checksum parity between all four local release archives and the
