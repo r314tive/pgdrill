@@ -117,6 +117,13 @@ called out explicitly even while the major version is `0`.
 - Release archives now include the compatibility document and validated
   machine-readable evidence matrix.
 
+### Fixed
+
+- Local PostgreSQL startup now polls the owned postmaster readiness state and
+  returns as soon as it is `ready` or `standby`. `target.startup_timeout` is a
+  real deadline instead of an unconditional RTO-inflating delay, and a process
+  that remains unready fails with structured runtime evidence.
+
 ## [0.1.0-alpha.9] - 2026-07-20
 
 ### Fixed

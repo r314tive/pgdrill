@@ -1023,7 +1023,15 @@ if [ "$1" = "--version" ]; then
   echo "postgres (PostgreSQL) 16.4"
   exit 0
 fi
-trap 'echo stopped > "$PGDRILL_STOP_FILE"; exit 0' TERM
+data_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -D) data_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$$" "$data_dir" 0 15432 127.0.0.1 127.0.0.1 '0 0' ready > "$data_dir/postmaster.pid"
+trap 'rm -f "$data_dir/postmaster.pid"; echo stopped > "$PGDRILL_STOP_FILE"; exit 0' TERM
 while true; do sleep 1; done
 `)
 	writeExecutable(t, pgIsReadyPath, `#!/bin/sh
@@ -1264,7 +1272,15 @@ if [ "$1" = "--version" ]; then
   echo "postgres (PostgreSQL) 16.4"
   exit 0
 fi
-trap 'exit 0' TERM
+data_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -D) data_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$$" "$data_dir" 0 15434 127.0.0.1 127.0.0.1 '0 0' ready > "$data_dir/postmaster.pid"
+trap 'rm -f "$data_dir/postmaster.pid"; exit 0' TERM
 while true; do sleep 1; done
 `)
 	writeExecutable(t, pgIsReadyPath, `#!/bin/sh
@@ -1449,7 +1465,15 @@ if [ "$1" = "--version" ]; then
   echo "postgres (PostgreSQL) 16.4"
   exit 0
 fi
-trap 'exit 0' TERM
+data_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -D) data_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$$" "$data_dir" 0 15435 127.0.0.1 127.0.0.1 '0 0' ready > "$data_dir/postmaster.pid"
+trap 'rm -f "$data_dir/postmaster.pid"; exit 0' TERM
 while true; do sleep 1; done
 `)
 	writeExecutable(t, pgIsReadyPath, `#!/bin/sh

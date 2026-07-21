@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,7 +31,7 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-echo $$ > "$data_dir/postmaster.pid"
+printf '%s\n' "$$" "$data_dir" 0 15432 127.0.0.1 127.0.0.1 '0 0' ready > "$data_dir/postmaster.pid"
 trap 'rm -f "$data_dir/postmaster.pid"; exit 0' TERM INT
 while true; do sleep 0.1; done
 `)
@@ -53,7 +54,7 @@ while true; do sleep 0.1; done
 					RemoveWorkDir:   true,
 					PostgresBinary:  postgresPath,
 					Port:            15432,
-					StartupTimeout:  250 * time.Millisecond,
+					StartupTimeout:  2 * time.Second,
 					ShutdownTimeout: 2 * time.Second,
 				}, nil)
 			},
@@ -366,13 +367,21 @@ func TestStartPostgresStartsProcessAndDestroyStopsIt(t *testing.T) {
 	signalFile := filepath.Join(dir, "postgres-stopped")
 	postgresPath := filepath.Join(dir, "postgres")
 	writeExecutable(t, postgresPath, `#!/bin/sh
-trap 'echo stopped > "$PGDRILL_SIGNAL_FILE"; exit 0' TERM
+data_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -D) data_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$$" "$data_dir" 0 15432 127.0.0.1 127.0.0.1 '0 0' ready > "$data_dir/postmaster.pid"
+trap 'rm -f "$data_dir/postmaster.pid"; echo stopped > "$PGDRILL_SIGNAL_FILE"; exit 0' TERM
 while true; do sleep 1; done
 `)
 
 	target := New(Config{
 		PostgresBinary:  postgresPath,
-		StartupTimeout:  50 * time.Millisecond,
+		StartupTimeout:  2 * time.Second,
 		ShutdownTimeout: time.Second,
 		Env: map[string]string{
 			"PGDRILL_SIGNAL_FILE": signalFile,
@@ -386,6 +395,7 @@ while true; do sleep 1; done
 	}
 	beginLocalOperation(t, target, model.OperationPostgresStart, "start-postgres", 1)
 
+	startedAt := time.Now()
 	pg, evidence, err := target.StartPostgres(context.Background(), model.RuntimeConfig{
 		DataDirectory: dataDir,
 		Port:          15432,
@@ -404,6 +414,12 @@ while true; do sleep 1; done
 	}
 	if evidence[0].Attributes["pid"] == "" {
 		t.Fatalf("expected process pid evidence, got %#v", evidence[0].Attributes)
+	}
+	if evidence[0].Attributes["startup_status"] != "ready" {
+		t.Fatalf("expected ready startup evidence, got %#v", evidence[0].Attributes)
+	}
+	if elapsed := time.Since(startedAt); elapsed >= time.Second {
+		t.Fatalf("readiness should return before the 2s deadline, elapsed=%s", elapsed)
 	}
 
 	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 2)
@@ -446,6 +462,87 @@ exit 42
 	}
 	if len(evidence) != 1 || evidence[0].Attributes["exit_error"] == "" {
 		t.Fatalf("expected exit evidence, got %#v", evidence)
+	}
+}
+
+func TestStartPostgresTimesOutWithoutReadyStatus(t *testing.T) {
+	dir := t.TempDir()
+	workDir := filepath.Join(dir, "restore")
+	dataDir := filepath.Join(workDir, "data")
+	postgresPath := filepath.Join(dir, "postgres")
+	writeExecutable(t, postgresPath, `#!/bin/sh
+data_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -D) data_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$$" "$data_dir" 0 15432 127.0.0.1 127.0.0.1 '0 0' starting > "$data_dir/postmaster.pid"
+trap 'rm -f "$data_dir/postmaster.pid"; exit 0' TERM
+while true; do sleep 1; done
+`)
+
+	target := New(Config{
+		PostgresBinary:  postgresPath,
+		StartupTimeout:  500 * time.Millisecond,
+		ShutdownTimeout: time.Second,
+		RemoveWorkDir:   true,
+	}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("create data dir: %v", err)
+	}
+	beginLocalOperation(t, target, model.OperationPostgresStart, "start-postgres", 1)
+
+	_, evidence, err := target.StartPostgres(context.Background(), model.RuntimeConfig{DataDirectory: dataDir, Port: 15432})
+	if err == nil || !strings.Contains(err.Error(), "did not become ready within 500ms") {
+		t.Fatalf("expected bounded readiness timeout, got %v", err)
+	}
+	if len(evidence) != 1 || evidence[0].Attributes["startup_status"] == "" || evidence[0].Attributes["startup_timeout"] != "500ms" {
+		t.Fatalf("expected timeout readiness evidence, got %#v", evidence)
+	}
+
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 2)
+	if _, destroyErr := target.Destroy(context.Background()); destroyErr != nil {
+		t.Fatalf("destroy timed-out postgres target: %v", destroyErr)
+	}
+}
+
+func TestPostgresReadinessUsesOwnedPostmasterStatus(t *testing.T) {
+	dataDir := t.TempDir()
+	pid := os.Getpid()
+	postmasterPID := filepath.Join(dataDir, "postmaster.pid")
+
+	tests := []struct {
+		name       string
+		payload    string
+		wantReady  bool
+		wantStatus string
+	}{
+		{name: "invalid pid", payload: "not-a-pid\n", wantStatus: "postmaster.pid has an invalid pid"},
+		{name: "different pid", payload: "1\n", wantStatus: "postmaster.pid belongs to another process"},
+		{name: "missing status", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\n", pid), wantStatus: "postmaster status is empty"},
+		{name: "starting", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nstarting\n", pid), wantStatus: "starting"},
+		{name: "ready", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nready   \n", pid), wantReady: true, wantStatus: "ready"},
+		{name: "standby", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nstandby\n", pid), wantReady: true, wantStatus: "standby"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(postmasterPID, []byte(tt.payload), 0o600); err != nil {
+				t.Fatalf("write postmaster.pid: %v", err)
+			}
+			ready, status, err := postgresReadiness(dataDir, pid)
+			if err != nil {
+				t.Fatalf("postgresReadiness() error = %v", err)
+			}
+			if ready != tt.wantReady || status != tt.wantStatus {
+				t.Fatalf("postgresReadiness() = (%v, %q), want (%v, %q)", ready, status, tt.wantReady, tt.wantStatus)
+			}
+		})
 	}
 }
 

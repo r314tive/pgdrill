@@ -21,10 +21,13 @@ import (
 )
 
 const (
-	markerFile       = ".pgdrill-target"
-	markerHeader     = "pgdrill local restore target\n"
-	receiptDirectory = ".pgdrill-operations"
-	maxReceiptBytes  = 16 << 10
+	markerFile              = ".pgdrill-target"
+	markerHeader            = "pgdrill local restore target\n"
+	receiptDirectory        = ".pgdrill-operations"
+	maxReceiptBytes         = 16 << 10
+	defaultStartupTimeout   = 30 * time.Second
+	postgresStartupPoll     = 25 * time.Millisecond
+	postmasterPIDStatusLine = 7
 )
 
 type Config struct {
@@ -334,32 +337,68 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 		"port":           strconv.Itoa(port),
 	}, startedAt)
 
-	startupTimer := time.NewTimer(t.startupTimeout())
+	startupTimeout := t.startupTimeout()
+	startupTimer := time.NewTimer(startupTimeout)
 	defer startupTimer.Stop()
+	startupTicker := time.NewTicker(postgresStartupPoll)
+	defer startupTicker.Stop()
+	lastStartupStatus := "postmaster.pid is absent"
 
 	handleEarlyExit := func(err error) (model.RunningPostgres, []model.EvidenceRecord, error) {
 		t.postgres = nil
 		evidence.Attributes["exit_error"] = errorString(err)
+		evidence.Attributes["startup_status"] = lastStartupStatus
 		if err != nil {
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres exited during startup: %w", err)
 		}
 		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres exited during startup")
 	}
 
-	select {
-	case err := <-process.done:
-		return handleEarlyExit(err)
-	case <-startupTimer.C:
-		// When both cases are ready, select may choose the timer even though the
-		// process has already exited. Give process completion priority at the
-		// startup boundary before reporting success.
+startupReady:
+	for {
+		ready, status, err := postgresReadiness(cfg.DataDirectory, cmd.Process.Pid)
+		lastStartupStatus = status
+		if err != nil {
+			evidence.Attributes["startup_error"] = err.Error()
+			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("inspect postgres readiness: %w", err)
+		}
+		if ready {
+			evidence.Attributes["startup_status"] = status
+			evidence.Attributes["startup_wait_millis"] = strconv.FormatInt(time.Since(startedAt).Milliseconds(), 10)
+			break startupReady
+		}
+
 		select {
 		case err := <-process.done:
 			return handleEarlyExit(err)
-		default:
+		case <-startupTicker.C:
+			continue
+		case <-startupTimer.C:
+			// Give process completion and a final readiness observation priority at
+			// the deadline before reporting a timeout.
+			select {
+			case err := <-process.done:
+				return handleEarlyExit(err)
+			default:
+			}
+			ready, status, err := postgresReadiness(cfg.DataDirectory, cmd.Process.Pid)
+			lastStartupStatus = status
+			if err != nil {
+				evidence.Attributes["startup_error"] = err.Error()
+				return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("inspect postgres readiness: %w", err)
+			}
+			if ready {
+				evidence.Attributes["startup_status"] = status
+				evidence.Attributes["startup_wait_millis"] = strconv.FormatInt(time.Since(startedAt).Milliseconds(), 10)
+				break startupReady
+			}
+			evidence.Attributes["startup_status"] = status
+			evidence.Attributes["startup_timeout"] = startupTimeout.String()
+			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres did not become ready within %s (postmaster status: %s)", startupTimeout, status)
+		case <-ctx.Done():
+			evidence.Attributes["startup_status"] = lastStartupStatus
+			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, ctx.Err()
 		}
-	case <-ctx.Done():
-		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, ctx.Err()
 	}
 
 	connString := fmt.Sprintf("postgresql://127.0.0.1:%d/postgres?sslmode=disable", port)
@@ -707,6 +746,39 @@ func postgresProcessMatches(dataDirectory string, pid int) (bool, error) {
 		return false, fmt.Errorf("inspect postgres process %d: %w", pid, err)
 	}
 	return true, nil
+}
+
+func postgresReadiness(dataDirectory string, pid int) (bool, string, error) {
+	if dataDirectory == "" || pid <= 0 {
+		return false, "invalid postgres process identity", nil
+	}
+	payload, err := os.ReadFile(filepath.Join(dataDirectory, "postmaster.pid"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, "postmaster.pid is absent", nil
+	}
+	if err != nil {
+		return false, "postmaster.pid is unreadable", fmt.Errorf("read postmaster.pid: %w", err)
+	}
+
+	lines := strings.Split(string(payload), "\n")
+	if len(lines) == 0 {
+		return false, "postmaster.pid is empty", nil
+	}
+	recordedPID, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil {
+		return false, "postmaster.pid has an invalid pid", nil
+	}
+	if recordedPID != pid {
+		return false, "postmaster.pid belongs to another process", nil
+	}
+	if len(lines) <= postmasterPIDStatusLine {
+		return false, "postmaster status is absent", nil
+	}
+	status := strings.TrimSpace(lines[postmasterPIDStatusLine])
+	if status == "" {
+		return false, "postmaster status is empty", nil
+	}
+	return status == "ready" || status == "standby", status, nil
 }
 
 func (t *Target) invocation(spec model.CommandSpec) (command.Invocation, error) {
@@ -1094,7 +1166,7 @@ func (t *Target) startupTimeout() time.Duration {
 	if t.cfg.StartupTimeout > 0 {
 		return t.cfg.StartupTimeout
 	}
-	return 200 * time.Millisecond
+	return defaultStartupTimeout
 }
 
 func (t *Target) shutdownTimeout() time.Duration {
