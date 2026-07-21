@@ -24,7 +24,7 @@ die() {
   exit 1
 }
 
-for command in awk curl docker git go; do
+for command in awk curl docker git go tar; do
   command -v "${command}" >/dev/null 2>&1 || die "required command is missing: ${command}"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -97,7 +97,9 @@ head_commit="$(git -C "${ROOT}" rev-parse HEAD)"
 version="${VERSION_BASE}"
 commit="${head_commit}"
 build_date="$(git -C "${ROOT}" show -s --format=%cI HEAD)"
+dirty_tree=false
 if [[ -n "$(git -C "${ROOT}" status --porcelain --untracked-files=normal)" ]]; then
+  dirty_tree=true
   commit="${head_commit}-dirty"
   build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "${version}" == *-* ]]; then
@@ -106,35 +108,68 @@ if [[ -n "$(git -C "${ROOT}" status --porcelain --untracked-files=normal)" ]]; t
     version="${version}-dirty"
   fi
 fi
-readonly version commit build_date
+readonly version commit build_date dirty_tree
 
-log "building ${version} for linux/${arch} from ${commit}"
-tmp_binary="$(mktemp "${RUNTIME_DIR}/pgdrill.build.XXXXXX")"
-trap 'rm -f "${tmp_binary:-}"' EXIT
-(
-  cd "${ROOT}"
-  env \
-    -u GOAMD64 \
-    -u GOARM64 \
-    CGO_ENABLED=0 \
-    GOARCH="${arch}" \
-    GOENV=off \
-    GOEXPERIMENT= \
-    GOFLAGS= \
-    GOOS=linux \
+release_archive=""
+release_archive_sha256=""
+build_source="dirty_source"
+if [[ "${dirty_tree}" == "true" ]]; then
+  log "building dirty ${version} developer binary for linux/${arch} from ${commit}"
+  tmp_binary="$(mktemp "${RUNTIME_DIR}/pgdrill.build.XXXXXX")"
+  trap 'rm -f "${tmp_binary:-}"' EXIT
+  (
+    cd "${ROOT}"
+    env \
+      -u GOAMD64 \
+      -u GOARM64 \
+      CGO_ENABLED=0 \
+      GOARCH="${arch}" \
+      GOENV=off \
+      GOEXPERIMENT= \
+      GOFLAGS= \
+      GOOS=linux \
+      GOTOOLCHAIN="go$(sed -n '1p' .go-version)" \
+      GOWORK=off \
+      go build \
+        -mod=readonly \
+        -trimpath \
+        -buildvcs=false \
+        -ldflags "-s -w -buildid= -X ${VERSION_PKG}.Version=${version} -X ${VERSION_PKG}.Commit=${commit} -X ${VERSION_PKG}.Date=${build_date}" \
+        -o "${tmp_binary}" \
+        ./cmd/pgdrill
+  )
+  chmod 0755 "${tmp_binary}"
+  mv "${tmp_binary}" "${PGDRILL_BINARY}"
+  trap - EXIT
+else
+  build_source="release_archive"
+  release_dir="${CACHE_ROOT}/release/${version}/${commit}"
+  archive_root="pgdrill_${version#v}_linux_${arch}"
+  release_archive="${release_dir}/${archive_root}.tar.gz"
+  log "building deterministic ${version} release archive for linux/${arch} from ${commit}"
+  (
+    cd "${ROOT}"
     GOTOOLCHAIN="go$(sed -n '1p' .go-version)" \
-    GOWORK=off \
-    go build \
-      -mod=readonly \
-      -trimpath \
-      -buildvcs=false \
-      -ldflags "-s -w -buildid= -X ${VERSION_PKG}.Version=${version} -X ${VERSION_PKG}.Commit=${commit} -X ${VERSION_PKG}.Date=${build_date}" \
-      -o "${tmp_binary}" \
-      ./cmd/pgdrill
-)
-chmod 0755 "${tmp_binary}"
-mv "${tmp_binary}" "${PGDRILL_BINARY}"
-trap - EXIT
+      GOWORK=off \
+      go run ./internal/releasecmd artifacts \
+        -version "${version}" \
+        -commit "${commit}" \
+        -date "${build_date}" \
+        -output "${release_dir}" \
+        -targets "linux/${arch}"
+  )
+  [[ -f "${release_archive}" ]] || die "release builder did not create ${release_archive}"
+  release_archive_sha256="$(sha256_file "${release_archive}")"
+
+  extract_dir="$(mktemp -d "${RUNTIME_DIR}/release.extract.XXXXXX")"
+  trap 'rm -rf "${extract_dir:-}"' EXIT
+  tar -xzf "${release_archive}" -C "${extract_dir}" "${archive_root}/pgdrill"
+  cp "${extract_dir}/${archive_root}/pgdrill" "${PGDRILL_BINARY}"
+  chmod 0755 "${PGDRILL_BINARY}"
+  rm -rf "${extract_dir}"
+  trap - EXIT
+fi
+readonly release_archive release_archive_sha256 build_source
 
 run_stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 readonly OUTPUT_DIR="${RUNS_DIR}/${run_stamp}"
@@ -155,11 +190,16 @@ image_id="$(docker image inspect --format '{{.Id}}' "${POSTGRES_IMAGE}")"
   printf 'container_image_id=%s\n' "${image_id}"
   printf 'docker_arch=%s\n' "${docker_arch}"
   printf 'go=%s\n' "$(go version)"
+  printf 'build_source=%s\n' "${build_source}"
   printf 'version=%s\n' "${version}"
   printf 'commit=%s\n' "${commit}"
   printf 'build_date=%s\n' "${build_date}"
   printf 'pgdrill_sha256=%s\n' "$(sha256_file "${PGDRILL_BINARY}")"
   printf 'wal_g_sha256=%s\n' "$(sha256_file "${WALG_BINARY}")"
+  if [[ -n "${release_archive}" ]]; then
+    printf 'release_archive=%s\n' "${release_archive##*/}"
+    printf 'release_archive_sha256=%s\n' "${release_archive_sha256}"
+  fi
 } >"${OUTPUT_DIR}/runtime.txt"
 
 cleanup_container() {
@@ -188,6 +228,7 @@ docker run \
   --mount "type=bind,src=${SCRIPT_DIR}/pgdrill.yaml,dst=/opt/pgdrill/test/pgdrill.yaml,readonly" \
   --mount "type=bind,src=${OUTPUT_DIR},dst=/output" \
   --env "PGDRILL_EXPECTED_COMMIT=${commit}" \
+  --env "PGDRILL_EXPECTED_VERSION=${version}" \
   "${POSTGRES_IMAGE}" \
   /opt/pgdrill/test/run-in-container.sh 2>&1 | tee "${OUTPUT_DIR}/container.log"
 chmod 0750 "${OUTPUT_DIR}"

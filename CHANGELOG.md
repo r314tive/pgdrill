@@ -60,8 +60,9 @@ called out explicitly even while the major version is `0`.
   WAL-G and Terraform inputs, exact runtime inventory, a post-backup WAL
   assertion, report retrieval, an executable administrator-access audit,
   acceptance gates, and teardown guidance.
-- A pinned amd64/arm64 Docker integration drill that builds the current pgdrill
-  source with explicit dirty metadata, creates a real WAL-G 3.0.8 backup and
+- A pinned amd64/arm64 Docker integration drill that runs the exact binary from
+  a deterministic release archive for clean commits, uses explicit dirty
+  metadata for development trees, creates a real WAL-G 3.0.8 backup and
   post-backup WAL boundary on PostgreSQL 18.3, runs provider validation,
   restores and probes a separate local target, requires policy and cleanup
   success, and retains checksummed developer artifacts outside compatibility

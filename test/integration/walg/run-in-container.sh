@@ -15,6 +15,7 @@ readonly REPOSITORY="${ROOT}/repository"
 readonly WORK_DIR="${ROOT}/work/restore"
 readonly SOURCE_PORT="55431"
 readonly EXPECTED_COMMIT="${PGDRILL_EXPECTED_COMMIT:?PGDRILL_EXPECTED_COMMIT is required}"
+readonly EXPECTED_VERSION="${PGDRILL_EXPECTED_VERSION:?PGDRILL_EXPECTED_VERSION is required}"
 
 export HOME="${ROOT}/home"
 export TMPDIR="${ROOT}/tmp"
@@ -64,8 +65,9 @@ mkdir -p \
 chmod 0700 "${HOME}" "${TMPDIR}" "${SOURCE_DATA}" "${SOURCE_SOCKET}" "${ROOT}/work"
 
 pgdrill_version="$(${PGDRILL} version)"
-[[ "${pgdrill_version}" == *"${EXPECTED_COMMIT}"* ]] ||
-  die "pgdrill version is not bound to expected commit ${EXPECTED_COMMIT}"
+expected_version_prefix="pgdrill ${EXPECTED_VERSION} (${EXPECTED_COMMIT}, "
+[[ "${pgdrill_version}" == "${expected_version_prefix}"* ]] ||
+  die "pgdrill version is not bound to expected version/commit ${EXPECTED_VERSION}/${EXPECTED_COMMIT}"
 walg_version="$(${WALG} --version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 [[ "${walg_version}" == *"v3.0.8"* ]] || die "unexpected WAL-G version: ${walg_version}"
 postgres_version="$(${PGBIN}/postgres --version)"

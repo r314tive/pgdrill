@@ -53,6 +53,13 @@ inventory, durable operation checkpoints, and recursive checksums under the igno
 allowed for development, but both version and commit metadata are suffixed
 with `dirty`; such output must not be promoted to compatibility evidence.
 
+A clean source tree takes the stronger path: the repository's deterministic
+release builder creates a single-platform archive, the harness verifies and
+extracts it, and that exact archived binary executes the drill. Runtime
+inventory records both archive and binary SHA-256 values. Dirty trees use a
+direct developer build because they cannot truthfully produce commit-bound
+release evidence.
+
 Supported Docker daemon architectures are `linux/amd64` and `linux/arm64`.
 `PGDRILL_INTEGRATION_VERSION` can bind a clean candidate version, while
 `PGDRILL_INTEGRATION_POSTGRES_IMAGE` is an explicit image override for
