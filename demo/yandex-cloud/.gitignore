@@ -1,0 +1,10 @@
+.state/
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+terraform/*.plan
+terraform/*.tfplan
+terraform/.terraform.tfstate.lock.info
+terraform/crash.log
+terraform/crash.*.log

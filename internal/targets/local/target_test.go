@@ -365,8 +365,10 @@ func TestStartPostgresStartsProcessAndDestroyStopsIt(t *testing.T) {
 	workDir := filepath.Join(dir, "restore")
 	dataDir := filepath.Join(workDir, "data")
 	signalFile := filepath.Join(dir, "postgres-stopped")
+	argsFile := filepath.Join(dir, "postgres-args")
 	postgresPath := filepath.Join(dir, "postgres")
 	writeExecutable(t, postgresPath, `#!/bin/sh
+printf '%s\n' "$@" > "$PGDRILL_ARGS_FILE"
 data_dir=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -384,6 +386,7 @@ while true; do sleep 1; done
 		StartupTimeout:  2 * time.Second,
 		ShutdownTimeout: time.Second,
 		Env: map[string]string{
+			"PGDRILL_ARGS_FILE":   argsFile,
 			"PGDRILL_SIGNAL_FILE": signalFile,
 		},
 	}, nil)
@@ -417,6 +420,16 @@ while true; do sleep 1; done
 	}
 	if evidence[0].Attributes["startup_status"] != "ready" {
 		t.Fatalf("expected ready startup evidence, got %#v", evidence[0].Attributes)
+	}
+	if evidence[0].Attributes["archive_mode"] != "off" {
+		t.Fatalf("expected disabled archive mode evidence, got %#v", evidence[0].Attributes)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read postgres args: %v", err)
+	}
+	if !strings.Contains(string(args), "-c\narchive_mode=off\n") {
+		t.Fatalf("postgres args do not disable archive mode:\n%s", args)
 	}
 	if elapsed := time.Since(startedAt); elapsed >= time.Second {
 		t.Fatalf("readiness should return before the 2s deadline, elapsed=%s", elapsed)

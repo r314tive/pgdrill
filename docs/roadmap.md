@@ -198,6 +198,36 @@ Remaining external engine gates, in order:
 migration. The event sink is injectable but the CLI does not persist an event
 journal by default yet.
 
+## Demo And Pilot Readiness
+
+Status: repository baseline implemented; first live Yandex Cloud rehearsal is
+pending and no cloud compatibility claim is recorded yet.
+
+- Evidence-led demo contract with explicit proof and non-proof boundaries.
+- Customer discovery and one-scenario pilot acceptance checklist.
+- Three-VM Yandex Cloud WAL-G topology with one public runner, private source
+  and repository, allowlisted SSH, dedicated administrator identities, shared
+  egress NAT, and read-only repository access from the drill runner.
+- Pinned WAL-G download and checksum, PostgreSQL 18 host bootstrap, synthetic
+  base-backup/post-backup-WAL boundary, deterministic runner wrappers, and
+  local evidence retrieval.
+- Provider-independent local-target startup override preventing a restored
+  cluster from inheriting an active archive command and writing back to the
+  source backup repository.
+
+Remaining gates, in order:
+
+1. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
+   retain infrastructure inventory plus a successful bootstrap transcript.
+2. Produce two consecutive passed reports from the same release-candidate
+   artifact, including the post-backup WAL assertion and owned cleanup.
+3. Exercise a dedicated invited-administrator account and confirm its bounded
+   sudo surface before the customer session.
+4. Add Yandex Object Storage only as a separate compatibility profile with
+   executor-local credentials and explicit secret/state review.
+5. Convert one real customer topology into a bounded pilot spec before adding
+   generalized fleet or UI features.
+
 ## Phase 6: Fleet Control Plane
 
 Status: architecture only. Do not implement a daemon before the Engine v0.2

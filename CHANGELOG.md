@@ -53,6 +53,13 @@ called out explicitly even while the major version is `0`.
   18.3 Linux arm64 full STREAM backup, native backup/WAL validation, latest
   restore with post-backup WAL replay, probes, policy verdicts, and owned
   cleanup.
+- An evidence-led customer demo contract and a disposable three-VM Yandex
+  Cloud WAL-G baseline with allowlisted SSH, dedicated administrator accounts,
+  a private source and repository, read-only repository access from the
+  runner, UID-scoped NFS access, read-only administrator evidence, pinned
+  WAL-G and Terraform inputs, exact runtime inventory, a post-backup WAL
+  assertion, report retrieval, an executable administrator-access audit,
+  acceptance gates, and teardown guidance.
 
 ### Changed
 
@@ -128,6 +135,10 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- Local restore targets now force `archive_mode=off` at PostgreSQL startup and
+  record the override, preventing a restored source configuration from writing
+  generated WAL back into the backup repository while archive recovery remains
+  active.
 - Local PostgreSQL startup now polls the owned postmaster readiness state and
   returns as soon as it is `ready` or `standby`. `target.startup_timeout` is a
   real deadline instead of an unconditional RTO-inflating delay, and a process

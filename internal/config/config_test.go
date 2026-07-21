@@ -148,6 +148,31 @@ report:
 	}
 }
 
+func TestYandexCloudDemoConfigRemainsValid(t *testing.T) {
+	cfg, err := LoadFile(filepath.Join("..", "..", "demo", "yandex-cloud", "config", "pgdrill.yaml"))
+	if err != nil {
+		t.Fatalf("load Yandex Cloud demo config: %v", err)
+	}
+	if err := cfg.ValidateDrill(); err != nil {
+		t.Fatalf("validate Yandex Cloud demo config: %v", err)
+	}
+	if cfg.Cluster.Name != "yc-walg-demo-postgresql-18" {
+		t.Fatalf("unexpected demo cluster name %q", cfg.Cluster.Name)
+	}
+	if cfg.Provider.Type != model.ProviderWALG || !cfg.Provider.WALVerify.Enabled {
+		t.Fatalf("unexpected demo provider config %#v", cfg.Provider)
+	}
+	if cfg.Target.Type != model.RestoreTargetLocal || !cfg.Target.RemoveWorkDir {
+		t.Fatalf("unexpected demo target config %#v", cfg.Target)
+	}
+	if len(cfg.Probes) != 4 {
+		t.Fatalf("demo probe count = %d, want 4", len(cfg.Probes))
+	}
+	if !cfg.Policy.RequireRecoveryTarget || !cfg.Policy.RequireCleanup {
+		t.Fatalf("demo recovery policy is not fail-closed: %#v", cfg.Policy)
+	}
+}
+
 func TestLoadRejectsInvalidPolicyDurations(t *testing.T) {
 	for _, test := range []struct {
 		name  string

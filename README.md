@@ -198,6 +198,9 @@ CNPG target verification examples are available in
 [examples/kubernetes/cnpg-target-verify-cronjob.yaml](examples/kubernetes/cnpg-target-verify-cronjob.yaml).
 A local pg_probackup drill example is available in
 [examples/pgprobackup.yaml](examples/pgprobackup.yaml).
+The evidence-led technical demo contract is documented in
+[demo/README.md](demo/README.md), with a reproducible, access-scoped Yandex
+Cloud WAL-G baseline under [demo/yandex-cloud](demo/yandex-cloud/README.md).
 
 Release discipline is described in [docs/release.md](docs/release.md), and
 the versioned JSON report contract is documented in

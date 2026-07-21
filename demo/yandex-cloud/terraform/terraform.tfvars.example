@@ -1,0 +1,22 @@
+cloud_id  = "replace-with-cloud-id"
+folder_id = "replace-with-folder-id"
+
+# Restrict SSH to the presenter and invited administrators. A /32 is one IPv4
+# address; prefixes broader than /16 are rejected by the module.
+admin_ingress_cidrs = [
+  "203.0.113.10/32",
+  "198.51.100.0/28",
+]
+
+owner_user                = "pgdrill-owner"
+owner_ssh_public_key_path = "~/.ssh/pgdrill-demo-owner.pub"
+
+# These accounts can rerun the fixed drill and inspect reports, but do not get
+# general sudo. Set the complete list before the first terraform apply.
+admin_ssh_public_key_paths = {
+  customer-admin = "~/.ssh/customer-admin.pub"
+}
+
+# Keep false for a scheduled demo. Set true only for disposable rehearsals
+# where an interruption is acceptable.
+preemptible = false

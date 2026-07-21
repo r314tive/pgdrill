@@ -295,6 +295,7 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 		"-D", cfg.DataDirectory,
 		"-p", strconv.Itoa(port),
 		"-c", "listen_addresses=127.0.0.1",
+		"-c", "archive_mode=off",
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = t.workDir
@@ -329,6 +330,7 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 
 	t.postgres = process
 	evidence := runtimeEvidence("postgres-start", map[string]string{
+		"archive_mode":   "off",
 		"binary":         binary,
 		"data_directory": cfg.DataDirectory,
 		"host":           "127.0.0.1",

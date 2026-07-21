@@ -1,0 +1,48 @@
+#cloud-config
+hostname: ${hostname}
+manage_etc_hosts: true
+ssh_pwauth: false
+disable_root: true
+
+groups:
+  - pgdrill-demo-admins
+
+users:
+  ${indent(2, users_yaml)}
+
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - jq
+  - nfs-kernel-server
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-pgdrill-demo.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+      AllowAgentForwarding no
+      PermitTunnel no
+  - path: /etc/exports.d/pgdrill-demo.exports
+    owner: root:root
+    permissions: '0644'
+    content: |
+      /srv/pgdrill-repository ${source_ip}(rw,sync,no_subtree_check,root_squash) ${runner_ip}(ro,sync,no_subtree_check,root_squash)
+
+runcmd:
+  - groupadd --gid ${postgres_gid} pgdrill-storage
+  - useradd --uid ${postgres_uid} --gid ${postgres_gid} --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin pgdrill-storage
+  - install -d -o pgdrill-storage -g pgdrill-storage -m 0750 /srv/pgdrill-repository
+  - exportfs -rav
+  - systemctl enable --now nfs-kernel-server
+  - sshd -t
+  - systemctl reload ssh
+  - install -d -m 0755 /var/lib/pgdrill-demo
+  - touch /var/lib/pgdrill-demo/cloud-init.done
+
+final_message: "pgdrill repository cloud-init completed"

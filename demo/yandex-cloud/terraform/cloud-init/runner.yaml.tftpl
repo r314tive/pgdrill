@@ -1,0 +1,47 @@
+#cloud-config
+hostname: ${hostname}
+manage_etc_hosts: true
+ssh_pwauth: false
+disable_root: true
+
+groups:
+  - pgdrill-demo-admins
+
+users:
+  ${indent(2, users_yaml)}
+
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - nfs-common
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-pgdrill-demo.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+      AllowAgentForwarding no
+      PermitTunnel no
+  - path: /etc/fstab.d/pgdrill-demo.runner
+    owner: root:root
+    permissions: '0644'
+    content: |
+      ${repository_ip}:/srv/pgdrill-repository /mnt/pgdrill-repository nfs4 ro,hard,nfsvers=4.2,_netdev,nofail,x-systemd.automount,x-systemd.device-timeout=30s,x-systemd.mount-timeout=30s 0 0
+
+runcmd:
+  - install -d -m 0755 /etc/fstab.d /mnt/pgdrill-repository /var/lib/pgdrill-demo
+  - grep -qF "${repository_ip}:/srv/pgdrill-repository" /etc/fstab || cat /etc/fstab.d/pgdrill-demo.runner >> /etc/fstab
+  - systemctl daemon-reload
+  - sshd -t
+  - systemctl reload ssh
+  - touch /var/lib/pgdrill-demo/cloud-init.done
+
+final_message: "pgdrill runner cloud-init completed"

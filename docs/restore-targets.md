@@ -253,6 +253,12 @@ disposable work directory, runs command-based restore steps, starts a restored
 PostgreSQL process on `127.0.0.1`, records runtime evidence with pid, port, and
 log path, and stops the process during cleanup.
 
+The target starts PostgreSQL with `archive_mode=off`, overriding any archived
+source setting. Archive recovery through the provider's `restore_command`
+remains active, but the disposable server cannot run an inherited
+`archive_command` and write generated WAL back into the source repository. The
+effective override is retained in runtime evidence.
+
 The work directory must be missing or empty and must not itself be a symlink.
 This is checked read-only before native preflight and repository access, then
 checked again during preparation. A non-empty path is never adopted by writing

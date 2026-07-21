@@ -1,4 +1,4 @@
-.PHONY: build check fmt format mod-check race release-artifacts release-check release-notes release-snapshot smoke test toolchain-check vet workflow-check
+.PHONY: build check demo-check demo-infra-check fmt format mod-check race release-artifacts release-check release-notes release-snapshot smoke test toolchain-check vet workflow-check
 
 VERSION ?= v0.1.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -11,11 +11,14 @@ GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 BINDIR ?= bin
 DISTDIR ?= dist
+SHELLCHECK ?= shellcheck
+TERRAFORM ?= terraform
 BINARY := pgdrill
+DEMO_TERRAFORM_DIR := demo/yandex-cloud/terraform
 VERSION_PKG := github.com/r314tive/pgdrill/internal/version
 LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
-check: fmt mod-check vet test
+check: fmt mod-check vet test demo-check
 
 build:
 	mkdir -p $(BINDIR)
@@ -39,6 +42,17 @@ vet:
 
 test:
 	go test ./...
+
+demo-check:
+	@for script in $$(find demo -type f -name '*.sh' -print | sort); do \
+		bash -n "$$script" || exit 1; \
+	done
+
+demo-infra-check: demo-check
+	$(SHELLCHECK) -x $$(find demo -type f -name '*.sh' -print | sort)
+	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) init -backend=false -input=false -lockfile=readonly
+	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) fmt -check -recursive
+	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) validate
 
 race:
 	go test -race ./...

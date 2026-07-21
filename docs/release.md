@@ -35,11 +35,24 @@ change in `CHANGELOG.md`.
 - `go mod tidy -diff`
 - `go vet ./...`
 - `go test ./...`
+- Bash syntax for the versioned demo scripts
 
 Use `make format` to apply Go formatting. `make release-check` is the release
 gate; it additionally runs pinned `actionlint`, the race detector, CLI smoke
 tests, and release artifact generation. It fails immediately when the active
 compiler does not exactly match `.go-version`.
+
+The Yandex Cloud demo has an additional opt-in infrastructure gate because it
+requires external Terraform and ShellCheck binaries:
+
+```sh
+make demo-infra-check
+```
+
+That target runs ShellCheck, initializes the locked Yandex Cloud provider with
+the state backend disabled and lock file read-only, enforces Terraform
+formatting, and validates the provider schema. It does not replace a reviewed
+`terraform plan` or a live rehearsal.
 
 ```sh
 make -s release-check VERSION=v0.1.0-alpha.9
