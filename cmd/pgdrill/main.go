@@ -135,12 +135,14 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 
 	result, runErr := core.Engine{
-		Provider:       provider,
-		Target:         target,
-		Preflight:      preflight.NewSuite(preflightRequirements, nil, 0),
-		Probes:         configuredProbes,
-		Sink:           report.JSONFileSink{Path: cfg.Report.Path},
-		PGDrillVersion: version.String(),
+		Source:           provider,
+		CatalogValidator: provider,
+		Planner:          provider,
+		Target:           target,
+		Preflight:        preflight.NewSuite(preflightRequirements, nil, 0),
+		Probes:           configuredProbes,
+		Sink:             report.JSONFileSink{Path: cfg.Report.Path},
+		PGDrillVersion:   version.String(),
 	}.Run(ctx, core.DrillRequest{
 		Cluster:        cfg.Cluster.Name,
 		Target:         cfg.TargetSpec(),

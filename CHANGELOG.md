@@ -26,6 +26,9 @@ called out explicitly even while the major version is `0`.
 - Native local drills and CNPG target verification now use the same core
   lifecycle and structured failure semantics. `cmd/pgdrill` no longer owns a
   separate CNPG result, cleanup, or report state machine.
+- Native engine dependencies are segregated into backup discovery, catalog
+  validation, and restore planning roles. Existing adapters still implement a
+  compatibility composite, while the engine can compose independent objects.
 - CNPG create confirmation is enforced by both the CLI and the application
   service. Cancellation observed during final cleanup now produces an
   `aborted` result instead of a possible false `passed` result.

@@ -6,11 +6,25 @@ import (
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
-type BackupProvider interface {
+type BackupSource interface {
 	Type() model.ProviderType
 	DiscoverBackups(ctx context.Context) (model.BackupCatalog, error)
+}
+
+type BackupCatalogValidator interface {
 	ValidateCatalog(ctx context.Context, catalog model.BackupCatalog, backup model.Backup, target model.RecoveryTarget) (model.CheckReport, error)
+}
+
+type RestorePlanner interface {
 	PlanRestore(ctx context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error)
+}
+
+// BackupProvider is the compatibility composition implemented by current
+// in-process adapters. Engine depends on the segregated roles above.
+type BackupProvider interface {
+	BackupSource
+	BackupCatalogValidator
+	RestorePlanner
 }
 
 type RestoreTarget interface {

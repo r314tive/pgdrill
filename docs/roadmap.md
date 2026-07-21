@@ -144,6 +144,9 @@ Completed foundation:
   and terminal report/event reconciliation.
 - Managed-target core contracts for read-only resolution, operator-owned
   restore/start, post-restore checks, and cleanup.
+- Segregated native roles for backup discovery, catalog validation, and restore
+  planning. Current adapters remain composite implementations, while
+  `core.Engine` accepts each role independently.
 - CNPG orchestration moved from `cmd/pgdrill` into
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
@@ -151,17 +154,15 @@ Completed foundation:
 
 Remaining engine gates, in order:
 
-1. Split the current `BackupProvider` aggregate into backup source, catalog
-   validation, restore planning, and executor-facing target contracts.
-2. Introduce an immutable concrete run spec only after that split, with a
+1. Introduce an immutable concrete run spec, with a
    canonical digest and explicit attempt identity.
-3. Add bounded artifact references, operation idempotency keys, persisted
+2. Add bounded artifact references, operation idempotency keys, persisted
    checkpoints, and reconciliation for unknown mutation outcomes.
-4. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
+3. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
    target satisfaction, and required cleanup.
-5. Publish reusable provider/target conformance suites and record real
+4. Publish reusable provider/target conformance suites and record real
    repository/version matrices for WAL-G, Barman, pgBackRest, and pg_probackup.
-6. Exercise a release candidate through local native-provider drills and a
+5. Exercise a release candidate through local native-provider drills and a
    live disposable CNPG drill before calling Engine v0.2 release-ready.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this

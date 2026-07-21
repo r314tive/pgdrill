@@ -47,11 +47,23 @@ probes, and evidence, not in terms of one provider's command output.
 ## Main Interfaces
 
 ```go
-type BackupProvider interface {
+type BackupSource interface {
     Type() model.ProviderType
     DiscoverBackups(ctx context.Context) (model.BackupCatalog, error)
+}
+
+type BackupCatalogValidator interface {
     ValidateCatalog(ctx context.Context, catalog model.BackupCatalog, backup model.Backup, target model.RecoveryTarget) (model.CheckReport, error)
+}
+
+type RestorePlanner interface {
     PlanRestore(ctx context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error)
+}
+
+type BackupProvider interface {
+    BackupSource
+    BackupCatalogValidator
+    RestorePlanner
 }
 
 type RestoreTarget interface {
@@ -97,6 +109,13 @@ type Preflight interface {
     Check(ctx context.Context) (model.CheckReport, error)
 }
 ```
+
+`core.Engine` receives `BackupSource`, `BackupCatalogValidator`, and
+`RestorePlanner` independently. Current in-process adapters implement the
+composite `BackupProvider` convenience interface, but the engine does not
+require discovery, validation, and planning to be one object. Source provider
+identity is snapshotted once and validates every downstream catalog and plan
+boundary.
 
 ## Canonical Model
 

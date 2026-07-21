@@ -230,7 +230,7 @@ different repositories.
 
 ## Delivery Gates
 
-1. Complete Engine v0.2 source/planner split and immutable run spec.
+1. Complete the Engine v0.2 immutable run spec and canonical digest.
 2. Prove idempotency, checkpoint, artifact, and crash-reconciliation behavior
    with fault-injection tests.
 3. Complete real-repository and live-target compatibility gates.

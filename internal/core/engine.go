@@ -21,27 +21,35 @@ type DrillRequest struct {
 }
 
 type Engine struct {
-	Provider       BackupProvider
-	Target         RestoreTarget
-	Preflight      Preflight
-	Probes         []Probe
-	Sink           EvidenceSink
-	EventSink      EventSink
-	PGDrillVersion string
-	Clock          func() time.Time
+	Source           BackupSource
+	CatalogValidator BackupCatalogValidator
+	Planner          RestorePlanner
+	Target           RestoreTarget
+	Preflight        Preflight
+	Probes           []Probe
+	Sink             EvidenceSink
+	EventSink        EventSink
+	PGDrillVersion   string
+	Clock            func() time.Time
 
 	FinalizationTimeout time.Duration
 }
 
 func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, error) {
-	if e.Provider == nil {
-		return model.DrillResult{}, fmt.Errorf("provider is required")
+	if e.Source == nil {
+		return model.DrillResult{}, fmt.Errorf("backup source is required")
+	}
+	if e.CatalogValidator == nil {
+		return model.DrillResult{}, fmt.Errorf("backup catalog validator is required")
+	}
+	if e.Planner == nil {
+		return model.DrillResult{}, fmt.Errorf("restore planner is required")
 	}
 	if e.Target == nil {
 		return model.DrillResult{}, fmt.Errorf("restore target is required")
 	}
 
-	providerType := e.Provider.Type()
+	providerType := e.Source.Type()
 	reportedProvider := providerType
 	if !providerType.IsKnown() {
 		reportedProvider = ""
@@ -155,7 +163,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	var catalog model.BackupCatalog
 	err = lifecycle.RunStage(ctx, model.DrillStageBackupDiscovery, func() error {
 		var discoverErr error
-		catalog, discoverErr = e.Provider.DiscoverBackups(ctx)
+		catalog, discoverErr = e.Source.DiscoverBackups(ctx)
 		result.Evidence = append(result.Evidence, catalog.Evidence...)
 		if discoverErr != nil {
 			return fmt.Errorf("discover backups: %w", discoverErr)
@@ -192,7 +200,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 
 	err = lifecycle.RunStage(ctx, model.DrillStageCatalogValidation, func() error {
-		checkReport, validateErr := e.Provider.ValidateCatalog(ctx, catalog, backup, recoveryTarget)
+		checkReport, validateErr := e.CatalogValidator.ValidateCatalog(ctx, catalog, backup, recoveryTarget)
 		result.Evidence = append(result.Evidence, checkReport.Evidence...)
 		if validateErr != nil {
 			if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
@@ -218,7 +226,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	var plan model.RestorePlan
 	err = lifecycle.RunStage(ctx, model.DrillStageRestorePlanning, func() error {
 		var planErr error
-		plan, planErr = e.Provider.PlanRestore(ctx, backup, recoveryTarget, req.Target)
+		plan, planErr = e.Planner.PlanRestore(ctx, backup, recoveryTarget, req.Target)
 		result.Evidence = append(result.Evidence, plan.Evidence...)
 		if planErr != nil {
 			return fmt.Errorf("plan restore: %w", planErr)
