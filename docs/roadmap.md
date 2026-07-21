@@ -122,9 +122,9 @@ versioned evidence matrix; broader field coverage remains pending.
 ## Phase 4: More Providers And Probes
 
 Status: initial four-provider surface and semantic config validation
-implemented. WAL-G, Barman, and pgBackRest have one exact native field point
-each; pg_probackup and broader storage/version/PITR coverage remain in
-progress.
+implemented. WAL-G, Barman, pgBackRest, and pg_probackup now have one exact
+native field point each; broader storage, version, and PITR coverage remains
+in progress.
 
 - pg_probackup catalog discovery through `show --format=json`.
 - Optional pg_probackup selected-backup and recovery-target validation.
@@ -136,9 +136,9 @@ progress.
 
 ## Phase 5: Engine v0.2 Hardening
 
-Status: locally complete for protocol hardening. External native-repository and
-release-candidate field gates remain before an Engine v0.2 readiness claim;
-public planning contracts remain intentionally unpublished.
+Status: locally complete for protocol hardening and first native-provider field
+points. Release-candidate field gates remain before an Engine v0.2 readiness
+claim; public planning contracts remain intentionally unpublished.
 
 Completed foundation:
 
@@ -186,11 +186,13 @@ Completed foundation:
 
 Remaining external engine gates, in order:
 
-1. Run a completed drill against a real, version-recorded pg_probackup
-   repository; broaden WAL-G, Barman, and pgBackRest beyond their first local
-   latest-recovery field points.
-2. Exercise a release candidate through local native-provider drills and a
-   live disposable CNPG drill before calling Engine v0.2 release-ready.
+1. Exercise one release-candidate artifact and commit through all four local
+   native-provider drills; current field reports intentionally bind different
+   development commits.
+2. Exercise the same release candidate through a live disposable CNPG drill
+   before calling Engine v0.2 release-ready.
+3. Broaden every provider beyond its first local latest-recovery point across
+   storage backends, versions, platforms, backup modes, and PITR targets.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this
 migration. The event sink is injectable but the CLI does not persist an event

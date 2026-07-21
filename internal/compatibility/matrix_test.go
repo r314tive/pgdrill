@@ -22,8 +22,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 10 {
-		t.Fatalf("matrix entry count = %d, want 10", len(matrix.Entries))
+	if len(matrix.Entries) != 11 {
+		t.Fatalf("matrix entry count = %d, want 11", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -48,6 +48,9 @@ func TestCommittedMatrix(t *testing.T) {
 	}
 	if levels["provider.barman.field"] != EvidenceLevelField {
 		t.Fatalf("Barman field level = %q, want field", levels["provider.barman.field"])
+	}
+	if levels["provider.pg-probackup.field"] != EvidenceLevelField {
+		t.Fatalf("pg_probackup field level = %q, want field", levels["provider.pg-probackup.field"])
 	}
 	if levels["provider.pgbackrest.field"] != EvidenceLevelField {
 		t.Fatalf("pgBackRest field level = %q, want field", levels["provider.pgbackrest.field"])

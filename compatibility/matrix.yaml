@@ -63,6 +63,40 @@ entries:
     limitations:
       - This fixture entry makes no native Barman version claim; exact field observations are recorded separately.
       - Planning evidence does not prove WAL continuity or a completed restore.
+  - id: provider.pg-probackup.field
+    component: provider
+    implementation: pg_probackup
+    evidence_level: field
+    capabilities:
+      - backup_validation
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "2.5.16"
+    pgdrill_versions:
+      - v0.1.0-dev
+    pgdrill_commits:
+      - bac67571ead058f70d653405529ca01e52a6f480
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-21"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-18.3-linux-arm64/report.json
+      - kind: field_note
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-18.3-linux-arm64/README.md#validated-scope
+    limitations:
+      - One same-host local filesystem catalog does not establish remote SSH compatibility.
+      - Only latest recovery from one compressed full STREAM backup with post-backup WAL replay was exercised.
+      - The tested pgdrill binary was a development build at an exact commit, not a published release artifact.
   - id: provider.pg-probackup.fixture
     component: provider
     implementation: pg_probackup
@@ -84,7 +118,7 @@ entries:
       - kind: conformance_test
         ref: internal/adapters/pgprobackup/adapter_test.go#TestProviderConformance
     limitations:
-      - No native pg_probackup version or real repository has been validated.
+      - This fixture entry makes no native pg_probackup version claim; exact field observations are recorded separately.
       - Planning evidence does not prove WAL continuity or a completed restore.
   - id: provider.pgbackrest.field
     component: provider

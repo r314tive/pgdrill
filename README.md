@@ -40,8 +40,9 @@ All four provider adapters and both executable target paths run shared
 conformance suites. Compatibility evidence is recorded separately as fixture,
 controlled, or exact-version field observations instead of a blanket support
 claim. Current field points include one CNPG restore plus native WAL-G v3.0.8,
-Barman v3.19.1, and pgBackRest v2.58.0 restores with PostgreSQL 18.3 on Linux
-arm64; each remains limited to its exact recorded scope.
+Barman v3.19.1, pgBackRest v2.58.0, and pg_probackup v2.5.16 restores with
+PostgreSQL 18.3 on Linux arm64; each remains limited to its exact recorded
+scope.
 
 ## Goals
 

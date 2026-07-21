@@ -1,0 +1,72 @@
+cluster:
+  name: pgprobackup-field-postgresql-18
+
+provider:
+  type: pg_probackup
+  binary: /opt/postgresql-18.3/bin/pg_probackup
+  backup_dir: /validation/backup
+  instance: field
+  timeout: 5m
+  pg_probackup_validate:
+    enabled: true
+    timeout: 5m
+    wal: true
+    skip_block_validation: false
+    threads: 2
+
+target:
+  type: local
+  work_dir: /validation/work/restore
+  postgres_binary: /opt/postgresql-18.3/bin/postgres
+  postgres_port: 55435
+  startup_timeout: 30s
+  shutdown_timeout: 30s
+  remove_work_dir: true
+
+restore:
+  timeout: 10m
+  verify_backup:
+    enabled: false
+
+recovery:
+  target: latest
+
+policy:
+  maximum_rto: 5m
+  maximum_rpo: 5m
+  maximum_backup_age: 1h
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: pg_isready
+    binary: /opt/postgresql-18.3/bin/pg_isready
+    timeout: 30s
+  - type: sql
+    name: row_count_and_wal_sentinel
+    binary: /opt/postgresql-18.3/bin/psql
+    timeout: 30s
+    query: |
+      DO $pgdrill$
+      DECLARE
+        row_count bigint;
+        sentinel_count bigint;
+      BEGIN
+        SELECT count(*) INTO row_count FROM public.pgdrill_field_data;
+        SELECT count(*) INTO sentinel_count
+          FROM public.pgdrill_field_data
+         WHERE id = 101 AND payload = 'after-pgprobackup-backup-wal-sentinel';
+        IF row_count != 101 OR sentinel_count != 1 THEN
+          RAISE EXCEPTION 'unexpected restored data: rows=%, sentinels=%', row_count, sentinel_count;
+        END IF;
+      END
+      $pgdrill$;
+  - type: pg_dump
+    name: pg_dump_data
+    binary: /opt/postgresql-18.3/bin/pg_dump
+    mode: data
+    timeout: 1m
+
+report:
+  format: json
+  path: /validation/output/report.json

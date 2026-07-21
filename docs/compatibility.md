@@ -117,6 +117,26 @@ deadline. The full report and topology inputs are retained under
 The observation does not cover remote or object storage, encryption,
 differential or incremental backups, PITR modes, or other platforms.
 
+### pg_probackup Field Validation
+
+On 2026-07-21, pgdrill `v0.1.0-dev` at commit
+`bac67571ead058f70d653405529ca01e52a6f480` completed one native Linux arm64
+drill with pg_probackup 2.5.16 and PostgreSQL 18.3. Both were built from exact
+source snapshots with the pg_probackup PG18 core patch. A compressed full
+STREAM backup captured 100 rows; a 101st sentinel row was committed only
+afterward and recovered from continuous WAL archiving. Native selected-backup
+and WAL validation passed before restore, followed by owned-postmaster
+readiness, the sentinel SQL assertion, data-only `pg_dump`, all five policy
+verdicts, and ownership-scoped cleanup.
+
+The first harness attempt correctly failed its sentinel probe because WAL had
+been switched before that transaction committed. After the commit-containing
+segment was archived separately, a fresh attempt passed. The exact source
+build, report, and inputs are retained under
+[`compatibility/evidence/pg-probackup-v2.5.16-postgresql-18.3-linux-arm64`](../compatibility/evidence/pg-probackup-v2.5.16-postgresql-18.3-linux-arm64/README.md).
+The observation does not cover remote SSH, incremental backup, other PITR
+targets, other versions or platforms, or a non-superuser backup role.
+
 `pgdrill doctor` proves that the config is structurally valid for its target,
 that each required executable starts, and that its bounded version command
 succeeds. It deliberately does not access repositories, database servers, or
@@ -132,10 +152,10 @@ continuity; retain the provider check and completed restore evidence.
 ## Restore Targets
 
 The local target is covered by process, filesystem-boundary, cleanup, and probe
-tests using controlled executables. The WAL-G, Barman, and pgBackRest field
-points above additionally exercise real PostgreSQL startup and native
-repositories; other provider, version, storage, and recovery-target
-combinations remain external gates.
+tests using controlled executables. The four native-provider field points
+above additionally exercise real PostgreSQL startup and native repositories;
+other version, storage, and recovery-target combinations remain external
+gates.
 
 The CNPG target has manifest, discovery, lifecycle, failure, evidence, and CLI
 tests behind a `kubectl` compatibility client.

@@ -49,6 +49,10 @@ called out explicitly even while the major version is `0`.
 - Native-provider field evidence that retains and parses a passed drill report,
   binds exact pgdrill commits, and rejects version, provider, date, or recovery
   target claims not demonstrated by that report.
+- First exact pg_probackup field evidence: a source-built 2.5.16 and PostgreSQL
+  18.3 Linux arm64 full STREAM backup, native backup/WAL validation, latest
+  restore with post-backup WAL replay, probes, policy verdicts, and owned
+  cleanup.
 
 ### Changed
 
@@ -309,9 +313,10 @@ called out explicitly even while the major version is `0`.
 
 ### Known Limitations
 
-- Adapter fixtures, controlled CLI end-to-end tests, and release gates do not
-  replace validation against real WAL-G, Barman, pgBackRest, and pg_probackup
-  repositories. No native provider-version support matrix is claimed yet.
+- Adapter fixtures, controlled CLI end-to-end tests, and one exact local
+  latest-recovery field point per native provider do not establish blanket
+  compatibility across versions, storage backends, platforms, backup modes,
+  or PITR targets.
 - CNPG verification has automated manifest, lifecycle, ownership, failure, and
   evidence coverage plus one exact-version disposable field observation.
   Broader versions, PITR modes, storage classes, and failure scenarios remain
