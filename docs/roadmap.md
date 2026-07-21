@@ -56,7 +56,8 @@ Status: complete for the initial CLI engine.
 Target: WAL-G to local restore target.
 
 Status: usable for local-target smoke drills and field-exercised at exact WAL-G
-3.0.8 and Barman 3.19.1 / PostgreSQL 18.3 Linux arm64 points.
+3.0.8, Barman 3.19.1, and pgBackRest 2.58.0 / PostgreSQL 18.3 Linux arm64
+points.
 
 - JSON evidence sink wired into `pgdrill run`.
 - JSON evidence report written to disk.
@@ -121,8 +122,8 @@ versioned evidence matrix; broader field coverage remains pending.
 ## Phase 4: More Providers And Probes
 
 Status: initial four-provider surface and semantic config validation
-implemented. WAL-G and Barman have one exact native field point each;
-pgBackRest, pg_probackup, and broader storage/version/PITR coverage remain in
+implemented. WAL-G, Barman, and pgBackRest have one exact native field point
+each; pg_probackup and broader storage/version/PITR coverage remain in
 progress.
 
 - pg_probackup catalog discovery through `show --format=json`.
@@ -165,6 +166,9 @@ Completed foundation:
   CNPG manifest persistence before target creation.
 - Immutable recovery-policy assertions and versioned fail-closed verdicts for
   RTO, RPO, backup age, recovery-target satisfaction, and configured cleanup.
+- Local PostgreSQL startup waits for the owned postmaster `ready` or `standby`
+  state with a bounded deadline instead of adding the entire startup timeout to
+  every drill's measured RTO.
 - Managed recovery-target protocol confirmation; CNPG rejects unsupported PITR
   intent instead of silently executing latest recovery.
 - Reusable provider conformance across WAL-G, Barman, pgBackRest, and
@@ -182,9 +186,9 @@ Completed foundation:
 
 Remaining external engine gates, in order:
 
-1. Run completed drills against real, version-recorded pgBackRest and
-   pg_probackup repositories; broaden WAL-G and Barman beyond their first
-   local latest-recovery field points.
+1. Run a completed drill against a real, version-recorded pg_probackup
+   repository; broaden WAL-G, Barman, and pgBackRest beyond their first local
+   latest-recovery field points.
 2. Exercise a release candidate through local native-provider drills and a
    live disposable CNPG drill before calling Engine v0.2 release-ready.
 

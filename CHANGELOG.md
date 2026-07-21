@@ -114,6 +114,11 @@ called out explicitly even while the major version is `0`.
   18.3 on Linux arm64, replayed a post-backup WAL sentinel, passed manifest
   generation and verification plus database probes, and completed
   policy-checked cleanup.
+- Compatibility evidence now records the first native pgBackRest field drill:
+  pgdrill at exact commit `bd5fbb48ab28426ca67c7368b75f67cee72042f9`
+  validated and restored a pgBackRest 2.58.0 full backup into PostgreSQL 18.3
+  on Linux arm64, replayed a post-backup WAL sentinel, passed native `check`
+  and repository `verify`, database probes, and policy-checked cleanup.
 - Release archives now include the compatibility document and validated
   machine-readable evidence matrix.
 

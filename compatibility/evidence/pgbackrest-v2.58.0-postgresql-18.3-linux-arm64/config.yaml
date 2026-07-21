@@ -1,0 +1,76 @@
+cluster:
+  name: pgbackrest-field-postgresql-18
+
+provider:
+  type: pgbackrest
+  binary: /usr/bin/pgbackrest
+  config_path: /validation/pgbackrest.conf
+  stanza: field
+  timeout: 5m
+  pgbackrest_check:
+    enabled: true
+    timeout: 5m
+    archive_timeout: 1m
+  pgbackrest_verify:
+    enabled: true
+    timeout: 5m
+    output: text
+  env:
+    PGBACKREST_CONFIG: /validation/pgbackrest.conf
+
+target:
+  type: local
+  work_dir: /validation/work/restore
+  postgres_binary: /usr/lib/postgresql/18/bin/postgres
+  postgres_port: 55434
+  startup_timeout: 30s
+  shutdown_timeout: 30s
+  remove_work_dir: true
+
+restore:
+  timeout: 10m
+  verify_backup:
+    enabled: false
+
+recovery:
+  target: latest
+
+policy:
+  maximum_rto: 5m
+  maximum_rpo: 5m
+  maximum_backup_age: 1h
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: pg_isready
+    binary: /usr/lib/postgresql/18/bin/pg_isready
+    timeout: 30s
+  - type: sql
+    name: row_count_and_wal_sentinel
+    binary: /usr/lib/postgresql/18/bin/psql
+    timeout: 30s
+    query: |
+      DO $pgdrill$
+      DECLARE
+        row_count bigint;
+        sentinel_count bigint;
+      BEGIN
+        SELECT count(*) INTO row_count FROM public.pgdrill_field_data;
+        SELECT count(*) INTO sentinel_count
+          FROM public.pgdrill_field_data
+         WHERE id = 102 AND payload = 'after-readiness-fix-wal-sentinel';
+        IF row_count != 102 OR sentinel_count != 1 THEN
+          RAISE EXCEPTION 'unexpected restored data: rows=%, sentinels=%', row_count, sentinel_count;
+        END IF;
+      END
+      $pgdrill$;
+  - type: pg_dump
+    name: pg_dump_data
+    binary: /usr/lib/postgresql/18/bin/pg_dump
+    mode: data
+    timeout: 1m
+
+report:
+  format: json
+  path: /validation/output/report.json

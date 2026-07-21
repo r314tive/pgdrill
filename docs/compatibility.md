@@ -98,6 +98,25 @@ inputs are retained under
 The observation does not cover remote SSH, streaming backup/archive, cloud
 storage, incremental backup, or PITR modes.
 
+### pgBackRest Field Validation
+
+On 2026-07-21, pgdrill `v0.1.0-dev` at commit
+`bd5fbb48ab28426ca67c7368b75f67cee72042f9` completed one native Linux arm64
+drill with pgBackRest 2.58.0 and PostgreSQL 18.3. A real full backup captured
+101 rows; a 102nd sentinel row was committed only afterward and recovered
+through archived WAL. Native `check` and `verify --set` passed before restore,
+followed by owned-postmaster readiness, the sentinel SQL assertion, data-only
+`pg_dump`, all five policy verdicts, and ownership-scoped cleanup.
+
+This drill also exposed and fixed a local-target timing defect: the configured
+startup timeout had been treated as a fixed delay. The exact commit used for
+the retained report instead returned when the owned `postmaster.pid` reached
+`ready`, in 275 ms, and reserves the configured duration as a fail-closed
+deadline. The full report and topology inputs are retained under
+[`compatibility/evidence/pgbackrest-v2.58.0-postgresql-18.3-linux-arm64`](../compatibility/evidence/pgbackrest-v2.58.0-postgresql-18.3-linux-arm64/README.md).
+The observation does not cover remote or object storage, encryption,
+differential or incremental backups, PITR modes, or other platforms.
+
 `pgdrill doctor` proves that the config is structurally valid for its target,
 that each required executable starts, and that its bounded version command
 succeeds. It deliberately does not access repositories, database servers, or
@@ -113,10 +132,10 @@ continuity; retain the provider check and completed restore evidence.
 ## Restore Targets
 
 The local target is covered by process, filesystem-boundary, cleanup, and probe
-tests using controlled executables. The WAL-G and Barman field points above
-additionally exercise real PostgreSQL startup and native repositories; other
-provider, version, storage, and recovery-target combinations remain external
-gates.
+tests using controlled executables. The WAL-G, Barman, and pgBackRest field
+points above additionally exercise real PostgreSQL startup and native
+repositories; other provider, version, storage, and recovery-target
+combinations remain external gates.
 
 The CNPG target has manifest, discovery, lifecycle, failure, evidence, and CLI
 tests behind a `kubectl` compatibility client.
