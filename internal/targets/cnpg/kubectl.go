@@ -43,6 +43,41 @@ func (c *KubectlClient) CreateCluster(ctx context.Context, spec VerifyClusterSpe
 	return c.strictRun(ctx, "kubectl-create-cluster", c.args(spec, "create", "-f", "-"), manifest, c.cfg.Timeout)
 }
 
+func (c *KubectlClient) FindOwnedCluster(ctx context.Context, spec VerifyClusterSpec) (OwnedCluster, []model.EvidenceRecord, error) {
+	selector, err := ownershipSelector(spec, false)
+	if err != nil {
+		return OwnedCluster{}, nil, fmt.Errorf("find owned cluster: %w", err)
+	}
+	evidence, result, err := c.run(ctx, "kubectl-find-owned-cluster", c.args(spec, "get", "cluster.postgresql.cnpg.io", "-l", selector, "-o", "json"), nil, c.cfg.Timeout)
+	if err != nil {
+		return OwnedCluster{}, evidence, err
+	}
+	if !result.Evidence.ExitStatus.Success {
+		return OwnedCluster{}, evidence, fmt.Errorf("kubectl-find-owned-cluster failed: %s", result.Evidence.ExitStatus.Summary())
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(result.Raw.Stdout, &list); err != nil {
+		return OwnedCluster{}, evidence, fmt.Errorf("parse owned CNPG cluster list: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return OwnedCluster{}, evidence, nil
+	}
+	if len(list.Items) > 1 {
+		return OwnedCluster{}, evidence, fmt.Errorf("ownership id %q matches %d CNPG clusters", spec.OwnershipID, len(list.Items))
+	}
+	name := strings.TrimSpace(list.Items[0].Metadata.Name)
+	if name == "" {
+		return OwnedCluster{}, evidence, fmt.Errorf("owned CNPG cluster has no metadata.name")
+	}
+	return OwnedCluster{Found: true, Name: name}, evidence, nil
+}
+
 func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClusterSpec, opts WaitOptions) (Instance, []model.EvidenceRecord, error) {
 	timeout := opts.Timeout
 	if timeout == 0 {

@@ -94,6 +94,65 @@ func TestValidateAllowsLegacyFailureWithoutDetails(t *testing.T) {
 	}
 }
 
+func TestValidateChecksOperationIdentityAndTerminalState(t *testing.T) {
+	result := validTestResult()
+	operation, err := model.NewOperation(model.AttemptIdentity{
+		RunID:      result.ID,
+		AttemptID:  result.AttemptID,
+		SpecDigest: result.SpecDigest,
+	}, model.DrillStageTargetPreparation, model.OperationTargetPrepare, "prepare-target", 0)
+	if err != nil {
+		t.Fatalf("NewOperation() error = %v", err)
+	}
+	now := result.StartedAt
+	checkpoint := model.OperationCheckpoint{
+		SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+		Operation:     operation,
+		State:         model.OperationStateSucceeded,
+		StartedAt:     now,
+		UpdatedAt:     now,
+	}
+	result.Operations = []model.OperationCheckpoint{checkpoint}
+	if err := Validate(result); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	result.Operations[0].State = model.OperationStateFailed
+	if err := Validate(result); err == nil || !strings.Contains(err.Error(), "passed report operation") {
+		t.Fatalf("Validate(failed operation) error = %v", err)
+	}
+	result.Operations[0] = checkpoint
+	result.Operations = append(result.Operations, checkpoint)
+	if err := Validate(result); err == nil || !strings.Contains(err.Error(), "duplicate operation key") {
+		t.Fatalf("Validate(duplicate operation) error = %v", err)
+	}
+}
+
+func TestJSONFileSinkRejectsNonTerminalOperation(t *testing.T) {
+	result := validTestResult()
+	operation, err := model.NewOperation(model.AttemptIdentity{
+		RunID:      result.ID,
+		AttemptID:  result.AttemptID,
+		SpecDigest: result.SpecDigest,
+	}, model.DrillStageTargetPreparation, model.OperationTargetPrepare, "prepare-target", 0)
+	if err != nil {
+		t.Fatalf("NewOperation() error = %v", err)
+	}
+	result.Status = model.DrillStatusFailed
+	result.Failure = &model.DrillFailure{Stage: model.DrillStageTargetPreparation, Message: "executor lost"}
+	result.Operations = []model.OperationCheckpoint{{
+		SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+		Operation:     operation,
+		State:         model.OperationStateIntent,
+		StartedAt:     result.StartedAt,
+		UpdatedAt:     result.StartedAt,
+	}}
+	err = (JSONFileSink{Path: filepath.Join(t.TempDir(), "report.json")}).Write(context.Background(), result)
+	if err == nil || !strings.Contains(err.Error(), "non-terminal state") {
+		t.Fatalf("Write(intent operation) error = %v", err)
+	}
+}
+
 func TestJSONFileSinkRejectsMissingFailureBeforeCreatingDirectory(t *testing.T) {
 	result := validTestResult()
 	result.Status = model.DrillStatusFailed

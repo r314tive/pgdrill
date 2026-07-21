@@ -18,7 +18,7 @@ func TestPrepareCreatesWorkDirAndMarker(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	target := New(Config{}, nil)
 
-	err := target.Prepare(context.Background(), model.TargetSpec{
+	err := prepareTarget(t, target, model.TargetSpec{
 		Type:    model.RestoreTargetLocal,
 		WorkDir: workDir,
 	})
@@ -61,10 +61,11 @@ func TestPrepareRejectsNonEmptyExistingWorkDir(t *testing.T) {
 	if _, markerErr := os.Stat(filepath.Join(workDir, markerFile)); !errors.Is(markerErr, os.ErrNotExist) {
 		t.Fatalf("validation must not create ownership marker, stat err=%v", markerErr)
 	}
-	err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir})
+	err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir})
 	if err == nil || !strings.Contains(err.Error(), "must be empty") {
 		t.Fatalf("expected non-empty workdir rejection, got %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 1)
 	if _, destroyErr := target.Destroy(context.Background()); destroyErr != nil {
 		t.Fatalf("destroy after rejected prepare: %v", destroyErr)
 	}
@@ -97,7 +98,8 @@ func TestPrepareRejectsSymlinkWorkDir(t *testing.T) {
 		t.Skipf("create workdir symlink: %v", err)
 	}
 
-	err := New(Config{}, nil).Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir})
+	target := New(Config{}, nil)
+	err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir})
 	if err == nil || !strings.Contains(err.Error(), "must be a real directory") {
 		t.Fatalf("expected symlink workdir rejection, got %v", err)
 	}
@@ -114,9 +116,10 @@ func TestExecuteRunsCommandStep(t *testing.T) {
 		},
 		RedactValues: []string{"base-secret"},
 	}, runner)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "fetch", 1)
 
 	evidence, err := target.Execute(context.Background(), model.RestoreStep{
 		Name: "fetch",
@@ -161,9 +164,10 @@ func TestExecuteRunsCommandStep(t *testing.T) {
 func TestExecuteWritesFileStep(t *testing.T) {
 	workDir := t.TempDir()
 	target := New(Config{}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "recovery-config", 1)
 
 	configPath := filepath.Join(workDir, "data", "postgresql.auto.conf")
 	evidence, err := target.Execute(context.Background(), model.RestoreStep{
@@ -198,9 +202,10 @@ func TestExecuteRejectsFileOutsideWorkDir(t *testing.T) {
 	root := t.TempDir()
 	workDir := filepath.Join(root, "restore")
 	target := New(Config{}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "unsafe-file", 1)
 
 	_, err := target.Execute(context.Background(), model.RestoreStep{
 		Name: "unsafe-file",
@@ -222,12 +227,13 @@ func TestExecuteRejectsFileThroughSymlink(t *testing.T) {
 		t.Fatalf("create outside directory: %v", err)
 	}
 	target := New(Config{}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
 	if err := os.Symlink(outsideDir, filepath.Join(workDir, "data")); err != nil {
 		t.Skipf("create target symlink: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "unsafe-symlink-file", 1)
 
 	outsidePath := filepath.Join(outsideDir, "postgresql.auto.conf")
 	_, err := target.Execute(context.Background(), model.RestoreStep{
@@ -257,9 +263,10 @@ func TestExecuteReturnsStructuredCommandFailure(t *testing.T) {
 		},
 	}}
 	target := New(Config{}, runner)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: t.TempDir()}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: t.TempDir()}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "fetch", 1)
 
 	evidence, err := target.Execute(context.Background(), model.RestoreStep{
 		Name:    "fetch",
@@ -292,12 +299,13 @@ while true; do sleep 1; done
 			"PGDRILL_SIGNAL_FILE": signalFile,
 		},
 	}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("create data dir: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationPostgresStart, "start-postgres", 1)
 
 	pg, evidence, err := target.StartPostgres(context.Background(), model.RuntimeConfig{
 		DataDirectory: dataDir,
@@ -319,6 +327,7 @@ while true; do sleep 1; done
 		t.Fatalf("expected process pid evidence, got %#v", evidence[0].Attributes)
 	}
 
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 2)
 	destroyEvidence, err := target.Destroy(context.Background())
 	if err != nil {
 		t.Fatalf("destroy local target: %v", err)
@@ -344,12 +353,13 @@ exit 42
 		PostgresBinary: postgresPath,
 		StartupTimeout: 2 * time.Second,
 	}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("create data dir: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationPostgresStart, "start-postgres", 1)
 
 	_, evidence, err := target.StartPostgres(context.Background(), model.RuntimeConfig{DataDirectory: dataDir, Port: 15433})
 	if err == nil || !strings.Contains(err.Error(), "postgres exited during startup") {
@@ -368,9 +378,10 @@ func TestStartPostgresRejectsDataDirectoryOutsideWorkDir(t *testing.T) {
 		t.Fatalf("create outside data directory: %v", err)
 	}
 	target := New(Config{}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationPostgresStart, "start-postgres", 1)
 
 	_, _, err := target.StartPostgres(context.Background(), model.RuntimeConfig{DataDirectory: outsideDataDir})
 	if err == nil || !strings.Contains(err.Error(), "outside local target work_dir") {
@@ -383,7 +394,7 @@ func TestStartPostgresRejectsExistingLogPath(t *testing.T) {
 	workDir := filepath.Join(root, "restore")
 	dataDir := filepath.Join(workDir, "data")
 	target := New(Config{}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
 	if err := os.Mkdir(dataDir, 0o700); err != nil {
@@ -393,6 +404,7 @@ func TestStartPostgresRejectsExistingLogPath(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte("do not replace\n"), 0o600); err != nil {
 		t.Fatalf("create existing log: %v", err)
 	}
+	beginLocalOperation(t, target, model.OperationPostgresStart, "start-postgres", 1)
 
 	_, _, err := target.StartPostgres(context.Background(), model.RuntimeConfig{DataDirectory: dataDir, Port: 15434})
 	if err == nil || !strings.Contains(err.Error(), "file exists") {
@@ -407,10 +419,11 @@ func TestStartPostgresRejectsExistingLogPath(t *testing.T) {
 func TestDestroyRemovesWorkDirOnlyWhenConfigured(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	target := New(Config{RemoveWorkDir: true}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
 
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 1)
 	evidence, err := target.Destroy(context.Background())
 	if err != nil {
 		t.Fatalf("destroy local target: %v", err)
@@ -426,13 +439,14 @@ func TestDestroyRemovesWorkDirOnlyWhenConfigured(t *testing.T) {
 func TestDestroyRejectsMismatchedOwnershipMarker(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	target := New(Config{RemoveWorkDir: true}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(workDir, markerFile), []byte("forged\n"), 0o600); err != nil {
 		t.Fatalf("replace ownership marker: %v", err)
 	}
 
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 1)
 	evidence, err := target.Destroy(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "mismatched ownership marker") {
 		t.Fatalf("expected ownership mismatch error, got %v", err)
@@ -448,10 +462,11 @@ func TestDestroyRejectsMismatchedOwnershipMarker(t *testing.T) {
 func TestDestroySkipsRemovalByDefault(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	target := New(Config{}, nil)
-	if err := target.Prepare(context.Background(), model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
+	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
 	}
 
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 1)
 	evidence, err := target.Destroy(context.Background())
 	if err != nil {
 		t.Fatalf("destroy local target: %v", err)
@@ -462,6 +477,120 @@ func TestDestroySkipsRemovalByDefault(t *testing.T) {
 	if len(evidence) != 1 || evidence[0].Attributes["cleanup"] != "skipped" {
 		t.Fatalf("unexpected cleanup evidence %#v", evidence)
 	}
+}
+
+func TestReconcileProvesPreparedTargetAfterProcessLoss(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	spec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}
+	first := New(Config{}, nil)
+	if err := prepareTarget(t, first, spec); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	operation := first.operation
+
+	recovered := New(Config{}, nil)
+	if err := recovered.BindAttempt(first.attempt); err != nil {
+		t.Fatalf("BindAttempt() error = %v", err)
+	}
+	if err := recovered.BeginOperation(operation); err != nil {
+		t.Fatalf("BeginOperation() error = %v", err)
+	}
+	reconciliation, err := recovered.Reconcile(context.Background(), operationCheckpoint(operation))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if reconciliation.Disposition != model.ReconciliationCompleted || !recovered.prepared || recovered.ownerID != first.ownerID {
+		t.Fatalf("unexpected reconciliation %#v recovered=%#v", reconciliation, recovered)
+	}
+}
+
+func TestReconcileUsesRestoreStepReceiptAndRefusesUnprovenStep(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	spec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}
+	first := New(Config{}, nil)
+	if err := prepareTarget(t, first, spec); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	completed := beginLocalOperation(t, first, model.OperationRestoreStep, "write-config", 1)
+	if _, err := first.Execute(context.Background(), model.RestoreStep{
+		Name: "write-config",
+		Files: []model.FileSpec{{
+			Path:    filepath.Join(workDir, "data", "postgresql.auto.conf"),
+			Content: "recovery_target = 'latest'\n",
+		}},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	recovered := New(Config{}, nil)
+	if err := recovered.BindAttempt(first.attempt); err != nil {
+		t.Fatalf("BindAttempt() error = %v", err)
+	}
+	if err := recovered.BeginOperation(completed); err != nil {
+		t.Fatalf("BeginOperation(completed) error = %v", err)
+	}
+	result, err := recovered.Reconcile(context.Background(), operationCheckpoint(completed))
+	if err != nil {
+		t.Fatalf("Reconcile(completed) error = %v", err)
+	}
+	if result.Disposition != model.ReconciliationCompleted {
+		t.Fatalf("completed step reconciliation = %#v", result)
+	}
+
+	unproven := beginLocalOperation(t, recovered, model.OperationRestoreStep, "unproven-command", 2)
+	result, err = recovered.Reconcile(context.Background(), operationCheckpoint(unproven))
+	if err != nil {
+		t.Fatalf("Reconcile(unproven) error = %v", err)
+	}
+	if result.Disposition != model.ReconciliationUnknown {
+		t.Fatalf("unproven step reconciliation = %#v, want unknown", result)
+	}
+}
+
+func operationCheckpoint(operation model.Operation) model.OperationCheckpoint {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	return model.OperationCheckpoint{
+		SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+		Operation:     operation,
+		State:         model.OperationStateIntent,
+		StartedAt:     now,
+		UpdatedAt:     now,
+	}
+}
+
+func prepareTarget(t *testing.T, target *Target, spec model.TargetSpec) error {
+	t.Helper()
+	attempt := model.AttemptContext{
+		Identity: model.AttemptIdentity{
+			RunID:      t.Name(),
+			AttemptID:  "attempt-1",
+			SpecDigest: "sha256:" + strings.Repeat("a", 64),
+		},
+		Target: spec,
+	}
+	if err := target.BindAttempt(attempt); err != nil {
+		t.Fatalf("BindAttempt() error = %v", err)
+	}
+	beginLocalOperation(t, target, model.OperationTargetPrepare, "prepare-target", 0)
+	return target.Prepare(context.Background(), spec)
+}
+
+func beginLocalOperation(t *testing.T, target *Target, kind model.OperationKind, name string, ordinal int) model.Operation {
+	t.Helper()
+	stage := map[model.OperationKind]model.DrillStage{
+		model.OperationTargetPrepare: model.DrillStageTargetPreparation,
+		model.OperationRestoreStep:   model.DrillStageRestoreExecution,
+		model.OperationPostgresStart: model.DrillStagePostgresStart,
+		model.OperationTargetCleanup: model.DrillStageTargetCleanup,
+	}[kind]
+	operation, err := model.NewOperation(target.attempt.Identity, stage, kind, name, ordinal)
+	if err != nil {
+		t.Fatalf("NewOperation() error = %v", err)
+	}
+	if err := target.BeginOperation(operation); err != nil {
+		t.Fatalf("BeginOperation() error = %v", err)
+	}
+	return operation
 }
 
 type fakeRunner struct {

@@ -17,6 +17,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/adapters"
 	"github.com/r314tive/pgdrill/internal/application/cnpgverify"
 	"github.com/r314tive/pgdrill/internal/application/runinput"
+	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
@@ -84,8 +85,12 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 	var configPath string
 	var configPathLong string
+	var runID string
+	var attemptID string
 	fs.StringVar(&configPath, "f", "", "configuration file")
 	fs.StringVar(&configPathLong, "config", "", "configuration file")
+	fs.StringVar(&runID, "run-id", "", "logical run id")
+	fs.StringVar(&attemptID, "attempt-id", "", "execution attempt id")
 	if ok, code := parseFlags(fs, args); !ok {
 		return code
 	}
@@ -148,8 +153,9 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		Preflight:        preflight.NewSuite(preflightRequirements, nil, 0),
 		Probes:           configuredProbes,
 		Sink:             report.JSONFileSink{Path: cfg.Report.Path},
+		Checkpoints:      checkpoint.DirectoryStore{Path: checkpoint.PathForReport(cfg.Report.Path)},
 		PGDrillVersion:   version.String(),
-	}.Run(ctx, core.DrillRequest{Spec: drillSpec})
+	}.Run(ctx, core.DrillRequest{ID: runID, AttemptID: attemptID, Spec: drillSpec})
 	if err := writeRunSummary(stdout, result, cfg.Report.Path); err != nil {
 		fmt.Fprintf(stderr, "write run summary: %v\n", err)
 		return 1
@@ -448,11 +454,13 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 	var configPath string
 	var configPathLong string
 	var drillID string
+	var attemptID string
 	var discover bool
 	var confirmCreate bool
 	fs.StringVar(&configPath, "f", "", "configuration file")
 	fs.StringVar(&configPathLong, "config", "", "configuration file")
 	fs.StringVar(&drillID, "drill-id", "", "drill id used for generated labels and report id")
+	fs.StringVar(&attemptID, "attempt-id", "", "execution attempt id")
 	fs.BoolVar(&discover, "discover", false, "discover missing CNPG backup_name and image_name through kubectl")
 	fs.BoolVar(&confirmCreate, "confirm-create", false, "confirm that pgdrill may create and delete Kubernetes resources")
 	if ok, code := parseFlags(fs, args); !ok {
@@ -490,6 +498,7 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 
 	result, runErr := (cnpgverify.Service{}).Run(ctx, cfg, cnpgverify.Options{
 		DrillID:       drillID,
+		AttemptID:     attemptID,
 		Discover:      discover,
 		ConfirmCreate: confirmCreate,
 	})
@@ -785,6 +794,7 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 	rows = append(rows,
 		[2]string{"Provider", valueOrDash(string(result.Provider))},
 		[2]string{"Backup", valueOrDash(result.Backup.ID)},
+		[2]string{"Operations", fmt.Sprintf("%d recorded", len(result.Operations))},
 		[2]string{"Report", valueOrDash(reportPath)},
 	)
 	for _, row := range rows {
@@ -884,6 +894,7 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 		[2]string{"Finished", timeValue(result.FinishedAt)},
 		[2]string{"Checks", fmt.Sprintf("%d passed, %d failed, %d warnings, %d skipped", statusCounts.passed, statusCounts.failed, statusCounts.warning, statusCounts.skipped)},
 		[2]string{"Evidence", fmt.Sprintf("%d records", len(result.Evidence))},
+		[2]string{"Operations", fmt.Sprintf("%d recorded", len(result.Operations))},
 	)
 	for _, row := range rows {
 		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
@@ -905,6 +916,27 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 				valueOrDash(string(check.Probe)),
 				check.Status,
 				oneLine(check.Message),
+			); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Operations) > 0 {
+		if _, err := fmt.Fprintln(table); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(table, "OPERATION\tKIND\tSTATE\tRECONCILED\tKEY"); err != nil {
+			return err
+		}
+		for _, checkpoint := range result.Operations {
+			if _, err := fmt.Fprintf(
+				table,
+				"%s\t%s\t%s\t%t\t%s\n",
+				checkpoint.Operation.Name,
+				checkpoint.Operation.Kind,
+				checkpoint.State,
+				checkpoint.Reconciled,
+				checkpoint.Operation.Key,
 			); err != nil {
 				return err
 			}

@@ -19,6 +19,8 @@ probes, and evidence, not in terms of one provider's command output.
   lifecycle recorder.
 - `internal/command`: direct command runner with timeout, bounded raw
   stdout/stderr, bounded redacted evidence, and structured exit status.
+- `internal/checkpoint`: atomic attempt-scoped mutation checkpoint stores with
+  monotonic transition validation and process-local or durable implementations.
 - `internal/preflight`: config-derived executable requirements and native
   version checks used by read-only `pgdrill doctor` and target-aware execution
   preflight.
@@ -38,6 +40,8 @@ probes, and evidence, not in terms of one provider's command output.
   drill reports.
 - `docs/run-event-format.md`: identity, ordering, and delivery contract for the
   optional append-only lifecycle stream.
+- `docs/operation-checkpoint-format.md`: pre-mutation intent, idempotency,
+  ownership, and unknown-outcome reconciliation contract.
 - `docs/restore-targets.md`: lifecycle requirements for disposable restore
   environments, including Kubernetes/CNPG notes.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.
@@ -68,6 +72,9 @@ type BackupProvider interface {
 
 type RestoreTarget interface {
     Type() model.RestoreTargetType
+    BindAttempt(attempt model.AttemptContext) error
+    BeginOperation(operation model.Operation) error
+    Reconcile(ctx context.Context, checkpoint model.OperationCheckpoint) (model.OperationReconciliation, error)
     Prepare(ctx context.Context, spec model.TargetSpec) error
     Execute(ctx context.Context, step model.RestoreStep) ([]model.EvidenceRecord, error)
     StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (model.RunningPostgres, []model.EvidenceRecord, error)
@@ -75,11 +82,14 @@ type RestoreTarget interface {
 }
 
 type ManagedDrillResolver interface {
-    Resolve(ctx context.Context) (ManagedResolution, model.CheckReport, error)
+    Resolve(ctx context.Context, attempt model.AttemptContext) (ManagedResolution, model.CheckReport, error)
 }
 
 type ManagedRestoreTarget interface {
     Type() model.RestoreTargetType
+    BindAttempt(attempt model.AttemptContext) error
+    BeginOperation(operation model.Operation) error
+    Reconcile(ctx context.Context, checkpoint model.OperationCheckpoint) (model.OperationReconciliation, error)
     Start(ctx context.Context) (model.RunningPostgres, model.CheckReport, error)
     Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
 }
@@ -106,6 +116,12 @@ type EventSink interface {
     WriteEvent(ctx context.Context, event model.RunEvent) error
 }
 
+type CheckpointStore interface {
+    Save(ctx context.Context, checkpoint model.OperationCheckpoint) error
+    Load(ctx context.Context, operation model.Operation) (model.OperationCheckpoint, bool, error)
+    List(ctx context.Context, identity model.AttemptIdentity) ([]model.OperationCheckpoint, error)
+}
+
 type Preflight interface {
     Check(ctx context.Context) (model.CheckReport, error)
 }
@@ -122,7 +138,7 @@ boundary.
 
 The canonical model starts with `DrillSpec`, `BackupCatalog`, `Backup`,
 `WALRange`, `RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`,
-`RunEvent`, and `EvidenceRecord`.
+`RunEvent`, `OperationCheckpoint`, and `EvidenceRecord`.
 
 Every native or managed engine attempt receives an immutable internal
 `pgdrill.drill-spec/v1alpha1` snapshot. It records execution mode, safe
@@ -252,8 +268,12 @@ confirmation guard so another presentation layer cannot bypass it accidentally.
 - Native and managed-target execution must use the common lifecycle recorder;
   presentation layers must not assemble result or cleanup state machines.
 - A mutating command error is an uncertain outcome, not proof that no resource
-  exists; cleanup after such commands must be idempotent, retryable, and scoped
-  to a random per-run ownership identity.
+  exists. Every ordinary mutation requires a durable intent checkpoint first,
+  uses a deterministic attempt-scoped idempotency key and ownership identity,
+  and is reconciled before any retry decision.
+- Cleanup remains executable through a bounded finalization context even when
+  its intent journal is unavailable, but the attempt cannot be reported as
+  passed when that durability invariant was lost.
 - A managed target owns reconciliation and configured cleanup after a failed or
   ambiguous `Start`; the engine invokes `Destroy` after successful startup and
   does not duplicate target-owned failure cleanup.

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/runspec"
 )
@@ -20,7 +21,7 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	request := managedRequest("managed-1")
 	request.AttemptID = "attempt-1"
 
-	result, err := ManagedEngine{
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(),
 		Resolver: resolver,
 		Preflight: &fakePreflight{report: model.CheckReport{Checks: []model.Check{{
 			Name:   "tool.kubectl",
@@ -42,6 +43,9 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	}
 	if result.AttemptID != "attempt-1" || result.Spec == nil || result.SpecDigest != request.Spec.Digest() {
 		t.Fatalf("unexpected managed run identity %#v", result)
+	}
+	if len(result.Operations) != 2 || result.Operations[0].State != model.OperationStateSucceeded || result.Operations[1].State != model.OperationStateSucceeded {
+		t.Fatalf("unexpected managed operation checkpoints %#v", result.Operations)
 	}
 	if got, want := target.calls, []string{"start", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("target calls = %#v, want %#v", got, want)
@@ -81,7 +85,7 @@ func TestManagedEnginePersistsDiscoveryFailure(t *testing.T) {
 		err:    wantErr,
 	}
 	sink := &fakeSink{}
-	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(context.Background(), managedRequest("managed-discovery-failure"))
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver, Sink: sink}.Run(context.Background(), managedRequest("managed-discovery-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want discovery error", err)
 	}
@@ -96,7 +100,7 @@ func TestManagedEnginePersistsDiscoveryFailure(t *testing.T) {
 func TestManagedEngineRequiresImmutableDrillSpecBeforeResolution(t *testing.T) {
 	resolver := &fakeManagedResolver{resolution: managedResolution(&fakeManagedTarget{}, &fakePostRestoreChecker{})}
 	sink := &fakeSink{}
-	result, err := (ManagedEngine{Resolver: resolver, Sink: sink}).Run(context.Background(), ManagedDrillRequest{})
+	result, err := (ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver, Sink: sink}).Run(context.Background(), ManagedDrillRequest{})
 	if err == nil || !strings.Contains(err.Error(), "drill spec is required") {
 		t.Fatalf("Run() error = %v, want missing spec error", err)
 	}
@@ -118,7 +122,7 @@ func TestManagedEngineRejectsAndSanitizesMalformedProvisionalBackup(t *testing.T
 		Kind:       model.BackupKindFull,
 		Status:     model.BackupStatusAvailable,
 	}
-	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(context.Background(), request)
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver, Sink: sink}.Run(context.Background(), request)
 	if err == nil || !strings.Contains(err.Error(), "provisional managed backup") {
 		t.Fatalf("Run() error = %v, want provisional backup error", err)
 	}
@@ -140,7 +144,7 @@ func TestManagedEngineDoesNotRepeatTargetFailureCleanup(t *testing.T) {
 	wantErr := errors.New("operator recovery failed")
 	target := &fakeManagedTarget{startErr: wantErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{})}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-start-failure"))
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver}.Run(context.Background(), managedRequest("managed-start-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want start error", err)
 	}
@@ -157,7 +161,7 @@ func TestManagedEngineCleansUpAfterCheckFailure(t *testing.T) {
 	target := &fakeManagedTarget{}
 	checker := &fakePostRestoreChecker{err: wantErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, checker)}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-check-failure"))
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver}.Run(context.Background(), managedRequest("managed-check-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want check error", err)
 	}
@@ -173,7 +177,7 @@ func TestManagedEngineReportsCleanupOnlyFailure(t *testing.T) {
 	wantErr := errors.New("delete failed")
 	target := &fakeManagedTarget{destroyErr: wantErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{})}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-cleanup-failure"))
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver}.Run(context.Background(), managedRequest("managed-cleanup-failure"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want cleanup error", err)
 	}
@@ -187,7 +191,7 @@ func TestManagedEnginePreservesPrimaryCheckStageWhenCleanupAlsoFails(t *testing.
 	cleanupErr := errors.New("delete failed")
 	target := &fakeManagedTarget{destroyErr: cleanupErr}
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{err: checkErr})}
-	result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-check-cleanup-failure"))
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver}.Run(context.Background(), managedRequest("managed-check-cleanup-failure"))
 	if !errors.Is(err, checkErr) || !errors.Is(err, cleanupErr) {
 		t.Fatalf("Run() error = %v, want joined check and cleanup errors", err)
 	}
@@ -202,7 +206,7 @@ func TestManagedEngineCancellationDuringCleanupCannotPass(t *testing.T) {
 	resolver := &fakeManagedResolver{resolution: managedResolution(target, &fakePostRestoreChecker{})}
 	sink := &fakeSink{}
 
-	result, err := ManagedEngine{Resolver: resolver, Sink: sink}.Run(ctx, managedRequest("managed-cleanup-cancel"))
+	result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver, Sink: sink}.Run(ctx, managedRequest("managed-cleanup-cancel"))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want cancellation", err)
 	}
@@ -232,7 +236,7 @@ func TestManagedEngineValidatesResolutionBeforeMutation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resolver := &fakeManagedResolver{resolution: tt.resolution}
-			result, err := ManagedEngine{Resolver: resolver}.Run(context.Background(), managedRequest("managed-invalid"))
+			result, err := ManagedEngine{Checkpoints: checkpoint.NewMemoryStore(), Resolver: resolver}.Run(context.Background(), managedRequest("managed-invalid"))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Run() error = %v, want substring %q", err, tt.want)
 			}
@@ -250,7 +254,7 @@ type fakeManagedResolver struct {
 	calls      int
 }
 
-func (r *fakeManagedResolver) Resolve(context.Context) (ManagedResolution, model.CheckReport, error) {
+func (r *fakeManagedResolver) Resolve(context.Context, model.AttemptContext) (ManagedResolution, model.CheckReport, error) {
 	r.calls++
 	return r.resolution, r.report, r.err
 }
@@ -260,10 +264,24 @@ type fakeManagedTarget struct {
 	startErr    error
 	destroyErr  error
 	destroyHook func()
+	operation   model.Operation
 }
 
 func (t *fakeManagedTarget) Type() model.RestoreTargetType {
 	return model.RestoreTargetKubernetes
+}
+
+func (t *fakeManagedTarget) BindAttempt(model.AttemptContext) error {
+	return nil
+}
+
+func (t *fakeManagedTarget) BeginOperation(operation model.Operation) error {
+	t.operation = operation
+	return nil
+}
+
+func (t *fakeManagedTarget) Reconcile(context.Context, model.OperationCheckpoint) (model.OperationReconciliation, error) {
+	return model.OperationReconciliation{Disposition: model.ReconciliationNotApplied}, nil
 }
 
 func (t *fakeManagedTarget) Start(context.Context) (model.RunningPostgres, model.CheckReport, error) {

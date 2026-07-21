@@ -126,6 +126,18 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		}
 	}
 
+	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_operations_total Number of mutation operations in the last drill grouped by kind, state, and reconciliation status."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_operations_total gauge"); err != nil {
+		return err
+	}
+	for _, sample := range operationCountSamples(result.Cluster, result.Provider, result.Operations) {
+		if err := writeMetric(writer, "pgdrill_operations_total", sample.labels, strconv.Itoa(sample.value)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -175,6 +187,24 @@ func evidenceCountSamples(cluster string, provider model.ProviderType, records [
 			{name: "cluster", value: labelOrUnknown(cluster)},
 			{name: "provider", value: providerLabel(provider)},
 			{name: "kind", value: evidenceKindLabel(record.Kind)},
+		}
+		key := metricKey(labels)
+		counts[key]++
+		labelsByKey[key] = labels
+	}
+	return samplesFromCounts(counts, labelsByKey)
+}
+
+func operationCountSamples(cluster string, provider model.ProviderType, checkpoints []model.OperationCheckpoint) []metricSample {
+	counts := map[string]int{}
+	labelsByKey := map[string][]metricLabel{}
+	for _, checkpoint := range checkpoints {
+		labels := []metricLabel{
+			{name: "cluster", value: labelOrUnknown(cluster)},
+			{name: "provider", value: providerLabel(provider)},
+			{name: "kind", value: operationKindLabel(checkpoint.Operation.Kind)},
+			{name: "state", value: operationStateLabel(checkpoint.State)},
+			{name: "reconciled", value: strconv.FormatBool(checkpoint.Reconciled)},
 		}
 		key := metricKey(labels)
 		counts[key]++
@@ -283,6 +313,20 @@ func checkStatusLabel(value model.CheckStatus) string {
 }
 
 func evidenceKindLabel(value model.EvidenceKind) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func operationKindLabel(value model.OperationKind) string {
+	if !value.IsKnown() {
+		return "unknown"
+	}
+	return string(value)
+}
+
+func operationStateLabel(value model.OperationState) string {
 	if !value.IsKnown() {
 		return "unknown"
 	}

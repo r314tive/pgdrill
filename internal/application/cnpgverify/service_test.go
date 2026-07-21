@@ -54,10 +54,10 @@ func TestServiceRequiresProbeBeforePreflight(t *testing.T) {
 	}
 }
 
-func TestServicePersistsOwnershipFailureThroughManagedLifecycle(t *testing.T) {
+func TestServicePersistsCheckpointFailureThroughManagedLifecycle(t *testing.T) {
 	now := time.Date(2026, 7, 21, 8, 0, 0, 0, time.UTC)
 	reportPath := filepath.Join(t.TempDir(), "report.json")
-	wantErr := errors.New("entropy unavailable")
+	wantErr := errors.New("checkpoint unavailable")
 	cfg := config.Config{
 		Cluster: config.ClusterConfig{Name: "altbox"},
 		Target: config.TargetConfig{
@@ -83,16 +83,16 @@ func TestServicePersistsOwnershipFailureThroughManagedLifecycle(t *testing.T) {
 	result, err := (Service{
 		Runner:      &successRunner{now: now},
 		Clock:       func() time.Time { return now },
-		OwnershipID: func() (string, error) { return "", wantErr },
+		Checkpoints: failingCheckpointStore{err: wantErr},
 	}).Run(context.Background(), cfg, Options{
 		DrillID:       "ownership-failure",
 		ConfirmCreate: true,
 	})
 
 	if !errors.Is(err, wantErr) {
-		t.Fatalf("Run() error = %v, want ownership error", err)
+		t.Fatalf("Run() error = %v, want checkpoint error", err)
 	}
-	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageTargetDiscovery {
+	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageTargetStart {
 		t.Fatalf("unexpected result %#v", result)
 	}
 	stored, readErr := report.ReadJSONFile(reportPath)
@@ -105,6 +105,22 @@ func TestServicePersistsOwnershipFailureThroughManagedLifecycle(t *testing.T) {
 	if len(stored.Checks) != 1 || stored.Checks[0].Name != "tool.kubectl" || stored.Checks[0].Status != model.CheckStatusPassed {
 		t.Fatalf("unexpected preflight checks %#v", stored.Checks)
 	}
+}
+
+type failingCheckpointStore struct {
+	err error
+}
+
+func (s failingCheckpointStore) Save(context.Context, model.OperationCheckpoint) error {
+	return s.err
+}
+
+func (s failingCheckpointStore) Load(context.Context, model.Operation) (model.OperationCheckpoint, bool, error) {
+	return model.OperationCheckpoint{}, false, s.err
+}
+
+func (s failingCheckpointStore) List(context.Context, model.AttemptIdentity) ([]model.OperationCheckpoint, error) {
+	return nil, s.err
 }
 
 type successRunner struct {

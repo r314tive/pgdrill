@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/application/runinput"
+	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/command"
 	"github.com/r314tive/pgdrill/internal/config"
 	"github.com/r314tive/pgdrill/internal/core"
@@ -34,8 +35,8 @@ type Service struct {
 	Runner              command.Runner
 	Sink                core.EvidenceSink
 	EventSink           core.EventSink
+	Checkpoints         core.CheckpointStore
 	Clock               func() time.Time
-	OwnershipID         func() (string, error)
 	FinalizationTimeout time.Duration
 }
 
@@ -57,6 +58,13 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 		}
 		sink = report.JSONFileSink{Path: cfg.Report.Path}
 	}
+	checkpointStore := s.Checkpoints
+	if checkpointStore == nil {
+		if strings.TrimSpace(cfg.Report.Path) == "" {
+			return model.DrillResult{}, fmt.Errorf("CNPG target verification requires a checkpoint store or report.path")
+		}
+		checkpointStore = checkpoint.DirectoryStore{Path: checkpoint.PathForReport(cfg.Report.Path)}
+	}
 
 	requirements, err := preflight.Requirements(cfg)
 	if err != nil {
@@ -73,25 +81,20 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 	if err != nil {
 		return model.DrillResult{}, fmt.Errorf("create managed CNPG drill spec: %w", err)
 	}
-	ownershipID := s.OwnershipID
-	if ownershipID == nil {
-		ownershipID = cnpg.NewOwnershipID
-	}
-
 	resolver := &managedResolver{
-		cfg:         cfg,
-		target:      cfg.Target.CNPG,
-		discover:    opts.Discover,
-		drillID:     drillID,
-		probes:      drillSpec.Document().ProbeProfile.Probes,
-		runner:      s.Runner,
-		ownershipID: ownershipID,
+		cfg:      cfg,
+		target:   cfg.Target.CNPG,
+		discover: opts.Discover,
+		drillID:  drillID,
+		probes:   drillSpec.Document().ProbeProfile.Probes,
+		runner:   s.Runner,
 	}
 	return (core.ManagedEngine{
 		Resolver:            resolver,
 		Preflight:           preflight.NewSuite(requirements, s.Runner, 0),
 		Sink:                sink,
 		EventSink:           s.EventSink,
+		Checkpoints:         checkpointStore,
 		PGDrillVersion:      version.String(),
 		Clock:               clock,
 		FinalizationTimeout: s.FinalizationTimeout,
@@ -172,16 +175,15 @@ func BuildSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameS
 }
 
 type managedResolver struct {
-	cfg         config.Config
-	target      config.CNPGTargetConfig
-	discover    bool
-	drillID     string
-	probes      []model.ProbeDescriptor
-	runner      command.Runner
-	ownershipID func() (string, error)
+	cfg      config.Config
+	target   config.CNPGTargetConfig
+	discover bool
+	drillID  string
+	probes   []model.ProbeDescriptor
+	runner   command.Runner
 }
 
-func (r *managedResolver) Resolve(ctx context.Context) (core.ManagedResolution, model.CheckReport, error) {
+func (r *managedResolver) Resolve(ctx context.Context, attempt model.AttemptContext) (core.ManagedResolution, model.CheckReport, error) {
 	report := model.CheckReport{}
 	if r.discover {
 		evidence, err := DiscoverInputs(ctx, r.cfg, &r.target, r.runner)
@@ -198,9 +200,9 @@ func (r *managedResolver) Resolve(ctx context.Context) (core.ManagedResolution, 
 		}
 	}
 
-	ownershipID, err := r.ownershipID()
+	ownershipID, err := attempt.Identity.OwnershipID()
 	if err != nil {
-		return core.ManagedResolution{}, report, fmt.Errorf("create CNPG target ownership id: %w", err)
+		return core.ManagedResolution{}, report, fmt.Errorf("derive CNPG target ownership id: %w", err)
 	}
 	spec, err := BuildSpec(r.cfg, r.target, r.drillID, r.drillID+":"+ownershipID, ownershipID)
 	if err != nil {

@@ -46,6 +46,8 @@ The top-level object is `model.DrillResult` and contains:
 - structured failure stage, message, and related evidence IDs for failed or
   aborted drills
 - normalized checks and evidence records
+- bounded terminal mutation operation records with deterministic keys,
+  checkpoint state, and reconciliation status
 
 Target-only drills may have an empty `provider` and `backup.provider`. Consumers
 must not infer a provider from the restore target or a CNPG `Backup` reference.
@@ -55,6 +57,15 @@ continue to accept reports created before these additive fields existed. If any
 spec identity field is present, the complete identity must be coherent. The
 spec digest excludes logical run and attempt IDs, so another attempt of the same
 run retains the same digest. See [drill-spec-format.md](drill-spec-format.md).
+
+The optional `operations` array contains additive
+`pgdrill.operation-checkpoint/v1alpha1` records. Each operation key is a
+canonical SHA-256 digest over the logical run, attempt, spec digest, lifecycle
+stage, operation kind, name, and ordinal. New producers reject duplicate keys,
+cross-attempt identities, non-terminal operation states, and a `passed` report
+containing any operation that did not succeed. Older reports without operation
+records remain readable. See
+[operation-checkpoint-format.md](operation-checkpoint-format.md).
 
 Command evidence contains redacted arguments, environment values, output, and a
 structured exit status. `path` is the configured executable name or path;
@@ -144,6 +155,11 @@ Prometheus samples include the configured cluster name as a `cluster` label.
 Legacy reports or configs without `cluster.name` use `cluster="unknown"`; the
 drill ID is deliberately not a label because it would create an unbounded time
 series for every execution.
+
+Mutation checkpoints are exported through `pgdrill_operations_total`, grouped
+only by bounded `kind`, `state`, and `reconciled` labels plus cluster and
+provider. Operation names, keys, run IDs, and attempt IDs are deliberately not
+metric labels.
 
 Canonical enum labels are bounded as well. Unknown provider, target, recovery
 target, probe, check-status, evidence-kind, or failure-stage values export as

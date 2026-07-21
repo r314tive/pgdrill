@@ -2,7 +2,10 @@ module github.com/r314tive/pgdrill
 
 go 1.25.0
 
-require gopkg.in/yaml.v3 v3.0.1
+require (
+	golang.org/x/sys v0.42.0
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
@@ -16,7 +19,6 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.3 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 )
 
 tool github.com/rhysd/actionlint/cmd/actionlint

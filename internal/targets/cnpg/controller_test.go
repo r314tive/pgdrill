@@ -351,10 +351,17 @@ type fakeLifecycleClient struct {
 	instance          Instance
 	createErr         error
 	createEvidence    []model.EvidenceRecord
+	ownedCluster      OwnedCluster
+	findErr           error
 	waitErr           error
 	waitHook          func() error
 	captureContextErr error
 	deleteContextErr  error
+}
+
+func (c *fakeLifecycleClient) FindOwnedCluster(_ context.Context, _ VerifyClusterSpec) (OwnedCluster, []model.EvidenceRecord, error) {
+	c.calls = append(c.calls, "find-owned")
+	return c.ownedCluster, []model.EvidenceRecord{testEvidence("find-owned")}, c.findErr
 }
 
 func (c *fakeLifecycleClient) CreateCluster(_ context.Context, _ VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error) {

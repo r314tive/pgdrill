@@ -23,6 +23,13 @@ called out explicitly even while the major version is `0`.
 - Internal `pgdrill.drill-spec/v1alpha1` snapshots with normalized canonical
   JSON, defensive copies, secret-free component revisions, deterministic
   SHA-256 digests, and separate logical run and attempt identities.
+- Attempt-scoped deterministic operation keys and ownership identities,
+  durable `pgdrill.operation-checkpoint/v1alpha1` intent records, explicit
+  target reconciliation, and fault-injection coverage for executor loss after
+  mutation but before terminal checkpoint persistence.
+- Local-target operation receipts and read-only CNPG ownership discovery used
+  to prove completed mutations without blindly replaying provider or
+  Kubernetes commands.
 
 ### Changed
 
@@ -40,6 +47,14 @@ called out explicitly even while the major version is `0`.
   spec. New lifecycle events carry the same digest, while readers remain
   compatible with earlier additive-field-absent `v1alpha1` records and reject
   tampered or internally inconsistent spec identity.
+- New reports include bounded terminal operation checkpoint records. CLI runs
+  persist current operation state under `<report.path>.checkpoints`, expose
+  optional logical run/attempt IDs, and fail closed before ordinary mutations
+  when intent cannot be durably recorded. Prometheus output exposes bounded
+  operation kind, state, and reconciliation counters without identity labels.
+- Local and CNPG cleanup ownership is now derived deterministically from the
+  immutable attempt identity. This allows a replacement executor to locate
+  the same owned resources without persisting random process-local state.
 - CNPG create confirmation is enforced by both the CLI and the application
   service. Cancellation observed during final cleanup now produces an
   `aborted` result instead of a possible false `passed` result.

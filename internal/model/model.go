@@ -543,23 +543,24 @@ func NewDrillFailure(stage DrillStage, err error, evidence []EvidenceRecord) *Dr
 }
 
 type DrillResult struct {
-	SchemaVersion  string           `json:"schema_version"`
-	PGDrillVersion string           `json:"pgdrill_version,omitempty"`
-	ID             string           `json:"id"`
-	AttemptID      string           `json:"attempt_id,omitempty"`
-	SpecDigest     string           `json:"spec_digest,omitempty"`
-	Spec           *DrillSpec       `json:"spec,omitempty"`
-	Cluster        string           `json:"cluster,omitempty"`
-	Provider       ProviderType     `json:"provider"`
-	Backup         Backup           `json:"backup"`
-	Target         TargetSpec       `json:"target"`
-	RecoveryTarget RecoveryTarget   `json:"recovery_target"`
-	StartedAt      time.Time        `json:"started_at"`
-	FinishedAt     time.Time        `json:"finished_at"`
-	Status         DrillStatus      `json:"status"`
-	Failure        *DrillFailure    `json:"failure,omitempty"`
-	Checks         []Check          `json:"checks,omitempty"`
-	Evidence       []EvidenceRecord `json:"evidence,omitempty"`
+	SchemaVersion  string                `json:"schema_version"`
+	PGDrillVersion string                `json:"pgdrill_version,omitempty"`
+	ID             string                `json:"id"`
+	AttemptID      string                `json:"attempt_id,omitempty"`
+	SpecDigest     string                `json:"spec_digest,omitempty"`
+	Spec           *DrillSpec            `json:"spec,omitempty"`
+	Cluster        string                `json:"cluster,omitempty"`
+	Provider       ProviderType          `json:"provider"`
+	Backup         Backup                `json:"backup"`
+	Target         TargetSpec            `json:"target"`
+	RecoveryTarget RecoveryTarget        `json:"recovery_target"`
+	StartedAt      time.Time             `json:"started_at"`
+	FinishedAt     time.Time             `json:"finished_at"`
+	Status         DrillStatus           `json:"status"`
+	Failure        *DrillFailure         `json:"failure,omitempty"`
+	Checks         []Check               `json:"checks,omitempty"`
+	Evidence       []EvidenceRecord      `json:"evidence,omitempty"`
+	Operations     []OperationCheckpoint `json:"operations,omitempty"`
 }
 
 type EvidenceKind string

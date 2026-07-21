@@ -28,6 +28,9 @@ CNPG verify-cluster manifest, discovery, lifecycle, and guarded target
 verification surfaces for the Kubernetes restore target. Native and CNPG
 execution now share one core lifecycle recorder; an injectable versioned run
 event contract is available for future durable history and control-plane work.
+Mutations use deterministic attempt-scoped operation and ownership identities,
+durable pre-mutation checkpoints, and explicit target reconciliation instead
+of blind command replay.
 
 ## Goals
 
@@ -65,6 +68,9 @@ Additional providers can be added behind the same internal provider contract.
   failed or aborted drill, linked to the evidence collected before failure.
 - **Run event**: an optional ordered stage transition identified by logical run
   and execution attempt; the CLI does not persist an event journal by default.
+- **Operation checkpoint**: a durable intent and terminal mutation state bound
+  to one attempt. It lets a replacement executor reconcile owned resources
+  without assuming that a failed command had no effect.
 
 The implemented full-drill target is `local`. Kubernetes is available through
 the guarded CloudNativePG `target manifest` and `target verify` paths;
@@ -141,6 +147,11 @@ go run ./cmd/pgdrill target verify -f path/to/cnpg-verify-config.yaml -discover 
 go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```
+
+Automation may provide stable correlation identities with the `-run-id` or
+`-drill-id` flag and the `-attempt-id` flag. Reusing an attempt that already has
+mutation checkpoints is rejected until its orphaned state has been reconciled;
+it is not permission to replay commands.
 
 Long-running commands handle `SIGINT` and `SIGTERM`. The active provider,
 target, or probe command is canceled first; pgdrill then uses a bounded

@@ -29,6 +29,9 @@ type BackupProvider interface {
 
 type RestoreTarget interface {
 	Type() model.RestoreTargetType
+	BindAttempt(attempt model.AttemptContext) error
+	BeginOperation(operation model.Operation) error
+	Reconcile(ctx context.Context, checkpoint model.OperationCheckpoint) (model.OperationReconciliation, error)
 	Prepare(ctx context.Context, spec model.TargetSpec) error
 	Execute(ctx context.Context, step model.RestoreStep) ([]model.EvidenceRecord, error)
 	StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (model.RunningPostgres, []model.EvidenceRecord, error)
@@ -38,7 +41,7 @@ type RestoreTarget interface {
 // ManagedDrillResolver performs read-only discovery and constructs an
 // operator-managed restore target. Resolve must not create target resources.
 type ManagedDrillResolver interface {
-	Resolve(ctx context.Context) (ManagedResolution, model.CheckReport, error)
+	Resolve(ctx context.Context, attempt model.AttemptContext) (ManagedResolution, model.CheckReport, error)
 }
 
 // ManagedRestoreTarget owns an operator-managed recovery lifecycle where the
@@ -48,6 +51,9 @@ type ManagedDrillResolver interface {
 // successful Start and must not duplicate target-owned failure cleanup.
 type ManagedRestoreTarget interface {
 	Type() model.RestoreTargetType
+	BindAttempt(attempt model.AttemptContext) error
+	BeginOperation(operation model.Operation) error
+	Reconcile(ctx context.Context, checkpoint model.OperationCheckpoint) (model.OperationReconciliation, error)
 	Start(ctx context.Context) (model.RunningPostgres, model.CheckReport, error)
 	Destroy(ctx context.Context) ([]model.EvidenceRecord, error)
 }
@@ -80,6 +86,16 @@ type EvidenceSink interface {
 // delivery failures.
 type EventSink interface {
 	WriteEvent(ctx context.Context, event model.RunEvent) error
+}
+
+// CheckpointStore durably records mutation intent before an operation starts.
+// Save must return nil only when the checkpoint has been durably accepted;
+// implementations must enforce immutable operation identity and monotonic
+// state transitions.
+type CheckpointStore interface {
+	Save(ctx context.Context, checkpoint model.OperationCheckpoint) error
+	Load(ctx context.Context, operation model.Operation) (model.OperationCheckpoint, bool, error)
+	List(ctx context.Context, identity model.AttemptIdentity) ([]model.OperationCheckpoint, error)
 }
 
 type Preflight interface {

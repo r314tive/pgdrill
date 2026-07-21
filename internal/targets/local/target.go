@@ -2,14 +2,15 @@ package local
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,8 +21,10 @@ import (
 )
 
 const (
-	markerFile   = ".pgdrill-target"
-	markerHeader = "pgdrill local restore target\n"
+	markerFile       = ".pgdrill-target"
+	markerHeader     = "pgdrill local restore target\n"
+	receiptDirectory = ".pgdrill-operations"
+	maxReceiptBytes  = 16 << 10
 )
 
 type Config struct {
@@ -36,12 +39,15 @@ type Config struct {
 }
 
 type Target struct {
-	cfg      Config
-	runner   command.Runner
-	workDir  string
-	prepared bool
-	ownerID  string
-	postgres *postgresProcess
+	cfg       Config
+	runner    command.Runner
+	workDir   string
+	prepared  bool
+	ownerID   string
+	attempt   model.AttemptContext
+	operation model.Operation
+	postgres  *postgresProcess
+	recovered *recoveredPostgres
 }
 
 type postgresProcess struct {
@@ -49,6 +55,20 @@ type postgresProcess struct {
 	done    chan error
 	logPath string
 	port    int
+}
+
+type recoveredPostgres struct {
+	pid     int
+	logPath string
+	port    int
+}
+
+type operationReceipt struct {
+	OperationKey string                 `json:"operation_key"`
+	CompletedAt  time.Time              `json:"completed_at"`
+	Postgres     *model.RunningPostgres `json:"postgres,omitempty"`
+	PID          int                    `json:"pid,omitempty"`
+	LogPath      string                 `json:"log_path,omitempty"`
 }
 
 func New(cfg Config, runner command.Runner) *Target {
@@ -63,6 +83,65 @@ func New(cfg Config, runner command.Runner) *Target {
 
 func (t *Target) Type() model.RestoreTargetType {
 	return model.RestoreTargetLocal
+}
+
+func (t *Target) BindAttempt(attempt model.AttemptContext) error {
+	if err := attempt.Validate(); err != nil {
+		return fmt.Errorf("validate local target attempt: %w", err)
+	}
+	if attempt.Target.Type != model.RestoreTargetLocal {
+		return fmt.Errorf("local target cannot bind target type %q", attempt.Target.Type)
+	}
+	if err := validateTargetSpec(attempt.Target); err != nil {
+		return err
+	}
+	if t.prepared || t.postgres != nil || t.recovered != nil {
+		return fmt.Errorf("local target cannot rebind an active attempt")
+	}
+	ownerID, err := attempt.Identity.OwnershipID()
+	if err != nil {
+		return fmt.Errorf("derive local target ownership id: %w", err)
+	}
+	t.attempt = attempt
+	t.workDir = filepath.Clean(attempt.Target.WorkDir)
+	t.ownerID = ownerID
+	t.operation = model.Operation{}
+	return nil
+}
+
+func (t *Target) BeginOperation(operation model.Operation) error {
+	if err := operation.Validate(); err != nil {
+		return fmt.Errorf("validate local target operation: %w", err)
+	}
+	if err := t.attempt.Validate(); err != nil {
+		return fmt.Errorf("local target attempt is not bound: %w", err)
+	}
+	if operation.Identity != t.attempt.Identity {
+		return fmt.Errorf("operation attempt identity does not match local target binding")
+	}
+	t.operation = operation
+	return nil
+}
+
+func (t *Target) Reconcile(_ context.Context, checkpoint model.OperationCheckpoint) (model.OperationReconciliation, error) {
+	if err := checkpoint.Validate(); err != nil {
+		return model.OperationReconciliation{}, fmt.Errorf("validate local target checkpoint: %w", err)
+	}
+	if t.operation.Key != checkpoint.Operation.Key {
+		return model.OperationReconciliation{}, fmt.Errorf("checkpoint operation does not match active local target operation")
+	}
+	switch checkpoint.Operation.Kind {
+	case model.OperationTargetPrepare:
+		return t.reconcilePrepare()
+	case model.OperationRestoreStep:
+		return t.reconcileReceipt(checkpoint.Operation, false)
+	case model.OperationPostgresStart:
+		return t.reconcileReceipt(checkpoint.Operation, true)
+	case model.OperationTargetCleanup:
+		return t.reconcileCleanup()
+	default:
+		return model.OperationReconciliation{}, fmt.Errorf("local target cannot reconcile operation kind %q", checkpoint.Operation.Kind)
+	}
 }
 
 func (t *Target) Validate(ctx context.Context, spec model.TargetSpec) error {
@@ -86,12 +165,13 @@ func (t *Target) Prepare(ctx context.Context, spec model.TargetSpec) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	ownerID, err := newOwnerID()
-	if err != nil {
-		return fmt.Errorf("create local target ownership id: %w", err)
+	if t.operation.Kind != model.OperationTargetPrepare {
+		return fmt.Errorf("local target prepare operation is not bound")
 	}
-	workDir := filepath.Clean(spec.WorkDir)
+	if !reflect.DeepEqual(spec, t.attempt.Target) {
+		return fmt.Errorf("local target spec does not match bound attempt target")
+	}
+	workDir := t.workDir
 	created, err := prepareEmptyWorkDir(workDir)
 	if err != nil {
 		return err
@@ -107,7 +187,7 @@ func (t *Target) Prepare(ctx context.Context, spec model.TargetSpec) error {
 	}
 
 	markerPath := filepath.Join(workDir, markerFile)
-	if err := writeOwnershipMarker(markerPath, ownerID); err != nil {
+	if err := writeOwnershipMarker(markerPath, t.ownerID); err != nil {
 		cleanupCreated()
 		return fmt.Errorf("write local target marker %s: %w", markerPath, err)
 	}
@@ -118,7 +198,6 @@ func (t *Target) Prepare(ctx context.Context, spec model.TargetSpec) error {
 	}
 
 	t.workDir = workDir
-	t.ownerID = ownerID
 	t.prepared = true
 	return nil
 }
@@ -139,6 +218,9 @@ func (t *Target) Execute(ctx context.Context, step model.RestoreStep) ([]model.E
 	}
 	if step.Command == nil && len(step.Files) == 0 {
 		return nil, fmt.Errorf("local target step %q has no command or file operations", step.Name)
+	}
+	if t.operation.Kind != model.OperationRestoreStep || t.operation.Name != step.Name {
+		return nil, fmt.Errorf("local target restore operation does not match step %q", step.Name)
 	}
 
 	evidence := []model.EvidenceRecord{}
@@ -165,6 +247,12 @@ func (t *Target) Execute(ctx context.Context, step model.RestoreStep) ([]model.E
 			return evidence, fmt.Errorf("local target step %q failed: %s", step.Name, result.Evidence.ExitStatus.Summary())
 		}
 	}
+	if err := t.writeOperationReceipt(operationReceipt{
+		OperationKey: t.operation.Key,
+		CompletedAt:  time.Now().UTC(),
+	}); err != nil {
+		return evidence, fmt.Errorf("write local target step %q operation receipt: %w", step.Name, err)
+	}
 	return evidence, nil
 }
 
@@ -180,6 +268,9 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 	}
 	if t.postgres != nil {
 		return model.RunningPostgres{}, nil, fmt.Errorf("postgres is already running")
+	}
+	if t.operation.Kind != model.OperationPostgresStart {
+		return model.RunningPostgres{}, nil, fmt.Errorf("local target postgres start operation is not bound")
 	}
 
 	binary := firstNonEmpty(cfg.PostgresBinary, t.cfg.PostgresBinary, "postgres")
@@ -272,15 +363,28 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 	}
 
 	connString := fmt.Sprintf("postgresql://127.0.0.1:%d/postgres?sslmode=disable", port)
-	return model.RunningPostgres{
+	running := model.RunningPostgres{
 		ConnString:    connString,
 		DataDirectory: cfg.DataDirectory,
 		Host:          "127.0.0.1",
 		Port:          port,
-	}, []model.EvidenceRecord{evidence}, nil
+	}
+	if err := t.writeOperationReceipt(operationReceipt{
+		OperationKey: t.operation.Key,
+		CompletedAt:  time.Now().UTC(),
+		Postgres:     &running,
+		PID:          cmd.Process.Pid,
+		LogPath:      logPath,
+	}); err != nil {
+		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("write postgres start operation receipt: %w", err)
+	}
+	return running, []model.EvidenceRecord{evidence}, nil
 }
 
 func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
+	if t.operation.Kind != model.OperationTargetCleanup {
+		return nil, fmt.Errorf("local target cleanup operation is not bound")
+	}
 	if !t.prepared {
 		return nil, nil
 	}
@@ -288,6 +392,9 @@ func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
 	evidence := []model.EvidenceRecord{}
 	if t.postgres != nil {
 		evidence = append(evidence, t.stopPostgres())
+	}
+	if t.recovered != nil {
+		evidence = append(evidence, t.stopRecoveredPostgres())
 	}
 
 	attributes := map[string]string{
@@ -297,12 +404,16 @@ func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
 	if !t.cfg.RemoveWorkDir {
 		attributes["cleanup"] = "skipped"
 		t.prepared = false
-		t.ownerID = ""
 		return append(evidence, targetEvidence(attributes)), nil
 	}
 
 	markerPath := filepath.Join(t.workDir, markerFile)
 	workDirInfo, err := os.Lstat(t.workDir)
+	if errors.Is(err, os.ErrNotExist) {
+		attributes["cleanup"] = "already-removed"
+		t.prepared = false
+		return append(evidence, targetEvidence(attributes)), nil
+	}
 	if err != nil {
 		attributes["cleanup"] = "refused"
 		return append(evidence, targetEvidence(attributes)), fmt.Errorf("inspect local target work_dir %s: %w", t.workDir, err)
@@ -326,8 +437,276 @@ func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
 
 	attributes["cleanup"] = "removed"
 	t.prepared = false
-	t.ownerID = ""
 	return append(evidence, targetEvidence(attributes)), nil
+}
+
+func (t *Target) reconcilePrepare() (model.OperationReconciliation, error) {
+	info, err := os.Lstat(t.workDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return t.reconciliation(model.ReconciliationNotApplied, "local target work_dir does not exist"), nil
+	}
+	if err != nil {
+		return model.OperationReconciliation{}, fmt.Errorf("inspect local target work_dir %s: %w", t.workDir, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return t.reconciliation(model.ReconciliationConflict, "local target work_dir is not a real directory"), nil
+	}
+	marker, err := os.ReadFile(filepath.Join(t.workDir, markerFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return t.reconciliation(model.ReconciliationUnknown, "local target work_dir exists without an ownership marker"), nil
+	}
+	if err != nil {
+		return model.OperationReconciliation{}, fmt.Errorf("read local target ownership marker: %w", err)
+	}
+	if string(marker) != ownershipMarker(t.ownerID) {
+		return t.reconciliation(model.ReconciliationConflict, "local target ownership marker belongs to another attempt"), nil
+	}
+	t.prepared = true
+	return t.reconciliation(model.ReconciliationCompleted, "local target ownership marker proves preparation"), nil
+}
+
+func (t *Target) reconcileReceipt(operation model.Operation, requirePostgres bool) (model.OperationReconciliation, error) {
+	prepare, err := t.reconcilePrepare()
+	if err != nil {
+		return model.OperationReconciliation{}, err
+	}
+	if prepare.Disposition != model.ReconciliationCompleted {
+		return prepare, nil
+	}
+	receipt, found, err := t.readOperationReceipt(operation)
+	if err != nil {
+		return t.reconciliation(model.ReconciliationUnknown, "operation receipt could not be validated"), nil
+	}
+	if !found {
+		return t.reconciliation(model.ReconciliationUnknown, "operation receipt is absent; mutation outcome cannot be proven"), nil
+	}
+	if !requirePostgres {
+		return t.reconciliation(model.ReconciliationCompleted, "operation receipt proves restore step completion"), nil
+	}
+	if receipt.Postgres == nil || receipt.PID <= 0 {
+		return t.reconciliation(model.ReconciliationUnknown, "postgres operation receipt is incomplete"), nil
+	}
+	active, err := postgresProcessMatches(receipt.Postgres.DataDirectory, receipt.PID)
+	if err != nil {
+		return model.OperationReconciliation{}, err
+	}
+	if !active {
+		return t.reconciliation(model.ReconciliationUnknown, "postgres operation completed but its owned process is not running"), nil
+	}
+	t.recovered = &recoveredPostgres{pid: receipt.PID, logPath: receipt.LogPath, port: receipt.Postgres.Port}
+	result := t.reconciliation(model.ReconciliationCompleted, "operation receipt and postmaster.pid prove postgres startup")
+	pg := *receipt.Postgres
+	result.Postgres = &pg
+	return result, nil
+}
+
+func (t *Target) reconcileCleanup() (model.OperationReconciliation, error) {
+	info, err := os.Lstat(t.workDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return t.reconciliation(model.ReconciliationCompleted, "local target work_dir is absent"), nil
+	}
+	if err != nil {
+		return model.OperationReconciliation{}, fmt.Errorf("inspect local target work_dir %s: %w", t.workDir, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return t.reconciliation(model.ReconciliationConflict, "local target work_dir is not a real directory"), nil
+	}
+	marker, err := os.ReadFile(filepath.Join(t.workDir, markerFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return t.reconciliation(model.ReconciliationConflict, "local target work_dir has no ownership marker"), nil
+	}
+	if err != nil {
+		return model.OperationReconciliation{}, fmt.Errorf("read local target ownership marker: %w", err)
+	}
+	if string(marker) != ownershipMarker(t.ownerID) {
+		return t.reconciliation(model.ReconciliationConflict, "local target ownership marker belongs to another attempt"), nil
+	}
+	t.prepared = true
+	if recovered, err := t.findRecoveredPostgres(); err != nil {
+		return model.OperationReconciliation{}, err
+	} else if recovered != nil {
+		t.recovered = recovered
+		return t.reconciliation(model.ReconciliationNotApplied, "owned postgres process is still running"), nil
+	}
+	if !t.cfg.RemoveWorkDir {
+		return t.reconciliation(model.ReconciliationCompleted, "retention policy keeps the stopped local target work_dir"), nil
+	}
+	return t.reconciliation(model.ReconciliationNotApplied, "owned local target work_dir still requires cleanup"), nil
+}
+
+func (t *Target) reconciliation(disposition model.ReconciliationDisposition, message string) model.OperationReconciliation {
+	now := time.Now().UTC()
+	return model.OperationReconciliation{
+		Disposition: disposition,
+		Message:     message,
+		Evidence: []model.EvidenceRecord{runtimeEvidence("operation-reconcile", map[string]string{
+			"disposition":   string(disposition),
+			"operation_key": t.operation.Key,
+			"operation":     t.operation.Name,
+			"work_dir":      t.workDir,
+		}, now)},
+	}
+}
+
+func (t *Target) writeOperationReceipt(receipt operationReceipt) error {
+	if receipt.OperationKey == "" || receipt.OperationKey != t.operation.Key {
+		return fmt.Errorf("operation receipt key does not match active operation")
+	}
+	if receipt.CompletedAt.IsZero() {
+		return fmt.Errorf("operation receipt completed_at is required")
+	}
+	dir := filepath.Join(t.workDir, receiptDirectory)
+	if err := t.ensurePathHasNoSymlinks(dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create operation receipt directory: %w", err)
+	}
+	if err := t.ensurePathHasNoSymlinks(dir); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(receipt)
+	if err != nil {
+		return fmt.Errorf("encode operation receipt: %w", err)
+	}
+	payload = append(payload, '\n')
+	if len(payload) > maxReceiptBytes {
+		return fmt.Errorf("operation receipt exceeds %d bytes", maxReceiptBytes)
+	}
+	path := t.operationReceiptPath(t.operation)
+	file, err := os.CreateTemp(dir, ".receipt-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary operation receipt: %w", err)
+	}
+	tmpPath := file.Name()
+	defer os.Remove(tmpPath) //nolint:errcheck
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("chmod temporary operation receipt: %w", err)
+	}
+	if _, err := file.Write(payload); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write operation receipt: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync operation receipt: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close operation receipt: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace operation receipt: %w", err)
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("open operation receipt directory: %w", err)
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	return errors.Join(syncErr, closeErr)
+}
+
+func (t *Target) readOperationReceipt(operation model.Operation) (operationReceipt, bool, error) {
+	path := t.operationReceiptPath(operation)
+	if err := t.ensurePathHasNoSymlinks(path); err != nil {
+		return operationReceipt{}, false, err
+	}
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return operationReceipt{}, false, nil
+	}
+	if err != nil {
+		return operationReceipt{}, false, fmt.Errorf("open operation receipt: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return operationReceipt{}, false, fmt.Errorf("stat operation receipt: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxReceiptBytes {
+		return operationReceipt{}, false, fmt.Errorf("operation receipt is not a bounded regular file")
+	}
+	decoder := json.NewDecoder(io.LimitReader(file, maxReceiptBytes+1))
+	decoder.DisallowUnknownFields()
+	var receipt operationReceipt
+	if err := decoder.Decode(&receipt); err != nil {
+		return operationReceipt{}, false, fmt.Errorf("decode operation receipt: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return operationReceipt{}, false, fmt.Errorf("operation receipt contains trailing data")
+	}
+	if receipt.OperationKey != operation.Key || receipt.CompletedAt.IsZero() {
+		return operationReceipt{}, false, fmt.Errorf("operation receipt identity is invalid")
+	}
+	return receipt, true, nil
+}
+
+func (t *Target) operationReceiptPath(operation model.Operation) string {
+	return filepath.Join(t.workDir, receiptDirectory, strings.TrimPrefix(operation.Key, "sha256:")+".json")
+}
+
+func (t *Target) findRecoveredPostgres() (*recoveredPostgres, error) {
+	dir := filepath.Join(t.workDir, receiptDirectory)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read operation receipt directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		file, err := os.Open(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var receipt operationReceipt
+		decodeErr := json.NewDecoder(io.LimitReader(file, maxReceiptBytes+1)).Decode(&receipt)
+		closeErr := file.Close()
+		if err := errors.Join(decodeErr, closeErr); err != nil {
+			return nil, fmt.Errorf("read operation receipt %s: %w", entry.Name(), err)
+		}
+		if receipt.Postgres == nil || receipt.PID <= 0 {
+			continue
+		}
+		active, err := postgresProcessMatches(receipt.Postgres.DataDirectory, receipt.PID)
+		if err != nil {
+			return nil, err
+		}
+		if active {
+			return &recoveredPostgres{pid: receipt.PID, logPath: receipt.LogPath, port: receipt.Postgres.Port}, nil
+		}
+	}
+	return nil, nil
+}
+
+func postgresProcessMatches(dataDirectory string, pid int) (bool, error) {
+	if dataDirectory == "" || pid <= 0 {
+		return false, nil
+	}
+	payload, err := os.ReadFile(filepath.Join(dataDirectory, "postmaster.pid"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read postmaster.pid: %w", err)
+	}
+	line, _, _ := strings.Cut(string(payload), "\n")
+	recordedPID, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || recordedPID != pid {
+		return false, nil
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect postgres process %d: %w", pid, err)
+	}
+	return true, nil
 }
 
 func (t *Target) invocation(spec model.CommandSpec) (command.Invocation, error) {
@@ -530,14 +909,6 @@ func inspectEmptyWorkDir(path string) (bool, error) {
 	return true, nil
 }
 
-func newOwnerID() (string, error) {
-	data := make([]byte, 16)
-	if _, err := rand.Read(data); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(data), nil
-}
-
 func ownershipMarker(ownerID string) string {
 	return markerHeader + "owner=" + ownerID + "\n"
 }
@@ -668,6 +1039,39 @@ func (t *Target) stopPostgres() model.EvidenceRecord {
 		attributes["exit_error"] = errorString(err)
 	}
 
+	return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())
+}
+
+func (t *Target) stopRecoveredPostgres() model.EvidenceRecord {
+	process := t.recovered
+	t.recovered = nil
+	attributes := map[string]string{
+		"log_path":  process.logPath,
+		"pid":       strconv.Itoa(process.pid),
+		"port":      strconv.Itoa(process.port),
+		"recovered": "true",
+	}
+	if err := syscall.Kill(process.pid, syscall.SIGTERM); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			attributes["postgres_shutdown"] = "already_exited"
+		} else {
+			attributes["postgres_shutdown"] = "signal_failed"
+			attributes["error"] = err.Error()
+		}
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())
+	}
+	deadline := time.Now().Add(t.shutdownTimeout())
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(process.pid, 0); errors.Is(err, syscall.ESRCH) {
+			attributes["postgres_shutdown"] = "terminated"
+			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	attributes["postgres_shutdown"] = "killed"
+	if err := syscall.Kill(process.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		attributes["error"] = err.Error()
+	}
 	return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())
 }
 

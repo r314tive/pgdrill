@@ -34,6 +34,7 @@ type ManagedEngine struct {
 	Preflight      Preflight
 	Sink           EvidenceSink
 	EventSink      EventSink
+	Checkpoints    CheckpointStore
 	PGDrillVersion string
 	Clock          func() time.Time
 
@@ -104,6 +105,15 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		}
 		return lifecycle.Finish(ctx, status, runErr)
 	}
+	attempt := model.AttemptContext{
+		Identity: model.AttemptIdentity{
+			RunID:      result.ID,
+			AttemptID:  result.AttemptID,
+			SpecDigest: result.SpecDigest,
+		},
+		Target: specDocument.Target.Spec,
+	}
+	var operations *operationExecutor
 
 	err = lifecycle.RunStage(ctx, model.DrillStageRequestValidation, func() error {
 		if err := ctx.Err(); err != nil {
@@ -126,6 +136,17 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		}
 		if err := validateManagedBackupSelection(specDocument.BackupSelection, initialBackup, true); err != nil {
 			return fmt.Errorf("validate provisional managed backup selection: %w", err)
+		}
+		if e.Checkpoints == nil {
+			return fmt.Errorf("checkpoint store is required")
+		}
+		if err := attempt.Validate(); err != nil {
+			return fmt.Errorf("validate attempt context: %w", err)
+		}
+		var err error
+		operations, err = newOperationExecutor(e.Checkpoints, &result, clock, e.FinalizationTimeout)
+		if err != nil {
+			return fmt.Errorf("create operation executor: %w", err)
 		}
 		return nil
 	})
@@ -163,7 +184,7 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	err = lifecycle.RunStage(ctx, model.DrillStageTargetDiscovery, func() error {
 		var discoveryReport model.CheckReport
 		var resolveErr error
-		resolution, discoveryReport, resolveErr = e.Resolver.Resolve(ctx)
+		resolution, discoveryReport, resolveErr = e.Resolver.Resolve(ctx, attempt)
 		result.Evidence = append(result.Evidence, discoveryReport.Evidence...)
 		if resolveErr != nil {
 			if reportErr := validateCheckReport(discoveryReport, false); reportErr == nil {
@@ -183,6 +204,9 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if err := validateManagedResolution(specDocument.Target.Spec, specDocument.ProbeProfile.Probes, resolution); err != nil {
 			return fmt.Errorf("validate managed target resolution: %w", err)
 		}
+		if err := resolution.Target.BindAttempt(attempt); err != nil {
+			return fmt.Errorf("bind managed restore target attempt: %w", err)
+		}
 		if err := validateManagedBackupSelection(specDocument.BackupSelection, resolution.Backup, false); err != nil {
 			return fmt.Errorf("validate resolved managed backup selection: %w", err)
 		}
@@ -195,15 +219,22 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	}
 
 	targetStarted := false
+	cleanupOperation, err := model.NewOperation(attempt.Identity, model.DrillStageTargetCleanup, model.OperationTargetCleanup, "cleanup-target", 1)
+	if err != nil {
+		return fail(model.DrillStageTargetDiscovery, fmt.Errorf("create managed target cleanup operation: %w", err))
+	}
 	cleanup := func() error {
 		if !targetStarted {
 			return nil
 		}
 		return lifecycle.RunFinalizationStage(ctx, model.DrillStageTargetCleanup, func() error {
 			cleanupCtx, cancel := finalize.Context(ctx, e.FinalizationTimeout)
-			evidence, destroyErr := resolution.Target.Destroy(cleanupCtx)
+			output, destroyErr := operations.Execute(cleanupCtx, resolution.Target, cleanupOperation, true, func() (operationOutput, error) {
+				evidence, err := resolution.Target.Destroy(cleanupCtx)
+				return operationOutput{evidence: evidence}, err
+			})
 			cancel()
-			result.Evidence = append(result.Evidence, evidence...)
+			result.Evidence = append(result.Evidence, output.evidence...)
 			targetStarted = false
 			var cleanupErr error
 			if destroyErr != nil {
@@ -218,9 +249,18 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 
 	var pg model.RunningPostgres
 	err = lifecycle.RunStage(ctx, model.DrillStageTargetStart, func() error {
-		startReport := model.CheckReport{}
-		var startErr error
-		pg, startReport, startErr = resolution.Target.Start(ctx)
+		operation, operationErr := model.NewOperation(attempt.Identity, model.DrillStageTargetStart, model.OperationManagedStart, "start-managed-target", 0)
+		if operationErr != nil {
+			return fmt.Errorf("create managed target start operation: %w", operationErr)
+		}
+		output, startErr := operations.Execute(ctx, resolution.Target, operation, false, func() (operationOutput, error) {
+			running, report, err := resolution.Target.Start(ctx)
+			if err == nil {
+				targetStarted = true
+			}
+			return operationOutput{postgres: &running, report: report}, err
+		})
+		startReport := output.report
 		result.Evidence = append(result.Evidence, startReport.Evidence...)
 		if startErr != nil {
 			if reportErr := validateCheckReport(startReport, false); reportErr == nil {
@@ -230,6 +270,10 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 			}
 			return fmt.Errorf("start managed restore target: %w", startErr)
 		}
+		if output.postgres == nil {
+			return fmt.Errorf("managed target start operation returned no running postgres")
+		}
+		pg = *output.postgres
 		targetStarted = true
 		if err := validateCheckReport(startReport, true); err != nil {
 			return fmt.Errorf("validate managed target start report: %w", err)

@@ -97,11 +97,11 @@ timestamps are the evidence used to evaluate RTO.
 ## Kubernetes Target Ownership
 
 `pgdrill target verify` uses `kubectl create`, never `apply`, so an existing
-`target.cnpg.verify_cluster_name` is not adopted. Every verification run adds a
-random ownership label to the CNPG `Cluster` and propagates it to related
-objects through `spec.inheritedMetadata`. Cluster and PVC cleanup uses that
-label selector in addition to idempotent delete flags; an unqualified resource
-name is not sufficient authority for deletion.
+`target.cnpg.verify_cluster_name` is not adopted. Every verification attempt
+adds an attempt-derived ownership label to the CNPG `Cluster` and propagates it
+to related objects through `spec.inheritedMetadata`. Cluster and PVC cleanup
+uses that label selector in addition to idempotent delete flags; an unqualified
+resource name is not sufficient authority for deletion.
 
 `target.kubernetes.cleanup_on_fail` controls cleanup after startup failures and
 ambiguous create outcomes. Once a verify cluster reaches Ready, teardown is
@@ -120,14 +120,20 @@ port from 1 through 65535. Kubernetes evidence tail counts must be
 non-negative; zero leaves the corresponding native tail option unset.
 
 Set `target.remove_work_dir: true` for recurring automation. pgdrill writes a
-random per-run ownership marker and verifies the exact marker before recursive
-cleanup. When removal is disabled, choose a fresh path for the next drill or
-archive/remove the retained directory explicitly. Existing non-empty paths,
-symlink work directories, mismatched markers, and file-step paths that traverse
-symlinks are refused.
+deterministic attempt-scoped ownership marker and verifies the exact marker
+before recursive cleanup. When removal is disabled, choose a fresh path for the
+next drill or archive/remove the retained directory explicitly. Existing
+non-empty paths, symlink work directories, mismatched markers, and file-step
+paths that traverse symlinks are refused.
 
 `report.path` must be outside the local work directory. Cleanup happens before
 the final report write, so placing the report below `work_dir` would otherwise
 recreate a directory that no longer has pgdrill's ownership marker. Existing
 parent-directory symlinks are resolved for this boundary check, so an alias
 cannot place the report back inside the restore directory.
+
+Mutating CLI commands derive a durable checkpoint directory by appending
+`.checkpoints` to `report.path`. Ordinary target mutations fail closed if their
+intent cannot be persisted. The directory is intentionally separate from the
+terminal report so executor loss still leaves reconciliation state. See
+[operation-checkpoint-format.md](operation-checkpoint-format.md).

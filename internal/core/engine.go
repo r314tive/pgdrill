@@ -27,6 +27,7 @@ type Engine struct {
 	Probes           []Probe
 	Sink             EvidenceSink
 	EventSink        EventSink
+	Checkpoints      CheckpointStore
 	PGDrillVersion   string
 	Clock            func() time.Time
 
@@ -104,6 +105,15 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		}
 		return lifecycle.Finish(ctx, status, runErr)
 	}
+	attempt := model.AttemptContext{
+		Identity: model.AttemptIdentity{
+			RunID:      result.ID,
+			AttemptID:  result.AttemptID,
+			SpecDigest: result.SpecDigest,
+		},
+		Target: specDocument.Target.Spec,
+	}
+	var operations *operationExecutor
 
 	err = lifecycle.RunStage(ctx, model.DrillStageRequestValidation, func() error {
 		if err := ctx.Err(); err != nil {
@@ -137,6 +147,20 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		}
 		if err := validateProbeBindings(specDocument.ProbeProfile.Probes, e.Probes); err != nil {
 			return err
+		}
+		if e.Checkpoints == nil {
+			return fmt.Errorf("checkpoint store is required")
+		}
+		if err := attempt.Validate(); err != nil {
+			return fmt.Errorf("validate attempt context: %w", err)
+		}
+		if err := e.Target.BindAttempt(attempt); err != nil {
+			return fmt.Errorf("bind restore target attempt: %w", err)
+		}
+		var err error
+		operations, err = newOperationExecutor(e.Checkpoints, &result, clock, e.FinalizationTimeout)
+		if err != nil {
+			return fmt.Errorf("create operation executor: %w", err)
 		}
 		return nil
 	})
@@ -247,15 +271,22 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 
 	prepared := false
+	cleanupOperation, err := model.NewOperation(attempt.Identity, model.DrillStageTargetCleanup, model.OperationTargetCleanup, "cleanup-target", len(plan.Steps)+2)
+	if err != nil {
+		return fail(model.DrillStageRestorePlanning, fmt.Errorf("create target cleanup operation: %w", err))
+	}
 	cleanup := func() error {
 		if !prepared {
 			return nil
 		}
 		return lifecycle.RunFinalizationStage(ctx, model.DrillStageTargetCleanup, func() error {
 			cleanupCtx, cancel := finalize.Context(ctx, e.FinalizationTimeout)
-			evidence, destroyErr := e.Target.Destroy(cleanupCtx)
+			output, destroyErr := operations.Execute(cleanupCtx, e.Target, cleanupOperation, true, func() (operationOutput, error) {
+				evidence, err := e.Target.Destroy(cleanupCtx)
+				return operationOutput{evidence: evidence}, err
+			})
 			cancel()
-			result.Evidence = append(result.Evidence, evidence...)
+			result.Evidence = append(result.Evidence, output.evidence...)
 			prepared = false
 			var cleanupErr error
 			if destroyErr != nil {
@@ -269,8 +300,14 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 
 	err = lifecycle.RunStage(ctx, model.DrillStageTargetPreparation, func() error {
-		prepareErr := e.Target.Prepare(ctx, specDocument.Target.Spec)
-		prepared = true
+		operation, operationErr := model.NewOperation(attempt.Identity, model.DrillStageTargetPreparation, model.OperationTargetPrepare, "prepare-target", 0)
+		if operationErr != nil {
+			return fmt.Errorf("create target preparation operation: %w", operationErr)
+		}
+		_, prepareErr := operations.Execute(ctx, e.Target, operation, false, func() (operationOutput, error) {
+			prepared = true
+			return operationOutput{}, e.Target.Prepare(ctx, specDocument.Target.Spec)
+		})
 		if prepareErr != nil {
 			return fmt.Errorf("prepare restore target: %w", prepareErr)
 		}
@@ -285,9 +322,16 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 
 	err = lifecycle.RunStage(ctx, model.DrillStageRestoreExecution, func() error {
-		for _, step := range plan.Steps {
-			evidence, executeErr := e.Target.Execute(ctx, step)
-			result.Evidence = append(result.Evidence, evidence...)
+		for index, step := range plan.Steps {
+			operation, operationErr := model.NewOperation(attempt.Identity, model.DrillStageRestoreExecution, model.OperationRestoreStep, step.Name, index+1)
+			if operationErr != nil {
+				return fmt.Errorf("create restore step %q operation: %w", step.Name, operationErr)
+			}
+			output, executeErr := operations.Execute(ctx, e.Target, operation, false, func() (operationOutput, error) {
+				evidence, err := e.Target.Execute(ctx, step)
+				return operationOutput{evidence: evidence}, err
+			})
+			result.Evidence = append(result.Evidence, output.evidence...)
 			if executeErr != nil {
 				return fmt.Errorf("execute restore step %q: %w", step.Name, executeErr)
 			}
@@ -301,13 +345,22 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 
 	var pg model.RunningPostgres
 	err = lifecycle.RunStage(ctx, model.DrillStagePostgresStart, func() error {
-		var startErr error
-		var startEvidence []model.EvidenceRecord
-		pg, startEvidence, startErr = e.Target.StartPostgres(ctx, plan.Runtime)
-		result.Evidence = append(result.Evidence, startEvidence...)
+		operation, operationErr := model.NewOperation(attempt.Identity, model.DrillStagePostgresStart, model.OperationPostgresStart, "start-postgres", len(plan.Steps)+1)
+		if operationErr != nil {
+			return fmt.Errorf("create postgres start operation: %w", operationErr)
+		}
+		output, startErr := operations.Execute(ctx, e.Target, operation, false, func() (operationOutput, error) {
+			running, evidence, err := e.Target.StartPostgres(ctx, plan.Runtime)
+			return operationOutput{postgres: &running, evidence: evidence}, err
+		})
+		result.Evidence = append(result.Evidence, output.evidence...)
 		if startErr != nil {
 			return fmt.Errorf("start postgres: %w", startErr)
 		}
+		if output.postgres == nil {
+			return fmt.Errorf("start postgres operation returned no running postgres")
+		}
+		pg = *output.postgres
 		return nil
 	})
 	if err != nil {

@@ -19,10 +19,16 @@ const (
 
 type Client interface {
 	CreateCluster(ctx context.Context, spec VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error)
+	FindOwnedCluster(ctx context.Context, spec VerifyClusterSpec) (OwnedCluster, []model.EvidenceRecord, error)
 	WaitForInstanceReady(ctx context.Context, spec VerifyClusterSpec, opts WaitOptions) (Instance, []model.EvidenceRecord, error)
 	CaptureEvidence(ctx context.Context, spec VerifyClusterSpec, instance Instance, opts CaptureOptions) ([]model.EvidenceRecord, error)
 	DeleteCluster(ctx context.Context, spec VerifyClusterSpec) ([]model.EvidenceRecord, error)
 	DeletePVCs(ctx context.Context, spec VerifyClusterSpec) ([]model.EvidenceRecord, error)
+}
+
+type OwnedCluster struct {
+	Found bool
+	Name  string
 }
 
 type LifecycleOptions struct {

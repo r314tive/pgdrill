@@ -59,6 +59,9 @@ func validateReport(result model.DrillResult, produced bool) error {
 	if err := validateRunIdentity(result, produced); err != nil {
 		return err
 	}
+	if err := validateOperations(result, produced); err != nil {
+		return err
+	}
 
 	evidenceIDs := make(map[string]struct{}, len(result.Evidence))
 	for i, record := range result.Evidence {
@@ -112,6 +115,37 @@ func validateReport(result model.DrillResult, produced bool) error {
 		return fmt.Errorf("failure message is required")
 	}
 	return validateEvidenceReferences("failure", result.Failure.EvidenceIDs, evidenceIDs)
+}
+
+func validateOperations(result model.DrillResult, produced bool) error {
+	if len(result.Operations) > 1024 {
+		return fmt.Errorf("operations exceed maximum count 1024")
+	}
+	identity := model.AttemptIdentity{
+		RunID:      result.ID,
+		AttemptID:  result.AttemptID,
+		SpecDigest: result.SpecDigest,
+	}
+	seen := make(map[string]struct{}, len(result.Operations))
+	for index, checkpoint := range result.Operations {
+		if err := checkpoint.Validate(); err != nil {
+			return fmt.Errorf("invalid operation %d: %w", index, err)
+		}
+		if checkpoint.Operation.Identity != identity {
+			return fmt.Errorf("operation %q identity does not match report identity", checkpoint.Operation.Name)
+		}
+		if _, ok := seen[checkpoint.Operation.Key]; ok {
+			return fmt.Errorf("duplicate operation key %q", checkpoint.Operation.Key)
+		}
+		seen[checkpoint.Operation.Key] = struct{}{}
+		if produced && !checkpoint.State.IsTerminal() {
+			return fmt.Errorf("produced report operation %q has non-terminal state %q", checkpoint.Operation.Name, checkpoint.State)
+		}
+		if result.Status == model.DrillStatusPassed && checkpoint.State != model.OperationStateSucceeded {
+			return fmt.Errorf("passed report operation %q has state %q", checkpoint.Operation.Name, checkpoint.State)
+		}
+	}
+	return nil
 }
 
 func validateRunIdentity(result model.DrillResult, produced bool) error {

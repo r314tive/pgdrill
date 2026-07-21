@@ -153,6 +153,9 @@ Completed foundation:
 - Native and managed reports persist the complete spec and digest; lifecycle
   events bind every emitted transition to the same digest, and report readers
   reject spec tampering or cross-field identity drift.
+- Deterministic attempt ownership and operation keys, fail-closed pre-mutation
+  intents, atomic local checkpoint persistence, local operation receipts,
+  read-only CNPG ownership reconciliation, and executor-loss fault injection.
 - CNPG orchestration moved from `cmd/pgdrill` into
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
@@ -160,8 +163,9 @@ Completed foundation:
 
 Remaining engine gates, in order:
 
-1. Add bounded artifact references, operation idempotency keys, persisted
-   checkpoints, and reconciliation for unknown mutation outcomes.
+1. Add bounded content-addressed artifact references and storage; operation
+   idempotency keys, persisted checkpoints, and unknown-outcome reconciliation
+   are complete.
 2. Add explicit recovery-policy verdicts for RTO, RPO, backup age, recovery
    target satisfaction, and required cleanup.
 3. Publish reusable provider/target conformance suites and record real

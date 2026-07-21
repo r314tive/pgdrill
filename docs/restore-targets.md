@@ -51,9 +51,9 @@ Implemented primitives:
 - strict config parsing for `target.kubernetes` and `target.cnpg`
 - source image, backup name, storage size/class, resource requests/limits, and
   optional node affinity in the generated CNPG `Cluster`
-- stable pgdrill labels for ownership, drill ID, and source cluster; target
-  verification replaces the deterministic manifest ownership value with a
-  random per-run ID
+- stable pgdrill labels for ownership, drill ID, and source cluster; mutating
+  target verification replaces the preview value with an ownership ID derived
+  from the immutable run attempt
 - derived instance pod and full-recovery job names for future evidence
   collection
 
@@ -85,8 +85,9 @@ Implemented lifecycle contract:
 - render the verified CNPG `Cluster` manifest and record manifest evidence
 - create the temporary verify cluster without adopting an existing object
 - treat every create error after process start as potentially mutating
-- propagate a random per-run ownership label through `inheritedMetadata` and
-  scope Cluster/PVC cleanup to that label, including for explicit names
+- propagate a deterministic attempt-scoped ownership label through
+  `inheritedMetadata` and scope Cluster/PVC cleanup to that label, including
+  for explicit names
 - poll full-recovery pods and fail fast if any of them enters `Failed`
 - wait for the instance pod to become Ready
 - retain raw polling state transitions while compacting identical repeated
@@ -152,15 +153,21 @@ Role. pgdrill does not request Secret access.
 an `aborted` report. If cancellation happens while the cluster is starting,
 automatic cleanup follows `target.kubernetes.cleanup_on_fail`; after a cluster
 has become Ready, target destruction is always attempted with a bounded
-finalization context. Generated verify-cluster names include a random per-run
-seed, and every verify manifest carries a separate random ownership ID on the
-Cluster and in `spec.inheritedMetadata` for related CNPG resources. Any create
+finalization context. Generated verify-cluster names and every verify manifest
+are bound to the attempt-derived ownership ID on the Cluster and in
+`spec.inheritedMetadata` for related CNPG resources. Any create
 error after process start uses the same finalization path because a client-side
 error cannot prove that the API server did not create the object. Cleanup uses
 that ownership label rather than an unqualified resource name, so an existing
 explicit-name Cluster is not adopted or deleted. A command that never started
 does not trigger cleanup. The compatibility client also passes
 `--ignore-not-found=true`, making ownership-scoped cleanup safe to retry.
+
+Before `create`, the managed engine persists an operation intent keyed by the
+attempt. If a command result is uncertain, or another executor later finds an
+orphaned intent, the target queries CNPG Clusters by the exact ownership label.
+It may prove absence, a matching Ready target, or an ownership conflict without
+issuing another create. This is reconciliation, not automatic command replay.
 
 See [../examples/cnpg-target-verify.yaml](../examples/cnpg-target-verify.yaml)
 for a local CLI config example and
@@ -229,10 +236,10 @@ checked again during preparation. A non-empty path is never adopted by writing
 a marker into it.
 
 The target does not remove `work_dir` by default. Removal must be explicitly
-enabled and is guarded by a random per-run ownership marker whose exact value
-is verified before recursive cleanup. When retained artifacts are required,
-use a fresh path for the next drill. Recurring automation should normally set
-`remove_work_dir: true`.
+enabled and is guarded by a deterministic attempt-scoped ownership marker whose
+exact value is verified before recursive cleanup. When retained artifacts are
+required, use a fresh path for the next drill. Recurring automation should
+normally set `remove_work_dir: true`.
 
 File-writing restore steps are lexically limited to `work_dir` and reject
 existing symlink path components before and after parent-directory creation.

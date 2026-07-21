@@ -34,6 +34,11 @@ func TestWritePrometheus(t *testing.T) {
 			{Kind: model.EvidenceCommand},
 			{Kind: model.EvidenceFile},
 		},
+		Operations: []model.OperationCheckpoint{
+			{Operation: model.Operation{Kind: model.OperationRestoreStep}, State: model.OperationStateSucceeded},
+			{Operation: model.Operation{Kind: model.OperationRestoreStep}, State: model.OperationStateSucceeded},
+			{Operation: model.Operation{Kind: model.OperationPostgresStart}, State: model.OperationStateSucceeded, Reconciled: true},
+		},
 	}
 
 	var buf bytes.Buffer
@@ -54,6 +59,8 @@ func TestWritePrometheus(t *testing.T) {
 		`pgdrill_checks_total{cluster="production-main",provider="wal-g",check="sql \"read\"",probe="sql",status="passed"} 2`,
 		`pgdrill_evidence_records_total{cluster="production-main",provider="wal-g",kind="command"} 2`,
 		`pgdrill_evidence_records_total{cluster="production-main",provider="wal-g",kind="file"} 1`,
+		`pgdrill_operations_total{cluster="production-main",provider="wal-g",kind="postgres_start",state="succeeded",reconciled="true"} 1`,
+		`pgdrill_operations_total{cluster="production-main",provider="wal-g",kind="restore_step",state="succeeded",reconciled="false"} 2`,
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected prometheus output to contain %q, got:\n%s", expected, output)
@@ -117,12 +124,16 @@ func TestWritePrometheusBoundsUnknownCanonicalEnums(t *testing.T) {
 			Status: "private-status",
 		}},
 		Evidence: []model.EvidenceRecord{{Kind: "private-kind"}},
+		Operations: []model.OperationCheckpoint{{
+			Operation: model.Operation{Kind: "private-operation"},
+			State:     "private-operation-state",
+		}},
 	}
 	if err := WritePrometheus(&buf, result); err != nil {
 		t.Fatalf("write prometheus: %v", err)
 	}
 	output := buf.String()
-	for _, value := range []string{"private-provider", "private-target", "private-recovery", "private-probe", "private-status", "private-kind"} {
+	for _, value := range []string{"private-provider", "private-target", "private-recovery", "private-probe", "private-status", "private-kind", "private-operation", "private-operation-state"} {
 		if strings.Contains(output, value) {
 			t.Fatalf("unexpected unbounded label %q in:\n%s", value, output)
 		}
@@ -134,6 +145,7 @@ func TestWritePrometheusBoundsUnknownCanonicalEnums(t *testing.T) {
 		`probe="unknown"`,
 		`status="unknown"`,
 		`kind="unknown"`,
+		`state="unknown"`,
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected bounded label %q in:\n%s", expected, output)

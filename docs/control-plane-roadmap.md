@@ -234,8 +234,14 @@ Completed prerequisite: the engine now captures an internal immutable drill
 spec with a canonical digest and explicit attempt identity. It remains internal
 until an out-of-process consumer exists.
 
-1. Prove idempotency, checkpoint, artifact, and crash-reconciliation behavior
-   with fault-injection tests.
+Completed prerequisite: engine mutations now have deterministic attempt-scoped
+operation and ownership identities, durable intent checkpoints, target
+reconciliation dispositions, and process-loss fault-injection coverage. This
+does not yet provide leases, heartbeat recovery, or automatic event-stream
+resume.
+
+1. Add bounded artifact storage and references; idempotency, checkpoints, and
+   crash-reconciliation classification now have fault-injection coverage.
 2. Complete real-repository and live-target compatibility gates.
 3. Ship daemon-free plan expansion and local history.
 4. Run one executor/controller on a single host with process-loss recovery.

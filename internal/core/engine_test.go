@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/runspec"
 )
@@ -70,7 +71,7 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	)
 	request.ID = "drill-1"
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -129,6 +130,14 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	if len(result.Checks) != 3 {
 		t.Fatalf("expected preflight, catalog, and probe checks, got %d", len(result.Checks))
 	}
+	if len(result.Operations) != 5 {
+		t.Fatalf("expected five mutation checkpoints, got %#v", result.Operations)
+	}
+	for _, operation := range result.Operations {
+		if operation.State != model.OperationStateSucceeded || !model.IsSHA256Digest(operation.Operation.Key) {
+			t.Fatalf("unexpected operation checkpoint %#v", operation)
+		}
+	}
 }
 
 func TestEngineComposesSegregatedProviderRoles(t *testing.T) {
@@ -145,7 +154,7 @@ func TestEngineComposesSegregatedProviderRoles(t *testing.T) {
 	planner := &fakeRestorePlanner{plan: testRestorePlan(model.ProviderWALG, "base_1", targetSpec, recoveryTarget, "restore")}
 	target := &fakeTarget{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           source,
 		CatalogValidator: validator,
 		Planner:          planner,
@@ -170,7 +179,7 @@ func TestEngineRequiresEverySegregatedProviderRole(t *testing.T) {
 	}{
 		{
 			name: "source",
-			engine: Engine{
+			engine: Engine{Checkpoints: checkpoint.NewMemoryStore(),
 				CatalogValidator: provider,
 				Planner:          provider,
 				Target:           target,
@@ -179,7 +188,7 @@ func TestEngineRequiresEverySegregatedProviderRole(t *testing.T) {
 		},
 		{
 			name: "catalog validator",
-			engine: Engine{
+			engine: Engine{Checkpoints: checkpoint.NewMemoryStore(),
 				Source:  provider,
 				Planner: provider,
 				Target:  target,
@@ -188,7 +197,7 @@ func TestEngineRequiresEverySegregatedProviderRole(t *testing.T) {
 		},
 		{
 			name: "planner",
-			engine: Engine{
+			engine: Engine{Checkpoints: checkpoint.NewMemoryStore(),
 				Source:           provider,
 				CatalogValidator: provider,
 				Target:           target,
@@ -214,7 +223,7 @@ func TestEngineRequiresImmutableDrillSpecBeforeExternalWork(t *testing.T) {
 	target := &fakeTarget{}
 	sink := &fakeSink{}
 
-	result, err := (Engine{
+	result, err := (Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -252,7 +261,7 @@ func TestEngineRunEmitsOrderedLifecycleEvents(t *testing.T) {
 	request.ID = "run-events"
 	request.AttemptID = "attempt-events"
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -329,7 +338,7 @@ func TestEngineKeepsSpecDigestAcrossDistinctAttempts(t *testing.T) {
 		}
 		attempt := request
 		attempt.AttemptID = attemptID
-		result, err := (Engine{
+		result, err := (Engine{Checkpoints: checkpoint.NewMemoryStore(),
 			Source:           provider,
 			CatalogValidator: provider,
 			Planner:          provider,
@@ -362,7 +371,7 @@ func TestEngineRunStopsBeforeStageOperationWhenEventDeliveryFails(t *testing.T) 
 	request := nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest})
 	request.ID = "event-failure"
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -413,7 +422,7 @@ func TestEngineStopsBeforeDiscoveryOnPreflightFailure(t *testing.T) {
 		Evidence: []model.EvidenceRecord{testEvidence("preflight")},
 	}}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -451,7 +460,7 @@ func TestEngineCleansUpAndWritesFailureOnRestoreStepError(t *testing.T) {
 	}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -500,7 +509,7 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 	}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -538,7 +547,7 @@ func TestEngineFailsWhenProbeReturnsNoChecks(t *testing.T) {
 	target := &fakeTarget{destroyEvidence: []model.EvidenceRecord{testEvidence("cleanup")}}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -618,7 +627,7 @@ func TestEngineRejectsMalformedCatalogBeforeSelection(t *testing.T) {
 			target := &fakeTarget{}
 			sink := &fakeSink{}
 
-			result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
+			result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(), Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
 				context.Background(),
 				nativeRequest(tt.provider, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}),
 			)
@@ -649,7 +658,7 @@ func TestEngineRejectsSelectedBackupOutsideCatalog(t *testing.T) {
 	target := &fakeTarget{}
 	sink := &fakeSink{}
 
-	result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(), Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}, Sink: sink}.Run(
 		context.Background(),
 		nativeRequestFor(
 			"test-cluster",
@@ -693,7 +702,7 @@ func TestEngineRejectsMalformedCatalogCheckReport(t *testing.T) {
 			}
 			target := &fakeTarget{}
 
-			result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
+			result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(), Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
 				context.Background(),
 				nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}),
 			)
@@ -743,7 +752,7 @@ func TestEngineRejectsMalformedRestorePlanBeforeTargetMutation(t *testing.T) {
 			}
 			target := &fakeTarget{}
 
-			result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
+			result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(), Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Probes: []Probe{passingProbe()}}.Run(
 				context.Background(),
 				nativeRequest(model.ProviderWALG, targetSpec, recovery),
 			)
@@ -766,7 +775,7 @@ func TestEngineRejectsTargetImplementationMismatchBeforePreflight(t *testing.T) 
 	target := &fakeTarget{}
 	preflight := &fakePreflight{}
 
-	result, err := Engine{Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Preflight: preflight, Probes: []Probe{passingProbe()}}.Run(
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(), Source: provider, CatalogValidator: provider, Planner: provider, Target: target, Preflight: preflight, Probes: []Probe{passingProbe()}}.Run(
 		context.Background(),
 		nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetKubernetes}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}),
 	)
@@ -790,7 +799,7 @@ func TestEngineSnapshotsAndValidatesProviderIdentityBeforePreflight(t *testing.T
 	preflight := &fakePreflight{}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -835,7 +844,7 @@ func TestEngineCancellationUsesFinalizationContextForCleanupAndSink(t *testing.T
 	}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -882,7 +891,7 @@ func TestEngineCancellationDuringCleanupCannotPass(t *testing.T) {
 	target := &fakeTarget{destroyHook: cancel}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -907,7 +916,7 @@ func TestEngineRejectsInvalidRecoveryTargetBeforeDiscovery(t *testing.T) {
 	target := &fakeTarget{}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -946,7 +955,7 @@ func TestEngineRejectsInvalidTargetBeforePreflightAndDiscovery(t *testing.T) {
 	preflight := &fakePreflight{}
 	sink := &fakeSink{}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -993,7 +1002,7 @@ func TestEngineRejectsInvalidProbeSetBeforePreflightAndDiscovery(t *testing.T) {
 			preflight := &fakePreflight{}
 			sink := &fakeSink{}
 
-			result, err := Engine{
+			result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 				Source:           provider,
 				CatalogValidator: provider,
 				Planner:          provider,
@@ -1029,7 +1038,7 @@ func TestEngineReturnsReportWriteFailure(t *testing.T) {
 	}
 	sink := &fakeSink{err: errors.New("disk full")}
 
-	result, err := Engine{
+	result, err := Engine{Checkpoints: checkpoint.NewMemoryStore(),
 		Source:           provider,
 		CatalogValidator: provider,
 		Planner:          provider,
@@ -1161,6 +1170,7 @@ type fakeTarget struct {
 	destroyHook       func()
 	destroyContextErr error
 	destroyEvidence   []model.EvidenceRecord
+	operation         model.Operation
 }
 
 type validatingTarget struct {
@@ -1176,6 +1186,19 @@ func (t *validatingTarget) Validate(context.Context, model.TargetSpec) error {
 
 func (t *fakeTarget) Type() model.RestoreTargetType {
 	return model.RestoreTargetLocal
+}
+
+func (t *fakeTarget) BindAttempt(model.AttemptContext) error {
+	return nil
+}
+
+func (t *fakeTarget) BeginOperation(operation model.Operation) error {
+	t.operation = operation
+	return nil
+}
+
+func (t *fakeTarget) Reconcile(context.Context, model.OperationCheckpoint) (model.OperationReconciliation, error) {
+	return model.OperationReconciliation{Disposition: model.ReconciliationNotApplied}, nil
 }
 
 func (t *fakeTarget) Prepare(context.Context, model.TargetSpec) error {

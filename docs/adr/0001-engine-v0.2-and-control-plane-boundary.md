@@ -43,6 +43,13 @@ and separate run/attempt identities. It is persisted in new reports but remains
 under `internal/`; this satisfies the engine gate without declaring the type a
 stable external wire API.
 
+Mutation protocol implementation now derives operation keys and ownership from
+that attempt identity, persists an intent before each ordinary mutation, and
+requires target-specific observation after unknown outcomes. A checkpointed
+attempt is never restarted by blindly replaying its event stream. A future
+controller must reconcile it and then explicitly choose safe cleanup or a new
+attempt.
+
 ## Engine Invariants
 
 - A run ID identifies a logical run; an attempt ID identifies one execution.

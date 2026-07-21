@@ -50,6 +50,29 @@ func TestKubectlClientCreateUsesManifestStdin(t *testing.T) {
 	}
 }
 
+func TestKubectlClientFindOwnedClusterUsesAttemptOwnershipSelector(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get cluster.postgresql.cnpg.io": `{"items":[{"metadata":{"name":"` + spec.Name + `"}}]}`,
+	}}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+
+	owned, evidence, err := client.FindOwnedCluster(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("FindOwnedCluster() error = %v", err)
+	}
+	if !owned.Found || owned.Name != spec.Name {
+		t.Fatalf("FindOwnedCluster() = %#v", owned)
+	}
+	wantArgs := []string{"-n", "d003-db", "get", "cluster.postgresql.cnpg.io", "-l", labelOwnershipID + "=" + spec.OwnershipID, "-o", "json"}
+	if len(runner.invocations) != 1 || !reflect.DeepEqual(runner.invocations[0].Args, wantArgs) {
+		t.Fatalf("FindOwnedCluster() args = %#v, want %#v", runner.invocations, wantArgs)
+	}
+	if !hasOperation(evidence, "kubectl-find-owned-cluster") {
+		t.Fatalf("missing reconciliation evidence %#v", evidence)
+	}
+}
+
 func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 	runner := &fakeCommandRunner{
 		stdoutByArgContains: map[string]string{
