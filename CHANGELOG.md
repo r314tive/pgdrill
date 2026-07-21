@@ -108,6 +108,12 @@ called out explicitly even while the major version is `0`.
   restored a WAL-G 3.0.8 full backup into PostgreSQL 18.3 on Linux arm64,
   replayed a post-backup sentinel WAL segment, passed readiness, SQL, and
   schema-dump probes, and completed policy-checked cleanup.
+- Compatibility evidence now records the first native Barman field drill:
+  pgdrill at exact commit `a9c6d4cdf7a7452e5e4021babd172e42320074f6`
+  validated and restored a Barman 3.19.1 local-rsync backup into PostgreSQL
+  18.3 on Linux arm64, replayed a post-backup WAL sentinel, passed manifest
+  generation and verification plus database probes, and completed
+  policy-checked cleanup.
 - Release archives now include the compatibility document and validated
   machine-readable evidence matrix.
 

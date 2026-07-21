@@ -1,6 +1,41 @@
 schema_version: pgdrill.compatibility-matrix/v1alpha1
 updated_at: "2026-07-21"
 entries:
+  - id: provider.barman.field
+    component: provider
+    implementation: barman
+    evidence_level: field
+    capabilities:
+      - backup_manifest_generation
+      - backup_manifest_verification
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "3.19.1"
+    pgdrill_versions:
+      - v0.1.0-dev
+    pgdrill_commits:
+      - a9c6d4cdf7a7452e5e4021babd172e42320074f6
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-21"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-18.3-linux-arm64/report.json
+      - kind: field_note
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-18.3-linux-arm64/README.md#validated-scope
+    limitations:
+      - One same-host local-rsync repository does not establish SSH, streaming-backup, or cloud-storage compatibility.
+      - Only latest recovery from one full backup with one post-backup WAL segment was exercised.
+      - The tested pgdrill binary was a development build at an exact commit, not a published release artifact.
   - id: provider.barman.fixture
     component: provider
     implementation: barman
@@ -26,7 +61,7 @@ entries:
       - kind: conformance_test
         ref: internal/adapters/barman/adapter_test.go#TestProviderConformance
     limitations:
-      - No native Barman version or real repository has been validated.
+      - This fixture entry makes no native Barman version claim; exact field observations are recorded separately.
       - Planning evidence does not prove WAL continuity or a completed restore.
   - id: provider.pg-probackup.fixture
     component: provider

@@ -55,8 +55,8 @@ Status: complete for the initial CLI engine.
 
 Target: WAL-G to local restore target.
 
-Status: usable for local-target smoke drills and field-exercised at one exact
-WAL-G 3.0.8 / PostgreSQL 18.3 Linux arm64 point.
+Status: usable for local-target smoke drills and field-exercised at exact WAL-G
+3.0.8 and Barman 3.19.1 / PostgreSQL 18.3 Linux arm64 points.
 
 - JSON evidence sink wired into `pgdrill run`.
 - JSON evidence report written to disk.
@@ -121,8 +121,8 @@ versioned evidence matrix; broader field coverage remains pending.
 ## Phase 4: More Providers And Probes
 
 Status: initial four-provider surface and semantic config validation
-implemented. WAL-G has one exact native field point; Barman, pgBackRest,
-pg_probackup, and broader WAL-G storage/version/PITR coverage remain in
+implemented. WAL-G and Barman have one exact native field point each;
+pgBackRest, pg_probackup, and broader storage/version/PITR coverage remain in
 progress.
 
 - pg_probackup catalog discovery through `show --format=json`.
@@ -182,9 +182,9 @@ Completed foundation:
 
 Remaining external engine gates, in order:
 
-1. Run completed drills against real, version-recorded Barman, pgBackRest, and
-   pg_probackup repositories; broaden WAL-G beyond its first local
-   file-repository/latest-recovery field point.
+1. Run completed drills against real, version-recorded pgBackRest and
+   pg_probackup repositories; broaden WAL-G and Barman beyond their first
+   local latest-recovery field points.
 2. Exercise a release candidate through local native-provider drills and a
    live disposable CNPG drill before calling Engine v0.2 release-ready.
 

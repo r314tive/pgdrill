@@ -79,6 +79,25 @@ This is one local file-repository observation. It does not establish remote
 object-storage, PITR, incremental/delta backup, cross-version, or production
 RTO compatibility.
 
+### Barman Field Validation
+
+On 2026-07-21, pgdrill `v0.1.0-dev` at commit
+`a9c6d4cdf7a7452e5e4021babd172e42320074f6` completed one native Linux arm64
+drill with Barman 3.19.1 and PostgreSQL 18.3. The same-host Barman server made a
+real local-rsync full backup, archived a later sentinel WAL segment, passed
+`check`, `check-backup`, `show-backup`, manifest generation, and
+`verify-backup`, restored with `--get-wal`, and passed readiness, sentinel SQL,
+schema-only `pg_dump`, all five policy verdicts, and ownership-scoped cleanup.
+
+This drill exposed and fixed a real Barman 3.19.1 catalog shape: JSON
+`list-backups` uses a human display time plus an exact epoch
+`end_time_timestamp`. The exact output is now a fixture, and policy-relevant
+normalization uses the unambiguous epoch value. The full report and topology
+inputs are retained under
+[`compatibility/evidence/barman-v3.19.1-postgresql-18.3-linux-arm64`](../compatibility/evidence/barman-v3.19.1-postgresql-18.3-linux-arm64/README.md).
+The observation does not cover remote SSH, streaming backup/archive, cloud
+storage, incremental backup, or PITR modes.
+
 `pgdrill doctor` proves that the config is structurally valid for its target,
 that each required executable starts, and that its bounded version command
 succeeds. It deliberately does not access repositories, database servers, or
@@ -94,9 +113,10 @@ continuity; retain the provider check and completed restore evidence.
 ## Restore Targets
 
 The local target is covered by process, filesystem-boundary, cleanup, and probe
-tests using controlled executables. The WAL-G field point above additionally
-exercises real PostgreSQL startup and one native repository; other provider,
-version, storage, and recovery-target combinations remain external gates.
+tests using controlled executables. The WAL-G and Barman field points above
+additionally exercise real PostgreSQL startup and native repositories; other
+provider, version, storage, and recovery-target combinations remain external
+gates.
 
 The CNPG target has manifest, discovery, lifecycle, failure, evidence, and CLI
 tests behind a `kubectl` compatibility client.

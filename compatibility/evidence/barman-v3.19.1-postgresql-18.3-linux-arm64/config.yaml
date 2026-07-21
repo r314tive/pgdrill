@@ -1,0 +1,58 @@
+cluster:
+  name: barman-field-postgresql-18
+
+provider:
+  type: barman
+  binary: /usr/bin/barman
+  config_path: /validation/barman.conf
+  server: field
+  timeout: 5m
+  barman_generate_manifest:
+    enabled: true
+    timeout: 5m
+  barman_verify_backup:
+    enabled: true
+    timeout: 5m
+
+target:
+  type: local
+  work_dir: /validation/work/restore
+  postgres_binary: /usr/lib/postgresql/18/bin/postgres
+  postgres_port: 55433
+  startup_timeout: 5s
+  shutdown_timeout: 10s
+  remove_work_dir: true
+
+restore:
+  timeout: 10m
+  verify_backup:
+    enabled: false
+
+recovery:
+  target: latest
+
+policy:
+  maximum_rto: 5m
+  maximum_rpo: 5m
+  maximum_backup_age: 1h
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: pg_isready
+    binary: /usr/lib/postgresql/18/bin/pg_isready
+    timeout: 30s
+  - type: sql
+    name: post_backup_wal_replayed
+    binary: /usr/lib/postgresql/18/bin/psql
+    query: "select 1 / case when count(*) = 102 and bool_or(payload = 'post-backup-wal-sentinel-2') then 1 else 0 end from public.pgdrill_barman_probe"
+    timeout: 30s
+  - type: pg_dump
+    name: schema_dump
+    binary: /usr/lib/postgresql/18/bin/pg_dump
+    mode: schema
+    timeout: 1m
+
+report:
+  format: json
+  path: /validation/output/barman-report.json

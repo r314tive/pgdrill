@@ -39,9 +39,9 @@ RPO, backup age, recovery-target satisfaction, and configured cleanup.
 All four provider adapters and both executable target paths run shared
 conformance suites. Compatibility evidence is recorded separately as fixture,
 controlled, or exact-version field observations instead of a blanket support
-claim. Current field points include one CNPG restore and one native WAL-G
-v3.0.8 / PostgreSQL 18.3 Linux arm64 restore; each remains limited to its exact
-recorded scope.
+claim. Current field points include one CNPG restore plus native WAL-G v3.0.8
+and Barman v3.19.1 restores with PostgreSQL 18.3 on Linux arm64; each remains
+limited to its exact recorded scope.
 
 ## Goals
 
