@@ -76,6 +76,24 @@ func TestNewProbesExpandsPresetBeforeConstruction(t *testing.T) {
 	}
 }
 
+func TestCommittedDrillConfigsResolveProbes(t *testing.T) {
+	paths := []string{
+		"../../demo/yandex-cloud/config/pgdrill.yaml",
+		"../../test/integration/walg/pgdrill.yaml",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			cfg, err := config.LoadFile(path)
+			if err != nil {
+				t.Fatalf("load committed config: %v", err)
+			}
+			if _, err := ResolveConfigs(cfg.Probes); err != nil {
+				t.Fatalf("resolve committed probes: %v", err)
+			}
+		})
+	}
+}
+
 func TestExpandConfigsRejectsPresetWithProbeFields(t *testing.T) {
 	_, err := ExpandConfigs([]config.ProbeConfig{{
 		Preset: "smoke",

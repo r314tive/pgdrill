@@ -92,7 +92,7 @@ restore:
 probes:
   - preset: smoke
     timeout: 2m
-  - type: pg_amcheck
+  - type: amcheck
     timeout: 4h
 ```
 

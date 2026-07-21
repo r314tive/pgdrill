@@ -1,67 +1,65 @@
 cluster:
-  name: yc-walg-demo-postgresql-18
+  name: integration-walg-postgresql-18
 
 provider:
   type: wal-g
-  binary: /usr/local/bin/wal-g
-  timeout: 10m
+  binary: /opt/pgdrill/bin/wal-g
+  timeout: 5m
   wal_verify:
     enabled: true
     checks:
       - integrity
-    timeout: 10m
+    timeout: 5m
   env:
-    WALG_FILE_PREFIX: /mnt/pgdrill-repository/walg
+    WALG_FILE_PREFIX: /validation/repository
     WALG_COMPRESSION_METHOD: lz4
 
 target:
   type: local
-  work_dir: /var/lib/pgdrill-demo/work/restore
+  work_dir: /validation/work/restore
   postgres_binary: /usr/lib/postgresql/18/bin/postgres
   postgres_port: 55432
-  startup_timeout: 1m
+  startup_timeout: 30s
   shutdown_timeout: 30s
   remove_work_dir: true
 
 restore:
-  timeout: 30m
+  timeout: 10m
   verify_backup:
     enabled: false
 
 recovery:
   target: latest
 
-# These are demo policy values, not a proposed customer SLO. Replace them with
-# measured and approved values in a pilot.
 policy:
-  maximum_rto: 10m
-  maximum_rpo: 24h
-  maximum_backup_age: 24h
+  maximum_rto: 5m
+  maximum_rpo: 10m
+  maximum_backup_age: 10m
   require_recovery_target: true
   require_cleanup: true
 
 probes:
   - type: pg_isready
     binary: /usr/lib/postgresql/18/bin/pg_isready
-    timeout: 1m
+    timeout: 30s
   - type: sql
     name: post_backup_wal_replayed
     binary: /usr/lib/postgresql/18/bin/psql
-    query: "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_demo_probe"
-    timeout: 1m
+    query: "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_integration_probe"
+    timeout: 30s
   - type: amcheck
     name: structural_amcheck
     binary: /usr/lib/postgresql/18/bin/pg_amcheck
     mode: database
     args:
       on_error_stop: "true"
-    timeout: 5m
+    timeout: 2m
   - type: pg_dump
     name: schema_dump
     binary: /usr/lib/postgresql/18/bin/pg_dump
     mode: schema
-    timeout: 5m
+    timeout: 2m
 
 report:
   format: json
-  path: /var/lib/pgdrill-demo/reports/current.json
+  path: /output/report.json

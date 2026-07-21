@@ -48,6 +48,22 @@ A useful 25-minute session is:
 Do not spend the session walking through source code or presenting future UI
 mockups. The report and the restored-data assertion are the product proof.
 
+## Repository Boundary
+
+Demo infrastructure is deliberately not a test framework or an engine package:
+
+- `test/integration` runs fast, disposable developer interoperability checks on
+  one host;
+- `demo` contains access, topology, facilitation, and teardown material for a
+  technical session;
+- `compatibility/evidence` retains reviewed exact-version observations;
+- `internal` and `cmd` contain the Go control plane and do not import any of
+  these environment definitions.
+
+The local WAL-G integration drill should pass before provisioning the hosted
+demo, but it cannot prove VM isolation, administrator access controls, NFS
+permissions, or cloud networking.
+
 ## Health Check Boundary
 
 A conventional PostgreSQL health check assesses the currently running system:

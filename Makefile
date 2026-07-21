@@ -1,4 +1,4 @@
-.PHONY: build check demo-check demo-infra-check fmt format mod-check race release-artifacts release-check release-notes release-snapshot smoke test toolchain-check vet workflow-check
+.PHONY: build check demo-check demo-infra-check fmt format integration-check integration-syntax-check mod-check race release-artifacts release-check release-notes release-snapshot smoke test test-integration-walg test-local toolchain-check vet workflow-check
 
 VERSION ?= v0.1.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -18,7 +18,7 @@ DEMO_TERRAFORM_DIR := demo/yandex-cloud/terraform
 VERSION_PKG := github.com/r314tive/pgdrill/internal/version
 LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
-check: fmt mod-check vet test demo-check
+check: fmt mod-check vet test demo-check integration-syntax-check
 
 build:
 	mkdir -p $(BINDIR)
@@ -47,12 +47,31 @@ demo-check:
 	@for script in $$(find demo -type f -name '*.sh' -print | sort); do \
 		bash -n "$$script" || exit 1; \
 	done
+	@for script in $$(find demo -type f -name '*.sh' -print | sort); do \
+		if grep -En 'wal-g[[:space:]]+version([[:space:]"|;]|$$)' "$$script"; then \
+			printf 'invalid WAL-G version invocation in %s; use wal-g --version\n' "$$script"; \
+			exit 1; \
+		fi; \
+	done
 
 demo-infra-check: demo-check
 	$(SHELLCHECK) -x $$(find demo -type f -name '*.sh' -print | sort)
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) init -backend=false -input=false -lockfile=readonly
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) fmt -check -recursive
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) validate
+
+integration-syntax-check:
+	@for script in $$(find test/integration -type f -name '*.sh' -print | sort); do \
+		bash -n "$$script" || exit 1; \
+	done
+
+integration-check: integration-syntax-check
+	$(SHELLCHECK) -x $$(find test/integration -type f -name '*.sh' -print | sort)
+
+test-integration-walg: integration-syntax-check
+	test/integration/walg/run.sh
+
+test-local: check race smoke test-integration-walg
 
 race:
 	go test -race ./...

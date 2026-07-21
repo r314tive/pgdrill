@@ -36,6 +36,7 @@ change in `CHANGELOG.md`.
 - `go vet ./...`
 - `go test ./...`
 - Bash syntax for the versioned demo scripts
+- Bash syntax for disposable integration scripts
 
 Use `make format` to apply Go formatting. `make release-check` is the release
 gate; it additionally runs pinned `actionlint`, the race detector, CLI smoke
@@ -53,6 +54,20 @@ That target runs ShellCheck, initializes the locked Yandex Cloud provider with
 the state backend disabled and lock file read-only, enforces Terraform
 formatting, and validates the provider schema. It does not replace a reviewed
 `terraform plan` or a live rehearsal.
+
+Native tool changes have an additional opt-in local interoperability gate:
+
+```sh
+make integration-check
+make test-integration-walg
+```
+
+`integration-check` requires ShellCheck. The executable test prepares pinned
+WAL-G and PostgreSQL inputs, then performs a rootless network-isolated real
+backup and restore drill. It is intentionally excluded from `release-check`
+because it requires Docker and downloads external artifacts; release owners
+must run it explicitly for affected native paths. A pass from a dirty tree is
+marked dirty and is never release evidence.
 
 ```sh
 make -s release-check VERSION=v0.1.0-alpha.9

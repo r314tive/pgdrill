@@ -183,6 +183,10 @@ Completed foundation:
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
   [ADR 0001](adr/0001-engine-v0.2-and-control-plane-boundary.md).
+- A pinned, rootless, network-isolated WAL-G/PostgreSQL Docker drill under
+  `test/integration` that recreates a real base backup, post-backup WAL replay,
+  provider validation, restored-server probes, policy evaluation, and cleanup
+  without coupling demo infrastructure to engine packages.
 
 Remaining external engine gates, in order:
 
@@ -214,18 +218,22 @@ pending and no cloud compatibility claim is recorded yet.
 - Provider-independent local-target startup override preventing a restored
   cluster from inheriting an active archive command and writing back to the
   source backup repository.
+- Explicit repository boundaries between disposable developer integration
+  tests, operator-facing demo topology, and retained compatibility evidence.
 
 Remaining gates, in order:
 
-1. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
+1. Pass the local WAL-G integration drill from the exact clean demo candidate
+   and retain its checksummed report as rehearsal input, not cloud evidence.
+2. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
    retain infrastructure inventory plus a successful bootstrap transcript.
-2. Produce two consecutive passed reports from the same release-candidate
+3. Produce two consecutive passed reports from the same release-candidate
    artifact, including the post-backup WAL assertion and owned cleanup.
-3. Exercise a dedicated invited-administrator account and confirm its bounded
+4. Exercise a dedicated invited-administrator account and confirm its bounded
    sudo surface before the customer session.
-4. Add Yandex Object Storage only as a separate compatibility profile with
+5. Add Yandex Object Storage only as a separate compatibility profile with
    executor-local credentials and explicit secret/state review.
-5. Convert one real customer topology into a bounded pilot spec before adding
+6. Convert one real customer topology into a bounded pilot spec before adding
    generalized fleet or UI features.
 
 ## Phase 6: Fleet Control Plane

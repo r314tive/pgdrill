@@ -18,6 +18,18 @@ formatting is required. Release-process changes should also pass:
 make -s release-check VERSION=v0.0.0-dev
 ```
 
+Changes to native WAL-G discovery, validation, restore planning, the local
+target, probes, policy evaluation, or cleanup should also run the real
+disposable path when Docker is available:
+
+```sh
+make test-integration-walg
+```
+
+Run `make integration-check` when ShellCheck is installed. Integration output
+is intentionally ignored and does not become a compatibility claim without a
+separate reviewed evidence update.
+
 ## Engineering Rules
 
 - Keep the control plane in Go. Shell is a compatibility boundary for external
@@ -32,6 +44,9 @@ make -s release-check VERSION=v0.0.0-dev
   required for native command semantics.
 - Update `compatibility/matrix.yaml` without promoting fixture evidence to a
   version claim. Exact versions belong only in a retained field observation.
+- Keep developer integration systems under `test/integration`, operator-facing
+  presentation infrastructure under `demo`, and immutable reviewed claims under
+  `compatibility/evidence`.
 - Preserve provider-scoped backup IDs and explicit cleanup evidence.
 - Treat report JSON as a versioned consumer contract. Follow
   `docs/report-format.md` for compatibility changes.

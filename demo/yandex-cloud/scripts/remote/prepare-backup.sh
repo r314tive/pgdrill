@@ -85,6 +85,7 @@ runuser -u postgres -- "${PGBIN}/psql" \
   --host /var/run/postgresql --port 5432 --dbname postgres \
   --set ON_ERROR_STOP=1 <<'SQL'
 DROP TABLE IF EXISTS public.pgdrill_demo_probe;
+CREATE EXTENSION IF NOT EXISTS amcheck;
 CREATE TABLE public.pgdrill_demo_probe (
   id integer PRIMARY KEY,
   payload text NOT NULL,
@@ -161,7 +162,7 @@ runuser -u postgres -- mv \
 
 created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 postgresql_version="$("${PGBIN}/postgres" --version)"
-walg_version="$(/usr/local/bin/wal-g version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+walg_version="$(/usr/local/bin/wal-g --version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 backup_json="$(jq -c --arg name "${backup_name}" '.[] | select((.name // .backup_name) == $name)' <<<"${backup_list}")"
 
 jq -n \

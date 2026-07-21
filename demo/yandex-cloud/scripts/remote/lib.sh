@@ -123,7 +123,7 @@ install_walg() {
   install -o root -g root -m 0755 "${download}" /usr/local/bin/wal-g
   rm -f "${download}"
 
-  /usr/local/bin/wal-g version | grep -F "v${WALG_VERSION}" >/dev/null ||
+  /usr/local/bin/wal-g --version | grep -F "v${WALG_VERSION}" >/dev/null ||
     die "installed WAL-G did not report v${WALG_VERSION}"
 }
 

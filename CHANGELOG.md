@@ -60,6 +60,12 @@ called out explicitly even while the major version is `0`.
   WAL-G and Terraform inputs, exact runtime inventory, a post-backup WAL
   assertion, report retrieval, an executable administrator-access audit,
   acceptance gates, and teardown guidance.
+- A pinned amd64/arm64 Docker integration drill that builds the current pgdrill
+  source with explicit dirty metadata, creates a real WAL-G 3.0.8 backup and
+  post-backup WAL boundary on PostgreSQL 18.3, runs provider validation,
+  restores and probes a separate local target, requires policy and cleanup
+  success, and retains checksummed developer artifacts outside compatibility
+  evidence.
 
 ### Changed
 
@@ -135,6 +141,14 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- Yandex Cloud demo bootstrap and inventory now invoke WAL-G 3.0.8 with the
+  supported `--version` flag instead of a nonexistent `version` subcommand.
+- The documented, local-integration, and Yandex Cloud demo probe configs now
+  use the canonical `amcheck` type instead of the `pg_amcheck` executable name;
+  committed runnable configs are checked by the runtime semantic resolver.
+- Local integration and Yandex Cloud source preparation install the `amcheck`
+  extension before backup, so structural checks remain read-only when the
+  restored server is still completing archive recovery.
 - Local restore targets now force `archive_mode=off` at PostgreSQL startup and
   record the override, preventing a restored source configuration from writing
   generated WAL back into the backup repository while archive recovery remains

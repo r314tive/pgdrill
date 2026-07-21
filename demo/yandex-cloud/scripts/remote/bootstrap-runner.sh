@@ -54,7 +54,7 @@ visudo --check --file=/etc/sudoers.d/pgdrill-demo-runner >/dev/null
 
 pgdrill_version="$(/usr/local/bin/pgdrill version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 postgresql_version="$("${PGBIN}/postgres" --version)"
-walg_version="$(/usr/local/bin/wal-g version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+walg_version="$(/usr/local/bin/wal-g --version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 jq -n \
   --arg schema_version "pgdrill.demo-runner-inventory/v1alpha1" \
   --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
