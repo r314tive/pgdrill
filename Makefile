@@ -1,4 +1,4 @@
-.PHONY: build check demo-check demo-infra-check fmt format integration-check integration-syntax-check mod-check race release-artifacts release-check release-notes release-snapshot smoke test test-integration-barman test-integration-native test-integration-pgbackrest test-integration-walg test-local toolchain-check vet workflow-check
+.PHONY: build check demo-check demo-infra-check fmt format integration-check integration-syntax-check mod-check race release-artifacts release-check release-notes release-snapshot smoke test test-integration-barman test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
 
 VERSION ?= v0.1.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -77,7 +77,10 @@ test-integration-barman: integration-syntax-check
 test-integration-pgbackrest: integration-syntax-check
 	test/integration/pgbackrest/run.sh
 
-test-integration-native: test-integration-walg test-integration-barman test-integration-pgbackrest
+test-integration-pgprobackup: integration-syntax-check
+	test/integration/pgprobackup/run.sh
+
+test-integration-native: test-integration-walg test-integration-barman test-integration-pgbackrest test-integration-pgprobackup
 
 test-local: check race smoke test-integration-native
 

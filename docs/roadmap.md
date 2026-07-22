@@ -196,6 +196,11 @@ Completed foundation:
   real filesystem-repository full backup, retrieves the exact post-backup WAL
   segment, requires `check` and selected-set `verify`, and restores through the
   same local lifecycle and evidence contract.
+- A source-pinned pg_probackup 2.5.16/PostgreSQL 18.3 companion drill that
+  applies the upstream PostgreSQL 18 patch, creates a compressed full STREAM
+  backup, retrieves the exact post-backup WAL through `archive-get`, requires
+  native backup/WAL validation, and restores through the same local lifecycle
+  and evidence contract.
 - Shared host-side integration mechanics for deterministic release archives,
   explicit dirty builds, rootless network-isolated Docker execution, and
   recursive artifact checksums, while provider semantics remain separate.
@@ -203,9 +208,9 @@ Completed foundation:
 Remaining external engine gates, in order:
 
 1. Exercise one release-candidate artifact and commit through all four local
-   native-provider drills; reproducible harnesses currently cover WAL-G,
-   Barman, and pgBackRest, while pg_probackup still needs an equivalent gate.
-   Current field reports intentionally bind different development commits.
+   native-provider drills. Reproducible harnesses now cover all four, while
+   current retained field reports intentionally bind different development
+   commits.
 2. Exercise the same release candidate through a live disposable CNPG drill
    before calling Engine v0.2 release-ready.
 3. Broaden every provider beyond its first local latest-recovery point across

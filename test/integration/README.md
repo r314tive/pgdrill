@@ -28,3 +28,4 @@ Current scenarios:
 - [WAL-G to a local PostgreSQL target](walg/README.md)
 - [Barman to a local PostgreSQL target](barman/README.md)
 - [pgBackRest to a local PostgreSQL target](pgbackrest/README.md)
+- [pg_probackup to a local PostgreSQL target](pgprobackup/README.md)

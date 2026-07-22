@@ -43,10 +43,11 @@ claim. Current field points include one CNPG restore plus native WAL-G v3.0.8,
 Barman v3.19.1, pgBackRest v2.58.0, and pg_probackup v2.5.16 restores with
 PostgreSQL 18.3 on Linux arm64; each remains limited to its exact recorded
 scope.
-Reproducible Docker integration tests now recreate the WAL-G, Barman, and
-pgBackRest field shapes from source backup through post-backup WAL replay,
-probes, policy, and cleanup. They are developer evidence only and remain
-separate from retained compatibility claims and the multi-host technical demo.
+Reproducible Docker integration tests now recreate the WAL-G, Barman,
+pgBackRest, and pg_probackup field shapes from source backup through
+post-backup WAL replay, probes, policy, and cleanup. They are developer
+evidence only and remain separate from retained compatibility claims and the
+multi-host technical demo.
 
 ## Goals
 
@@ -164,6 +165,7 @@ in sequence:
 make test-integration-walg
 make test-integration-barman
 make test-integration-pgbackrest
+make test-integration-pgprobackup
 make test-integration-native
 ```
 

@@ -1,0 +1,65 @@
+cluster:
+  name: integration-pgprobackup-postgresql-18
+
+provider:
+  type: pg_probackup
+  binary: /opt/postgresql-18.3/bin/pg_probackup
+  backup_dir: /validation/backup
+  instance: integration
+  timeout: 5m
+  pg_probackup_validate:
+    enabled: true
+    timeout: 5m
+    wal: true
+    skip_block_validation: false
+    threads: 2
+
+target:
+  type: local
+  work_dir: /validation/work/restore
+  postgres_binary: /opt/postgresql-18.3/bin/postgres
+  postgres_port: 55435
+  startup_timeout: 30s
+  shutdown_timeout: 30s
+  remove_work_dir: true
+
+restore:
+  timeout: 10m
+  verify_backup:
+    enabled: false
+
+recovery:
+  target: latest
+
+policy:
+  maximum_rto: 5m
+  maximum_rpo: 10m
+  maximum_backup_age: 10m
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: pg_isready
+    binary: /opt/postgresql-18.3/bin/pg_isready
+    timeout: 30s
+  - type: sql
+    name: post_backup_wal_replayed
+    binary: /opt/postgresql-18.3/bin/psql
+    query: "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_integration_probe"
+    timeout: 30s
+  - type: amcheck
+    name: structural_amcheck
+    binary: /opt/postgresql-18.3/bin/pg_amcheck
+    mode: database
+    args:
+      on_error_stop: "true"
+    timeout: 2m
+  - type: pg_dump
+    name: schema_dump
+    binary: /opt/postgresql-18.3/bin/pg_dump
+    mode: schema
+    timeout: 2m
+
+report:
+  format: json
+  path: /output/report.json

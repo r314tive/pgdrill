@@ -76,6 +76,11 @@ called out explicitly even while the major version is `0`.
   exact post-backup WAL segment is retrievable, runs native `check` and
   selected-set `verify`, and requires restored-database probes, policy, and
   owned cleanup to pass.
+- A source-pinned pg_probackup 2.5.16/PostgreSQL 18.3 amd64/arm64 Docker
+  integration drill that builds the PostgreSQL 18 compatibility patch, creates
+  a compressed full STREAM backup, proves exact archived-WAL retrieval and
+  native backup/WAL validation, and requires restored-database probes, policy,
+  and owned cleanup to pass.
 
 ### Changed
 
