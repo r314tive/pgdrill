@@ -71,6 +71,11 @@ called out explicitly even while the major version is `0`.
   that creates and validates a real local-rsync backup, archives and replays a
   post-backup WAL sentinel, runs manifest verification and restored-database
   probes, and requires policy-checked owned cleanup.
+- A pinned pgBackRest 2.58.0/PostgreSQL 18.3 amd64/arm64 Docker integration
+  drill that creates a real filesystem-repository full backup, proves the
+  exact post-backup WAL segment is retrievable, runs native `check` and
+  selected-set `verify`, and requires restored-database probes, policy, and
+  owned cleanup to pass.
 
 ### Changed
 
@@ -143,9 +148,10 @@ called out explicitly even while the major version is `0`.
   and repository `verify`, database probes, and policy-checked cleanup.
 - Release archives now include the compatibility document and validated
   machine-readable evidence matrix.
-- WAL-G and Barman integration drills now share release-candidate binding,
-  Docker isolation defaults, and recursive artifact checksumming while keeping
-  provider-specific setup and assertions independent.
+- Native integration drills now share release-candidate binding, pinned image
+  cache validation, Docker isolation defaults, and recursive artifact
+  checksumming while keeping provider-specific setup and assertions
+  independent.
 
 ### Fixed
 

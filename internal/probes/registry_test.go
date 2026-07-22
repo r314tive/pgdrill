@@ -80,6 +80,7 @@ func TestCommittedDrillConfigsResolveProbes(t *testing.T) {
 	paths := []string{
 		"../../demo/yandex-cloud/config/pgdrill.yaml",
 		"../../test/integration/barman/pgdrill.yaml",
+		"../../test/integration/pgbackrest/pgdrill.yaml",
 		"../../test/integration/walg/pgdrill.yaml",
 	}
 	for _, path := range paths {

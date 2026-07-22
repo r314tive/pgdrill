@@ -25,6 +25,7 @@ disposable paths when Docker is available:
 ```sh
 make test-integration-walg
 make test-integration-barman
+make test-integration-pgbackrest
 make test-integration-native
 ```
 

@@ -192,6 +192,10 @@ Completed foundation:
   local-rsync backup, exercises archived WAL through Barman's generated
   `restore_command`, requires manifest verification and restored-cluster
   probes, and retains the same release-bound checksummed artifact set.
+- A pinned pgBackRest 2.58.0/PostgreSQL 18.3 companion drill that creates a
+  real filesystem-repository full backup, retrieves the exact post-backup WAL
+  segment, requires `check` and selected-set `verify`, and restores through the
+  same local lifecycle and evidence contract.
 - Shared host-side integration mechanics for deterministic release archives,
   explicit dirty builds, rootless network-isolated Docker execution, and
   recursive artifact checksums, while provider semantics remain separate.
@@ -199,8 +203,8 @@ Completed foundation:
 Remaining external engine gates, in order:
 
 1. Exercise one release-candidate artifact and commit through all four local
-   native-provider drills; reproducible harnesses currently cover WAL-G and
-   Barman, while pgBackRest and pg_probackup still need equivalent gates.
+   native-provider drills; reproducible harnesses currently cover WAL-G,
+   Barman, and pgBackRest, while pg_probackup still needs an equivalent gate.
    Current field reports intentionally bind different development commits.
 2. Exercise the same release candidate through a live disposable CNPG drill
    before calling Engine v0.2 release-ready.

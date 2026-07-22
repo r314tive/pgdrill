@@ -7,13 +7,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 readonly ROOT
-readonly CACHE_ROOT="${PGDRILL_INTEGRATION_CACHE:-${ROOT}/.cache/integration/barman}"
+readonly CACHE_ROOT="${PGDRILL_INTEGRATION_CACHE:-${ROOT}/.cache/integration/pgbackrest}"
 readonly RUNS_DIR="${CACHE_ROOT}/runs"
-readonly BARMAN_VERSION="3.19.1"
+readonly PGBACKREST_VERSION="2.58.0"
 readonly POSTGRES_VERSION="18.3"
 readonly POSTGRES_IMAGE="postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db"
 readonly VERSION_BASE="${PGDRILL_INTEGRATION_VERSION:-v0.0.0-integration}"
-readonly PGDRILL_INTEGRATION_LOG_PREFIX="integration/barman-host"
+readonly PGDRILL_INTEGRATION_LOG_PREFIX="integration/pgbackrest-host"
 
 # shellcheck source=test/integration/lib/runtime.sh
 source "${SCRIPT_DIR}/../lib/runtime.sh"
@@ -41,19 +41,19 @@ readonly version="${PGDRILL_INT_VERSION}"
 readonly commit="${PGDRILL_INT_COMMIT}"
 
 pgdrill_integration_prepare_image \
-  "${PGDRILL_INTEGRATION_BARMAN_IMAGE:-}" \
-  "pgdrill-barman-integration:${BARMAN_VERSION}-postgresql-${POSTGRES_VERSION}-${arch}" \
-  "Barman ${BARMAN_VERSION}" \
+  "${PGDRILL_INTEGRATION_PGBACKREST_IMAGE:-}" \
+  "pgdrill-pgbackrest-integration:${PGBACKREST_VERSION}-postgresql-${POSTGRES_VERSION}-${arch}" \
+  "pgBackRest ${PGBACKREST_VERSION}" \
   "${POSTGRES_VERSION}" \
   "${POSTGRES_IMAGE}" \
   "${SCRIPT_DIR}/Dockerfile" \
   "${SCRIPT_DIR}" \
   "${arch}"
-readonly barman_image="${PGDRILL_INT_CONTAINER_IMAGE}"
+readonly pgbackrest_image="${PGDRILL_INT_CONTAINER_IMAGE}"
 
 run_stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 readonly OUTPUT_DIR="${RUNS_DIR}/${run_stamp}"
-readonly CONTAINER_NAME="pgdrill-barman-integration-${run_stamp}"
+readonly CONTAINER_NAME="pgdrill-pgbackrest-integration-${run_stamp}"
 mkdir -p "${OUTPUT_DIR}"
 chmod 0777 "${OUTPUT_DIR}"
 
@@ -73,12 +73,11 @@ pgdrill_integration_docker_run "${CONTAINER_NAME}" "${arch}" 4294967296 \
   --mount "type=bind,src=${PGDRILL_BINARY},dst=/opt/pgdrill/bin/pgdrill,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/run-in-container.sh,dst=/opt/pgdrill/test/run-in-container.sh,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/pgdrill.yaml,dst=/opt/pgdrill/test/pgdrill.yaml,readonly" \
-  --mount "type=bind,src=${SCRIPT_DIR}/barman.conf,dst=/opt/pgdrill/test/barman.conf,readonly" \
-  --mount "type=bind,src=${SCRIPT_DIR}/barman.d,dst=/opt/pgdrill/test/barman.d,readonly" \
+  --mount "type=bind,src=${SCRIPT_DIR}/pgbackrest.conf,dst=/opt/pgdrill/test/pgbackrest.conf,readonly" \
   --mount "type=bind,src=${OUTPUT_DIR},dst=/output" \
   --env "PGDRILL_EXPECTED_COMMIT=${commit}" \
   --env "PGDRILL_EXPECTED_VERSION=${version}" \
-  "${barman_image}" \
+  "${pgbackrest_image}" \
   /opt/pgdrill/test/run-in-container.sh 2>&1 | tee "${OUTPUT_DIR}/container.log"
 chmod 0750 "${OUTPUT_DIR}"
 trap - EXIT INT TERM

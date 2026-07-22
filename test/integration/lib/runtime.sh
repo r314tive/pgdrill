@@ -66,9 +66,8 @@ pgdrill_integration_prepare_pgdrill() {
   local head_commit
 
   PGDRILL_INT_RUNTIME_DIR="${cache_root}/runtime/${target_arch}"
-  PGDRILL_INT_RUNS_DIR="${cache_root}/runs"
   PGDRILL_INT_BINARY="${PGDRILL_INT_RUNTIME_DIR}/pgdrill"
-  mkdir -p "${PGDRILL_INT_RUNTIME_DIR}" "${PGDRILL_INT_RUNS_DIR}"
+  mkdir -p "${PGDRILL_INT_RUNTIME_DIR}" "${cache_root}/runs"
 
   head_commit="$(git -C "${root}" rev-parse HEAD)"
   PGDRILL_INT_VERSION="${version_base}"
@@ -183,6 +182,64 @@ pgdrill_integration_print_runtime_inventory() {
     printf 'release_archive=%s\n' "${PGDRILL_INT_RELEASE_ARCHIVE##*/}"
     printf 'release_archive_sha256=%s\n' "${PGDRILL_INT_RELEASE_ARCHIVE_SHA256}"
   fi
+}
+
+pgdrill_integration_prepare_image() {
+  local explicit_image="$1"
+  local default_image="$2"
+  local runtime_name="$3"
+  local postgres_version="$4"
+  local base_image="$5"
+  local dockerfile="$6"
+  local build_context="$7"
+  local target_arch="$8"
+  local cached_definition
+
+  PGDRILL_INT_IMAGE_DEFINITION_SHA256="$(pgdrill_integration_sha256_file "${dockerfile}")"
+  PGDRILL_INT_IMAGE_SOURCE="pinned_build"
+  if [[ -n "${explicit_image}" ]]; then
+    PGDRILL_INT_CONTAINER_IMAGE="${explicit_image}"
+    PGDRILL_INT_IMAGE_SOURCE="explicit_override"
+    docker image inspect "${PGDRILL_INT_CONTAINER_IMAGE}" >/dev/null 2>&1 ||
+      pgdrill_integration_die "explicit ${runtime_name} image is not present locally: ${PGDRILL_INT_CONTAINER_IMAGE}"
+  else
+    PGDRILL_INT_CONTAINER_IMAGE="${default_image}"
+    cached_definition="$(docker image inspect --format '{{ index .Config.Labels "org.pgdrill.integration.definition-sha" }}' "${PGDRILL_INT_CONTAINER_IMAGE}" 2>/dev/null || true)"
+    if [[ "${cached_definition}" != "${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" ]]; then
+      if docker image inspect "${base_image}" >/dev/null 2>&1; then
+        pgdrill_integration_log "using cached immutable PostgreSQL ${postgres_version} base image for linux/${target_arch}"
+      else
+        pgdrill_integration_log "pulling immutable PostgreSQL ${postgres_version} base image for linux/${target_arch}"
+        docker pull --platform "linux/${target_arch}" "${base_image}" >/dev/null
+      fi
+      pgdrill_integration_log "building pinned ${runtime_name} runtime for linux/${target_arch}"
+      docker build \
+        --pull=false \
+        --platform "linux/${target_arch}" \
+        --build-arg "PGDRILL_INTEGRATION_DEFINITION_SHA=${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" \
+        --tag "${PGDRILL_INT_CONTAINER_IMAGE}" \
+        --file "${dockerfile}" \
+        "${build_context}"
+    else
+      pgdrill_integration_log "using cached pinned ${runtime_name} runtime for linux/${target_arch}"
+    fi
+  fi
+  PGDRILL_INT_CONTAINER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${PGDRILL_INT_CONTAINER_IMAGE}")"
+  PGDRILL_INT_IMAGE_DEFINITION_LABEL="$(docker image inspect --format '{{ index .Config.Labels "org.pgdrill.integration.definition-sha" }}' "${PGDRILL_INT_CONTAINER_IMAGE}")"
+  if [[ "${PGDRILL_INT_IMAGE_SOURCE}" == "pinned_build" && "${PGDRILL_INT_IMAGE_DEFINITION_LABEL}" != "${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" ]]; then
+    pgdrill_integration_die "built ${runtime_name} image definition label does not match ${PGDRILL_INT_IMAGE_DEFINITION_SHA256}"
+  fi
+}
+
+pgdrill_integration_print_image_inventory() {
+  local base_image="$1"
+
+  printf 'container_image=%s\n' "${PGDRILL_INT_CONTAINER_IMAGE}"
+  printf 'container_image_id=%s\n' "${PGDRILL_INT_CONTAINER_IMAGE_ID}"
+  printf 'container_image_source=%s\n' "${PGDRILL_INT_IMAGE_SOURCE}"
+  printf 'container_expected_definition_sha256=%s\n' "${PGDRILL_INT_IMAGE_DEFINITION_SHA256}"
+  printf 'container_image_definition_sha256=%s\n' "${PGDRILL_INT_IMAGE_DEFINITION_LABEL}"
+  printf 'container_base_image=%s\n' "${base_image}"
 }
 
 pgdrill_integration_docker_run() {

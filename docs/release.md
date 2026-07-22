@@ -61,6 +61,7 @@ Native tool changes have an additional opt-in local interoperability gate:
 make integration-check
 make test-integration-walg
 make test-integration-barman
+make test-integration-pgbackrest
 make test-integration-native
 ```
 
