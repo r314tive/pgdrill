@@ -1,0 +1,67 @@
+cluster:
+  name: integration-barman-postgresql-18
+
+provider:
+  type: barman
+  binary: /usr/bin/barman
+  config_path: /opt/pgdrill/test/barman.conf
+  server: integration
+  env:
+    BARMAN_CONFIG_FILE: /opt/pgdrill/test/barman.conf
+  timeout: 5m
+  barman_generate_manifest:
+    enabled: true
+    timeout: 5m
+  barman_verify_backup:
+    enabled: true
+    timeout: 5m
+
+target:
+  type: local
+  work_dir: /validation/work/restore
+  postgres_binary: /usr/lib/postgresql/18/bin/postgres
+  postgres_port: 55433
+  startup_timeout: 30s
+  shutdown_timeout: 30s
+  remove_work_dir: true
+
+restore:
+  timeout: 10m
+  verify_backup:
+    enabled: false
+
+recovery:
+  target: latest
+
+policy:
+  maximum_rto: 5m
+  maximum_rpo: 10m
+  maximum_backup_age: 10m
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: pg_isready
+    binary: /usr/lib/postgresql/18/bin/pg_isready
+    timeout: 30s
+  - type: sql
+    name: post_backup_wal_replayed
+    binary: /usr/lib/postgresql/18/bin/psql
+    query: "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_integration_probe"
+    timeout: 30s
+  - type: amcheck
+    name: structural_amcheck
+    binary: /usr/lib/postgresql/18/bin/pg_amcheck
+    mode: database
+    args:
+      on_error_stop: "true"
+    timeout: 2m
+  - type: pg_dump
+    name: schema_dump
+    binary: /usr/lib/postgresql/18/bin/pg_dump
+    mode: schema
+    timeout: 2m
+
+report:
+  format: json
+  path: /output/report.json

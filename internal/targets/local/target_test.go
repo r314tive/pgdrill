@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -454,12 +455,16 @@ func TestStartPostgresReportsEarlyExit(t *testing.T) {
 	dataDir := filepath.Join(workDir, "data")
 	postgresPath := filepath.Join(dir, "postgres")
 	writeExecutable(t, postgresPath, `#!/bin/sh
+printf 'startup failed with %s\n' "$PGDRILL_STARTUP_TOKEN" >&2
 exit 42
 `)
 
 	target := New(Config{
 		PostgresBinary: postgresPath,
 		StartupTimeout: 2 * time.Second,
+		Env: map[string]string{
+			"PGDRILL_STARTUP_TOKEN": "startup-secret",
+		},
 	}, nil)
 	if err := prepareTarget(t, target, model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}); err != nil {
 		t.Fatalf("prepare local target: %v", err)
@@ -475,6 +480,39 @@ exit 42
 	}
 	if len(evidence) != 1 || evidence[0].Attributes["exit_error"] == "" {
 		t.Fatalf("expected exit evidence, got %#v", evidence)
+	}
+	logTail := evidence[0].Attributes["postgres_log_tail"]
+	if !strings.Contains(logTail, "startup failed with [REDACTED]") || strings.Contains(logTail, "startup-secret") {
+		t.Fatalf("expected redacted postgres log evidence, got %q", logTail)
+	}
+	if evidence[0].Attributes["postgres_log_bytes"] == "" {
+		t.Fatalf("expected postgres log byte count, got %#v", evidence[0].Attributes)
+	}
+}
+
+func TestCapturePostgresLogBoundsTailAfterRedaction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "postgres.log")
+	payload := strings.Repeat("x", maxPostgresLogBytes+1024) + "startup-token\n"
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write postgres log: %v", err)
+	}
+
+	target := New(Config{Env: map[string]string{"API_TOKEN": "startup-token"}}, nil)
+	evidence := runtimeEvidence("postgres-start", map[string]string{}, time.Now().UTC())
+	target.capturePostgresLog(&evidence, path, nil)
+
+	logTail := evidence.Attributes["postgres_log_tail"]
+	if len(logTail) > maxPostgresLogBytes {
+		t.Fatalf("postgres log tail length = %d, want <= %d", len(logTail), maxPostgresLogBytes)
+	}
+	if !strings.HasSuffix(logTail, "[REDACTED]\n") || strings.Contains(logTail, "startup-token") {
+		t.Fatalf("expected bounded redacted tail, got suffix %q", logTail[len(logTail)-32:])
+	}
+	if evidence.Attributes["postgres_log_truncated"] != "true" {
+		t.Fatalf("expected truncation metadata, got %#v", evidence.Attributes)
+	}
+	if got, want := evidence.Attributes["postgres_log_bytes"], strconv.Itoa(len(payload)); got != want {
+		t.Fatalf("postgres_log_bytes = %q, want %q", got, want)
 	}
 }
 

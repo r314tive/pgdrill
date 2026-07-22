@@ -18,12 +18,14 @@ formatting is required. Release-process changes should also pass:
 make -s release-check VERSION=v0.0.0-dev
 ```
 
-Changes to native WAL-G discovery, validation, restore planning, the local
+Changes to native provider discovery, validation, restore planning, the local
 target, probes, policy evaluation, or cleanup should also run the real
-disposable path when Docker is available:
+disposable paths when Docker is available:
 
 ```sh
 make test-integration-walg
+make test-integration-barman
+make test-integration-native
 ```
 
 Run `make integration-check` when ShellCheck is installed. Integration output

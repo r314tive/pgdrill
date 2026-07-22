@@ -1,6 +1,9 @@
 package command
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 const defaultReplacement = "[REDACTED]"
 
@@ -17,7 +20,7 @@ func NewRedactor(values ...string) Redactor {
 }
 
 func (r Redactor) WithValues(values ...string) Redactor {
-	r.Values = append(append([]string{}, r.Values...), compactSecrets(values)...)
+	r.Values = compactSecrets(append(append([]string{}, r.Values...), values...))
 	if r.Replacement == "" {
 		r.Replacement = defaultReplacement
 	}
@@ -67,5 +70,11 @@ func compactSecrets(values []string) []string {
 		seen[value] = struct{}{}
 		result = append(result, value)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		if len(result[i]) == len(result[j]) {
+			return result[i] < result[j]
+		}
+		return len(result[i]) > len(result[j])
+	})
 	return result
 }

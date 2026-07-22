@@ -43,10 +43,10 @@ claim. Current field points include one CNPG restore plus native WAL-G v3.0.8,
 Barman v3.19.1, pgBackRest v2.58.0, and pg_probackup v2.5.16 restores with
 PostgreSQL 18.3 on Linux arm64; each remains limited to its exact recorded
 scope.
-A reproducible Docker integration test now recreates the WAL-G field shape from
-source backup through post-backup WAL replay, probes, policy, and cleanup. It is
-developer evidence only and remains separate from retained compatibility claims
-and the multi-host technical demo.
+Reproducible Docker integration tests now recreate the WAL-G and Barman field
+shapes from source backup through post-backup WAL replay, probes, policy, and
+cleanup. They are developer evidence only and remain separate from retained
+compatibility claims and the multi-host technical demo.
 
 ## Goals
 
@@ -157,15 +157,18 @@ Release-affecting changes should also pass:
 make -s release-check VERSION=v0.0.0-dev
 ```
 
-Run the real local WAL-G restore path with pinned PostgreSQL and WAL-G inputs:
+Run either real local provider path independently, or both native integration
+gates in sequence:
 
 ```sh
 make test-integration-walg
+make test-integration-barman
+make test-integration-native
 ```
 
-`make test-local` combines the normal checks, race detector, CLI smoke, and that
-network-isolated disposable drill. Its artifacts remain under ignored `.cache`;
-they are not compatibility evidence by themselves. See
+`make test-local` combines the normal checks, race detector, CLI smoke, and both
+network-isolated disposable drills. Their artifacts remain under ignored
+`.cache`; they are not compatibility evidence by themselves. See
 [test/integration](test/integration/README.md) for the evidence boundary.
 
 ```sh

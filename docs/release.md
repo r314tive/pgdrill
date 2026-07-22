@@ -60,13 +60,15 @@ Native tool changes have an additional opt-in local interoperability gate:
 ```sh
 make integration-check
 make test-integration-walg
+make test-integration-barman
+make test-integration-native
 ```
 
-`integration-check` requires ShellCheck. The executable test prepares pinned
-WAL-G and PostgreSQL inputs, then performs a rootless network-isolated real
-backup and restore drill. It is intentionally excluded from `release-check`
-because it requires Docker and downloads external artifacts; release owners
-must run it explicitly for affected native paths. A pass from a dirty tree is
+`integration-check` requires ShellCheck. The executable tests prepare pinned
+provider and PostgreSQL inputs, then perform rootless network-isolated real
+backup and restore drills. They are intentionally excluded from `release-check`
+because they require Docker and may download external artifacts; release owners
+must run them explicitly for affected native paths. A pass from a dirty tree is
 marked dirty and is never release evidence.
 
 ```sh

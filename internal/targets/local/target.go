@@ -25,6 +25,8 @@ const (
 	markerHeader            = "pgdrill local restore target\n"
 	receiptDirectory        = ".pgdrill-operations"
 	maxReceiptBytes         = 16 << 10
+	maxPostgresLogBytes     = 16 << 10
+	maxLogRedactionOverlap  = 64 << 10
 	defaultStartupTimeout   = 30 * time.Second
 	postgresStartupPoll     = 25 * time.Millisecond
 	postmasterPIDStatusLine = 7
@@ -324,8 +326,9 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 		port:    port,
 	}
 	go func() {
-		process.done <- cmd.Wait()
+		waitErr := cmd.Wait()
 		_ = logFile.Close()
+		process.done <- waitErr
 	}()
 
 	t.postgres = process
@@ -350,6 +353,7 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 		t.postgres = nil
 		evidence.Attributes["exit_error"] = errorString(err)
 		evidence.Attributes["startup_status"] = lastStartupStatus
+		t.capturePostgresLog(&evidence, logPath, cfg.Environment)
 		if err != nil {
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres exited during startup: %w", err)
 		}
@@ -362,6 +366,7 @@ startupReady:
 		lastStartupStatus = status
 		if err != nil {
 			evidence.Attributes["startup_error"] = err.Error()
+			t.capturePostgresLog(&evidence, logPath, cfg.Environment)
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("inspect postgres readiness: %w", err)
 		}
 		if ready {
@@ -387,6 +392,7 @@ startupReady:
 			lastStartupStatus = status
 			if err != nil {
 				evidence.Attributes["startup_error"] = err.Error()
+				t.capturePostgresLog(&evidence, logPath, cfg.Environment)
 				return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("inspect postgres readiness: %w", err)
 			}
 			if ready {
@@ -396,9 +402,11 @@ startupReady:
 			}
 			evidence.Attributes["startup_status"] = status
 			evidence.Attributes["startup_timeout"] = startupTimeout.String()
+			t.capturePostgresLog(&evidence, logPath, cfg.Environment)
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres did not become ready within %s (postmaster status: %s)", startupTimeout, status)
 		case <-ctx.Done():
 			evidence.Attributes["startup_status"] = lastStartupStatus
+			t.capturePostgresLog(&evidence, logPath, cfg.Environment)
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, ctx.Err()
 		}
 	}
@@ -420,6 +428,70 @@ startupReady:
 		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("write postgres start operation receipt: %w", err)
 	}
 	return running, []model.EvidenceRecord{evidence}, nil
+}
+
+func (t *Target) capturePostgresLog(evidence *model.EvidenceRecord, path string, runtimeEnv map[string]string) {
+	redactions := append([]string{}, t.cfg.RedactValues...)
+	for name, value := range mergeEnv(t.cfg.Env, runtimeEnv) {
+		if command.IsSensitiveEnvName(name) {
+			redactions = append(redactions, value)
+		}
+	}
+
+	overlap := 0
+	for _, value := range redactions {
+		if len(value) > overlap {
+			overlap = len(value)
+		}
+	}
+	if overlap > maxLogRedactionOverlap {
+		evidence.Attributes["postgres_log_omitted"] = "redaction value exceeds capture bound"
+		return
+	}
+
+	data, size, truncated, err := readFileTail(path, int64(maxPostgresLogBytes+overlap))
+	evidence.Attributes["postgres_log_bytes"] = strconv.FormatInt(size, 10)
+	if err != nil {
+		evidence.Attributes["postgres_log_error"] = err.Error()
+		return
+	}
+
+	redacted := command.NewRedactor(redactions...).RedactString(strings.ToValidUTF8(string(data), "?"))
+	if len(redacted) > maxPostgresLogBytes {
+		redacted = strings.ToValidUTF8(redacted[len(redacted)-maxPostgresLogBytes:], "?")
+		truncated = true
+	}
+	if redacted != "" {
+		evidence.Attributes["postgres_log_tail"] = redacted
+	}
+	if truncated {
+		evidence.Attributes["postgres_log_truncated"] = "true"
+	}
+}
+
+func readFileTail(path string, limit int64) ([]byte, int64, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, 0, false, err
+	}
+	start := info.Size() - limit
+	if start < 0 {
+		start = 0
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		return nil, info.Size(), start > 0, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit))
+	if err != nil {
+		return nil, info.Size(), start > 0, err
+	}
+	return data, info.Size(), start > 0, nil
 }
 
 func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {

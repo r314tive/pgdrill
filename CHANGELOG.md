@@ -67,6 +67,10 @@ called out explicitly even while the major version is `0`.
   restores and probes a separate local target, requires policy and cleanup
   success, and retains checksummed developer artifacts outside compatibility
   evidence.
+- A pinned Barman 3.19.1/PostgreSQL 18.3 amd64/arm64 Docker integration drill
+  that creates and validates a real local-rsync backup, archives and replays a
+  post-backup WAL sentinel, runs manifest verification and restored-database
+  probes, and requires policy-checked owned cleanup.
 
 ### Changed
 
@@ -139,6 +143,9 @@ called out explicitly even while the major version is `0`.
   and repository `verify`, database probes, and policy-checked cleanup.
 - Release archives now include the compatibility document and validated
   machine-readable evidence matrix.
+- WAL-G and Barman integration drills now share release-candidate binding,
+  Docker isolation defaults, and recursive artifact checksumming while keeping
+  provider-specific setup and assertions independent.
 
 ### Fixed
 
@@ -158,6 +165,12 @@ called out explicitly even while the major version is `0`.
   returns as soon as it is `ready` or `standby`. `target.startup_timeout` is a
   real deadline instead of an unconditional RTO-inflating delay, and a process
   that remains unready fails with structured runtime evidence.
+- Local PostgreSQL startup failures now retain a bounded redacted log tail in
+  structured evidence after the process log is closed, making recovery-command
+  failures diagnosable without retaining unbounded or known-secret output.
+- Redaction now processes overlapping values longest first across base and
+  invocation-specific secret sets, preventing a shorter value from exposing a
+  suffix of a longer secret.
 
 ## [0.1.0-alpha.9] - 2026-07-20
 

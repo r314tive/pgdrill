@@ -53,7 +53,8 @@ Status: complete for the initial CLI engine.
 
 ## Phase 2: First Real Drill
 
-Target: WAL-G to local restore target.
+Initial target: WAL-G to a local restore target. Barman is now the second
+repeatable native path through the same engine lifecycle.
 
 Status: usable for local-target smoke drills and field-exercised at exact WAL-G
 3.0.8, Barman 3.19.1, and pgBackRest 2.58.0 / PostgreSQL 18.3 Linux arm64
@@ -187,12 +188,20 @@ Completed foundation:
   `test/integration` that recreates a real base backup, post-backup WAL replay,
   provider validation, restored-server probes, policy evaluation, and cleanup
   without coupling demo infrastructure to engine packages.
+- A pinned Barman 3.19.1/PostgreSQL 18.3 companion drill that creates a real
+  local-rsync backup, exercises archived WAL through Barman's generated
+  `restore_command`, requires manifest verification and restored-cluster
+  probes, and retains the same release-bound checksummed artifact set.
+- Shared host-side integration mechanics for deterministic release archives,
+  explicit dirty builds, rootless network-isolated Docker execution, and
+  recursive artifact checksums, while provider semantics remain separate.
 
 Remaining external engine gates, in order:
 
 1. Exercise one release-candidate artifact and commit through all four local
-   native-provider drills; current field reports intentionally bind different
-   development commits.
+   native-provider drills; reproducible harnesses currently cover WAL-G and
+   Barman, while pgBackRest and pg_probackup still need equivalent gates.
+   Current field reports intentionally bind different development commits.
 2. Exercise the same release candidate through a live disposable CNPG drill
    before calling Engine v0.2 release-ready.
 3. Broaden every provider beyond its first local latest-recovery point across
