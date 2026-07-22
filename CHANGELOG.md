@@ -8,6 +8,8 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10] - 2026-07-22
+
 ### Added
 
 - Validated `pgdrill.run-event/v1alpha1` lifecycle events with logical run and
