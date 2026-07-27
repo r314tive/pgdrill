@@ -4,10 +4,10 @@ This directory defines a disposable three-VM demo of the WAL-G local restore
 path. It is intended for a controlled technical session with synthetic data.
 It is not a production deployment template.
 
-Validation status: repository checks only. The Terraform plan and scripts have
-not yet been applied to a live Yandex Cloud folder. A successful live rehearsal
-and retained report are required before using this environment in a customer
-session.
+Validation status: repository checks and the local published-artifact rehearsal
+pass. The Terraform plan and scripts have not yet been applied to a live Yandex
+Cloud folder. A successful live rehearsal and retained report are required
+before using this environment in a customer session.
 
 ## Topology
 
@@ -106,11 +106,12 @@ proves that the administrator can use the fixed report wrapper.
 
 - Terraform `>= 1.5`.
 - ShellCheck `>= 0.11` for the repository infrastructure gate.
+- GitHub CLI, or another authenticated way to download exact release assets.
 - Yandex Cloud CLI and an authenticated provisioning identity.
 - Permission to create Compute instances, VPC network resources, security
   groups, a public runner address, and a shared egress gateway.
 - An owner SSH key and the final public keys for invited administrators.
-- A clean pgdrill commit and a Linux amd64 release archive built from it.
+- An immutable published pgdrill Linux amd64 release archive and its checksum.
 - Trusted public IPv4 CIDRs for every participant who needs SSH.
 
 Keep provider credentials in the environment. Do not put a token in
@@ -133,6 +134,11 @@ script, initializes only the locked provider with the backend disabled, and
 validates its Terraform schema. It needs registry network access on a fresh
 checkout but neither cloud credentials nor a state backend.
 
+Before provisioning the hosted topology, pass the
+[local published-artifact rehearsal](../local/README.md) on the architecture
+used by the local Docker daemon. It proves the selected release archive can
+complete the recovery claim, but it does not replace any cloud gate below.
+
 ## Provision
 
 Prepare the ignored variables file:
@@ -152,24 +158,35 @@ Review the plan before apply. It should contain exactly three VMs, one public
 runner interface, one private subnet, three role-specific security groups, and
 one shared egress gateway.
 
-## Build And Bootstrap
+## Acquire And Bootstrap
 
-From the repository root, build a versioned Linux amd64 archive from the clean
-commit that will be demonstrated:
+Use the exact published Linux amd64 archive that will be demonstrated. From the
+repository root:
 
 ```sh
-export GOTOOLCHAIN=go1.26.5
-export GOCACHE="$PWD/.cache/go-build"
-make -s release-artifacts \
-  VERSION=v0.1.0-demo.1 \
-  RELEASE_TARGETS=linux/amd64
+VERSION=v0.2.0-rc.1
+RELEASE_DIR="$PWD/demo/yandex-cloud/.state/release/$VERSION"
+mkdir -p "$RELEASE_DIR"
+gh release download "$VERSION" \
+  --repo r314tive/pgdrill \
+  --dir "$RELEASE_DIR" \
+  --pattern "pgdrill_${VERSION#v}_linux_amd64.tar.gz" \
+  --pattern "pgdrill_${VERSION#v}_checksums.txt"
+grep 'linux_amd64.tar.gz$' \
+  "$RELEASE_DIR/pgdrill_${VERSION#v}_checksums.txt" \
+  >"$RELEASE_DIR/linux_amd64.sha256"
+if command -v sha256sum >/dev/null; then
+  (cd "$RELEASE_DIR" && sha256sum -c linux_amd64.sha256)
+else
+  (cd "$RELEASE_DIR" && shasum -a 256 -c linux_amd64.sha256)
+fi
 ```
 
 Then install PostgreSQL 18, pinned WAL-G, and that exact pgdrill archive:
 
 ```sh
 demo/yandex-cloud/scripts/bootstrap.sh \
-  --archive dist/pgdrill_0.1.0-demo.1_linux_amd64.tar.gz \
+  --archive "$RELEASE_DIR/pgdrill_${VERSION#v}_linux_amd64.tar.gz" \
   --identity ~/.ssh/pgdrill-demo-owner
 ```
 

@@ -11,8 +11,10 @@ operational question:
 
 ## Status
 
-Engine v0.2 is at release-candidate preparation, suitable for controlled
-technical evaluation but not a blanket production-support claim.
+Engine v0.2 has a published
+[`v0.2.0-rc.1`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.1)
+release candidate. It is suitable for controlled technical evaluation but not
+a blanket production-support claim.
 
 The CLI implements:
 
@@ -39,6 +41,13 @@ Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 restores with
 PostgreSQL 18.3 on Linux arm64, plus CNPG 1.26.3 / PostgreSQL 15.17 in a
 disposable KinD environment. Other versions, storage backends, platforms, and
 PITR modes remain unclaimed until separately exercised.
+
+The exact `v0.2.0-rc.1` commit
+`e9cb257c8312020166b5dff9c91f9bd9cde4ca25` passed the clean aggregate
+release-candidate gate across all four native providers and disposable CNPG
+before publication. Published checksums were then verified independently, and
+the published Linux arm64 archive passed the local WAL-G rehearsal. These are
+release and controlled-demo gates, not broader compatibility claims.
 
 Fleet scheduling, durable multi-run history, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
@@ -150,7 +159,7 @@ make check
 Release-affecting changes should also pass:
 
 ```sh
-make -s release-check VERSION=v0.0.0-dev
+make -s release-check VERSION=v0.2.0-dev
 ```
 
 Run any real local provider path independently, or all native integration gates
@@ -223,8 +232,10 @@ CNPG target verification examples are available in
 A local pg_probackup drill example is available in
 [examples/pgprobackup.yaml](examples/pgprobackup.yaml).
 The evidence-led technical demo contract is documented in
-[demo/README.md](demo/README.md), with a reproducible, access-scoped Yandex
-Cloud WAL-G baseline under [demo/yandex-cloud](demo/yandex-cloud/README.md).
+[demo/README.md](demo/README.md), with a published-artifact local rehearsal
+under [demo/local](demo/local/README.md) and a reproducible, access-scoped
+Yandex Cloud WAL-G baseline under
+[demo/yandex-cloud](demo/yandex-cloud/README.md).
 
 Release discipline is described in [docs/release.md](docs/release.md), and
 the versioned JSON report contract is documented in

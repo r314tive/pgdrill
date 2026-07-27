@@ -1,6 +1,6 @@
 # Compatibility And Validation
 
-`pgdrill` is preparing its first Engine v0.2 release candidate. This document
+`pgdrill` has published its first Engine v0.2 release candidate. This document
 separates build portability, automated test coverage, and real-environment
 validation so a green unit test is not mistaken for a production support
 claim.
@@ -84,9 +84,23 @@ the generated manifest, and removed the owned Cluster and PVC.
 The reports, runtime inventories, source/WAL boundaries, limitations, and
 local checksums are retained as separate exact field entries under
 [`compatibility/evidence`](../compatibility/evidence). This closes the
-single-commit consolidation gate for alpha.10; it does not substitute for
-rerunning the same five paths from the exact Engine v0.2 release-candidate
-commit.
+single-commit consolidation gate for alpha.10.
+
+### v0.2.0-rc.1 Release Gate
+
+On 2026-07-27, the exact clean `v0.2.0-rc.1` commit
+`e9cb257c8312020166b5dff9c91f9bd9cde4ca25` passed the aggregate release gate,
+all four native-provider drills, and the disposable CNPG drill before the
+annotated tag was published. Branch CI, tag verification, deterministic
+release construction, and GitHub Release publication then passed.
+
+All four published archives matched the downloaded release checksum file. The
+published Linux arm64 archive independently completed the local WAL-G
+rehearsal with 11 passed checks, five passed policy verdicts, post-backup WAL
+replay, and owned cleanup. This verifies the release and one controlled local
+execution point. It does not create a new storage, platform, PITR, hosted-cloud,
+or customer compatibility claim; the narrower committed matrix entries below
+remain the compatibility source of truth.
 
 ### WAL-G Field Validation
 

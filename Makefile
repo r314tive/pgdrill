@@ -1,6 +1,6 @@
-.PHONY: build check demo-check demo-infra-check fmt format integration-check integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
+.PHONY: build check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
 
-VERSION ?= v0.1.0-dev
+VERSION ?= v0.2.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 RELEASE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -13,12 +13,15 @@ BINDIR ?= bin
 DISTDIR ?= dist
 SHELLCHECK ?= shellcheck
 TERRAFORM ?= terraform
+DEMO_RELEASE_ARCHIVE ?=
+DEMO_RELEASE_COMMIT ?=
+DEMO_RELEASE_SHA256 ?=
 BINARY := pgdrill
 DEMO_TERRAFORM_DIR := demo/yandex-cloud/terraform
 VERSION_PKG := github.com/r314tive/pgdrill/internal/version
 LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
-check: fmt mod-check vet test demo-check integration-syntax-check
+check: fmt mod-check vet test demo-check integration-runtime-test
 
 build:
 	mkdir -p $(BINDIR)
@@ -60,10 +63,23 @@ demo-infra-check: demo-check
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) fmt -check -recursive
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) validate
 
+demo-rehearsal: demo-check integration-syntax-check
+	@test -n "$(DEMO_RELEASE_ARCHIVE)" || { printf 'DEMO_RELEASE_ARCHIVE is required\n'; exit 2; }
+	@test -n "$(DEMO_RELEASE_COMMIT)" || { printf 'DEMO_RELEASE_COMMIT is required\n'; exit 2; }
+	@test -n "$(DEMO_RELEASE_SHA256)" || { printf 'DEMO_RELEASE_SHA256 is required\n'; exit 2; }
+	demo/local/rehearse.sh \
+		--archive "$(DEMO_RELEASE_ARCHIVE)" \
+		--archive-sha256 "$(DEMO_RELEASE_SHA256)" \
+		--commit "$(DEMO_RELEASE_COMMIT)" \
+		--version "$(VERSION)"
+
 integration-syntax-check:
 	@for script in $$(find test/integration -type f -name '*.sh' -print | sort); do \
 		bash -n "$$script" || exit 1; \
 	done
+
+integration-runtime-test: integration-syntax-check
+	test/integration/lib/runtime_test.sh
 
 integration-check: integration-syntax-check
 	$(SHELLCHECK) -x $$(find test/integration -type f -name '*.sh' -print | sort)

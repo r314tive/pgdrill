@@ -162,6 +162,13 @@ git tag -a "$VERSION" -m "pgdrill $VERSION"
 
 8. Push the release commit, wait for branch CI, then push the tag as a separate
    explicit publication action.
+9. Wait for both release workflow jobs, then confirm that the GitHub Release is
+   a prerelease when appropriate and contains exactly the expected archives
+   plus checksum file.
+10. Download the published assets into a fresh directory, verify every archive
+    against the downloaded checksum file, run the native `pgdrill version`, and
+    confirm that the remote annotated tag dereferences to the exact tested
+    commit.
 
 ## Tag Automation
 

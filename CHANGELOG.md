@@ -8,6 +8,22 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- A local demo rehearsal that runs a supplied, checksum-verified published
+  Linux release archive through the real WAL-G/PostgreSQL restore drill and
+  requires a passed report, post-backup WAL replay, policy, cleanup, and
+  checksummed retained artifacts.
+
+### Changed
+
+- Native integration runtime preparation can consume an exact external release
+  archive bound to an expected version, full commit, platform, and SHA-256
+  instead of rebuilding the current checkout, with focused rejection tests for
+  invalid metadata, digest, filename, and symlink payloads.
+- Development builds now default to `v0.2.0-dev`, and release/demo
+  documentation records the published `v0.2.0-rc.1` gate.
+
 ## [0.2.0-rc.1] - 2026-07-27
 
 ### Added

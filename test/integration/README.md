@@ -23,6 +23,19 @@ Host-side release-candidate binding, Docker isolation defaults, and artifact
 checksumming live in `lib/runtime.sh`. Provider setup, backup semantics,
 restore commands, and acceptance assertions stay in their scenario directory.
 
+By default, a clean checkout produces and executes a deterministic release
+archive from `HEAD`. Native scenarios can instead consume an existing Linux
+archive by setting all of:
+
+- `PGDRILL_INTEGRATION_RELEASE_ARCHIVE`
+- `PGDRILL_INTEGRATION_RELEASE_ARCHIVE_SHA256`
+- `PGDRILL_INTEGRATION_VERSION`
+- `PGDRILL_INTEGRATION_COMMIT`
+
+The runtime rejects an archive whose filename, architecture, checksum, version,
+or full commit binding is inconsistent. The operator-facing wrapper for this
+mode is documented under [demo/local](../../demo/local/README.md).
+
 Current scenarios:
 
 - [WAL-G to a local PostgreSQL target](walg/README.md)

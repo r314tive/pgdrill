@@ -143,10 +143,10 @@ in progress.
 
 ## Phase 5: Engine v0.2 Hardening
 
-Status: complete for protocol hardening, exact alpha.10 consolidation, and
-reproducible candidate gates. The aggregate gate must still pass from the exact
-clean Engine v0.2 release-candidate commit before tagging; public planning
-contracts remain intentionally unpublished.
+Status: published as `v0.2.0-rc.1` after protocol hardening, exact alpha.10
+consolidation, and the reproducible aggregate gate passed from clean commit
+`e9cb257c8312020166b5dff9c91f9bd9cde4ca25`. Fleet planning contracts remain
+architecture only.
 
 Completed foundation:
 
@@ -220,12 +220,9 @@ Completed foundation:
   gate, ShellCheck, all four native-provider drills, and the disposable CNPG
   drill with one version and full Git commit.
 
-Remaining external engine gates, in order:
+Remaining external engine gate:
 
-1. Run `make -s release-candidate-check VERSION=v0.2.0-rc.1` from the exact
-   clean release commit and review all five checksummed artifact sets before
-   tagging.
-2. Broaden every provider beyond its first local latest-recovery point across
+1. Broaden every provider beyond its first local latest-recovery point across
    storage backends, versions, platforms, backup modes, and PITR targets.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this
@@ -234,8 +231,9 @@ journal by default yet.
 
 ## Demo And Pilot Readiness
 
-Status: repository baseline implemented; first live Yandex Cloud rehearsal is
-pending and no cloud compatibility claim is recorded yet.
+Status: repository baseline and local published-artifact rehearsal implemented;
+the first live Yandex Cloud rehearsal is pending and no cloud compatibility
+claim is recorded yet.
 
 - Evidence-led demo contract with explicit proof and non-proof boundaries.
 - Customer discovery and one-scenario pilot acceptance checklist.
@@ -248,22 +246,23 @@ pending and no cloud compatibility claim is recorded yet.
 - Provider-independent local-target startup override preventing a restored
   cluster from inheriting an active archive command and writing back to the
   source backup repository.
+- A local rehearsal that executes an exact checksum-verified published Linux
+  archive through the real WAL-G/PostgreSQL drill and requires report,
+  post-backup WAL, policy, and cleanup proof.
 - Explicit repository boundaries between disposable developer integration
   tests, operator-facing demo topology, and retained compatibility evidence.
 
 Remaining gates, in order:
 
-1. Pass the aggregate local release-candidate gate and retain its checksummed
-   WAL-G report as rehearsal input, not cloud evidence.
-2. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
+1. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
    retain infrastructure inventory plus a successful bootstrap transcript.
-3. Produce two consecutive passed reports from the same release-candidate
+2. Produce two consecutive passed reports from the same published release
    artifact, including the post-backup WAL assertion and owned cleanup.
-4. Exercise a dedicated invited-administrator account and confirm its bounded
+3. Exercise a dedicated invited-administrator account and confirm its bounded
    sudo surface before the customer session.
-5. Add Yandex Object Storage only as a separate compatibility profile with
+4. Add Yandex Object Storage only as a separate compatibility profile with
    executor-local credentials and explicit secret/state review.
-6. Convert one real customer topology into a bounded pilot spec before adding
+5. Convert one real customer topology into a bounded pilot spec before adding
    generalized fleet or UI features.
 
 ## Phase 6: Fleet Control Plane
@@ -316,10 +315,10 @@ API. A UI must not become a second orchestration engine.
 
 ## Release Readiness
 
-Status: implemented, exercised through the published `v0.1.0-alpha.9`
-prerelease, and locally consolidated at `v0.1.0-alpha.10`; each future release
-still requires its own exact-candidate gate, green CI, immutable tag, published
-assets, and checksum verification.
+Status: implemented and exercised through the published `v0.2.0-rc.1`
+prerelease, including its exact-candidate gate, green branch and tag workflows,
+immutable annotated tag, published assets, and independent checksum
+verification. Every future release requires the same gates.
 
 - Non-mutating format, module, vet, and test gate.
 - Minimum and pinned release Go toolchain checks.
@@ -331,7 +330,7 @@ assets, and checksum verification.
 - Changelog-derived release notes and annotated-tag validation.
 - Read-only build job separated from the write-enabled publication job.
 - Cross-host checksum parity between all four local release archives and the
-  corresponding published `v0.1.0-alpha.9` assets.
+  corresponding published `v0.2.0-rc.1` assets.
 - One clean-tree aggregate candidate command binding release artifacts, all
   four native drills, and disposable CNPG to the same version and commit.
 - Dependabot, contribution, security, compatibility, issue, and pull request

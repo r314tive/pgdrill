@@ -26,7 +26,8 @@ die() {
   pgdrill_integration_die "$@"
 }
 
-pgdrill_integration_require_commands awk curl docker git go tar
+pgdrill_integration_require_commands awk curl docker git tar
+pgdrill_integration_require_source_build_commands
 docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
 git -C "${ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
   die "integration test must run from a Git checkout"

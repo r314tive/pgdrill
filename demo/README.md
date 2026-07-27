@@ -36,6 +36,11 @@ keeps the engine and the demo infrastructure separate: the engine remains an
 ordinary CLI artifact, while Terraform and shell scripts only provision and
 adapt the disposable environment.
 
+The [local published-artifact rehearsal](local/README.md) runs the same core
+recovery claim through the network-isolated WAL-G integration environment. Use
+it for presenter practice and as a fallback proof of the published binary, but
+label it as local Docker evidence rather than hosted or customer compatibility.
+
 A useful 25-minute session is:
 
 1. Show the source/repository/runner boundaries and exact component inventory.

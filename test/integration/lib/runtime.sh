@@ -25,6 +25,12 @@ pgdrill_integration_require_commands() {
   fi
 }
 
+pgdrill_integration_require_source_build_commands() {
+  if [[ -z "${PGDRILL_INTEGRATION_RELEASE_ARCHIVE:-}" ]]; then
+    pgdrill_integration_require_commands go
+  fi
+}
+
 pgdrill_integration_sha256_file() {
   local path="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -114,13 +120,27 @@ pgdrill_integration_prepare_pgdrill_for_target() {
   local target_os="$3"
   local target_arch="$4"
   local version_base="$5"
-  local head_commit
+  local head_commit supplied_archive
 
   PGDRILL_INT_TARGET_OS="${target_os}"
   PGDRILL_INT_TARGET_ARCH="${target_arch}"
   PGDRILL_INT_RUNTIME_DIR="${cache_root}/runtime/${target_os}/${target_arch}"
   PGDRILL_INT_BINARY="${PGDRILL_INT_RUNTIME_DIR}/pgdrill"
   mkdir -p "${PGDRILL_INT_RUNTIME_DIR}" "${cache_root}/runs"
+
+  supplied_archive="${PGDRILL_INTEGRATION_RELEASE_ARCHIVE:-}"
+  if [[ -n "${supplied_archive}" ]]; then
+    PGDRILL_INT_VERSION="${version_base}"
+    PGDRILL_INT_COMMIT="${PGDRILL_INTEGRATION_COMMIT:-}"
+    PGDRILL_INT_BUILD_DATE="${PGDRILL_INTEGRATION_BUILD_DATE:-}"
+    PGDRILL_INT_DIRTY_TREE=false
+    pgdrill_integration_use_release_archive \
+      "${supplied_archive}" \
+      "${PGDRILL_INTEGRATION_RELEASE_ARCHIVE_SHA256:-}" \
+      "${target_os}" \
+      "${target_arch}"
+    return
+  fi
 
   head_commit="$(git -C "${root}" rev-parse HEAD)"
   PGDRILL_INT_VERSION="${version_base}"
@@ -149,6 +169,50 @@ pgdrill_integration_prepare_pgdrill_for_target() {
   else
     pgdrill_integration_build_release_binary "${root}" "${cache_root}" "${target_os}" "${target_arch}"
   fi
+}
+
+pgdrill_integration_use_release_archive() {
+  local archive="$1"
+  local expected_sha256="$2"
+  local target_os="$3"
+  local target_arch="$4"
+  local archive_dir archive_name archive_root extract_dir extracted_binary
+
+  [[ "${PGDRILL_INT_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] ||
+    pgdrill_integration_die "supplied release archive requires a safe semantic version"
+  [[ "${PGDRILL_INT_COMMIT}" =~ ^[0-9a-f]{40,64}$ ]] ||
+    pgdrill_integration_die "supplied release archive requires PGDRILL_INTEGRATION_COMMIT as a full lowercase Git object ID"
+  [[ "${expected_sha256}" =~ ^[0-9a-f]{64}$ ]] ||
+    pgdrill_integration_die "supplied release archive requires a lowercase SHA-256 digest"
+  [[ -f "${archive}" ]] ||
+    pgdrill_integration_die "supplied release archive does not exist: ${archive}"
+
+  archive_dir="$(cd -- "$(dirname -- "${archive}")" && pwd -P)"
+  archive_name="$(basename -- "${archive}")"
+  archive_root="pgdrill_${PGDRILL_INT_VERSION#v}_${target_os}_${target_arch}"
+  [[ "${archive_name}" == "${archive_root}.tar.gz" ]] ||
+    pgdrill_integration_die "supplied release archive must be named ${archive_root}.tar.gz"
+
+  PGDRILL_INT_RELEASE_ARCHIVE="${archive_dir}/${archive_name}"
+  pgdrill_integration_verify_file "${expected_sha256}" "${PGDRILL_INT_RELEASE_ARCHIVE}" ||
+    pgdrill_integration_die "supplied release archive checksum verification failed"
+  PGDRILL_INT_RELEASE_ARCHIVE_SHA256="${expected_sha256}"
+  PGDRILL_INT_BUILD_SOURCE="supplied_release_archive"
+
+  pgdrill_integration_log "using supplied ${PGDRILL_INT_VERSION} release archive for ${target_os}/${target_arch} from ${PGDRILL_INT_COMMIT}"
+  extract_dir="$(mktemp -d "${PGDRILL_INT_RUNTIME_DIR}/release.extract.XXXXXX")"
+  if ! tar -xzf "${PGDRILL_INT_RELEASE_ARCHIVE}" -C "${extract_dir}" "${archive_root}/pgdrill"; then
+    rm -rf "${extract_dir}"
+    pgdrill_integration_die "extract release binary from ${PGDRILL_INT_RELEASE_ARCHIVE}"
+  fi
+  extracted_binary="${extract_dir}/${archive_root}/pgdrill"
+  if [[ ! -f "${extracted_binary}" || -L "${extracted_binary}" ]]; then
+    rm -rf "${extract_dir}"
+    pgdrill_integration_die "supplied release archive does not contain a regular pgdrill binary"
+  fi
+  cp "${extracted_binary}" "${PGDRILL_INT_BINARY}"
+  chmod 0755 "${PGDRILL_INT_BINARY}"
+  rm -rf "${extract_dir}"
 }
 
 pgdrill_integration_build_dirty_binary() {
@@ -231,11 +295,17 @@ pgdrill_integration_print_runtime_inventory() {
 
   printf 'docker_arch=%s\n' "${runtime_docker_arch}"
   printf 'build_target=%s/%s\n' "${PGDRILL_INT_TARGET_OS}" "${PGDRILL_INT_TARGET_ARCH}"
-  printf 'go=%s\n' "$(go version)"
+  if command -v go >/dev/null 2>&1; then
+    printf 'go=%s\n' "$(go version)"
+  else
+    printf 'go=not-used-supplied-release-archive\n'
+  fi
   printf 'build_source=%s\n' "${PGDRILL_INT_BUILD_SOURCE}"
   printf 'version=%s\n' "${PGDRILL_INT_VERSION}"
   printf 'commit=%s\n' "${PGDRILL_INT_COMMIT}"
-  printf 'build_date=%s\n' "${PGDRILL_INT_BUILD_DATE}"
+  if [[ -n "${PGDRILL_INT_BUILD_DATE}" ]]; then
+    printf 'build_date=%s\n' "${PGDRILL_INT_BUILD_DATE}"
+  fi
   printf 'pgdrill_sha256=%s\n' "$(pgdrill_integration_sha256_file "${PGDRILL_INT_BINARY}")"
   if [[ -n "${PGDRILL_INT_RELEASE_ARCHIVE}" ]]; then
     printf 'release_archive=%s\n' "${PGDRILL_INT_RELEASE_ARCHIVE##*/}"
