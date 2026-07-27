@@ -8,6 +8,12 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+### Added
+
+- Retained exact `v0.2.0-rc.2` field evidence for WAL-G 3.0.8 timestamp PITR
+  with PostgreSQL 18.3 on Linux arm64, including a proven before/after
+  transaction boundary and published-archive identity.
+
 ## [0.2.0-rc.2] - 2026-07-27
 
 ### Added

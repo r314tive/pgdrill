@@ -42,13 +42,12 @@ PostgreSQL 18.3 on Linux arm64, plus CNPG 1.26.3 / PostgreSQL 15.17 in a
 disposable KinD environment. Other versions, storage backends, platforms, and
 PITR modes remain unclaimed until separately exercised.
 
-The exact `v0.2.0-rc.1` commit
-`e9cb257c8312020166b5dff9c91f9bd9cde4ca25` passed the clean aggregate
+The exact `v0.2.0-rc.2` commit
+`97ad852ecb2c9493c1c4a1e7718f61bf496efa17` passed the clean aggregate
 release-candidate gate across all four native providers and disposable CNPG
-before publication. Published checksums were then verified independently, and
-the published Linux arm64 archive passed the local WAL-G latest-recovery
-rehearsal. `v0.2.0-rc.2` corrects PostgreSQL timestamp formatting and extends
-that rehearsal with a real before/after PITR transaction boundary. These are
+before publication. Published checksums were then verified independently. The
+published Linux arm64 archive passed local WAL-G latest recovery and timestamp
+PITR, proving both sides of an archived transaction boundary. These are
 release and controlled-demo gates, not broader compatibility claims.
 
 Fleet scheduling, durable multi-run history, a controller/agent protocol, TUI,

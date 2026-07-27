@@ -1,5 +1,5 @@
 schema_version: pgdrill.compatibility-matrix/v1alpha1
-updated_at: "2026-07-22"
+updated_at: "2026-07-27"
 entries:
   - id: provider.barman.field
     component: provider
@@ -348,6 +348,40 @@ entries:
       - One disposable local file repository does not establish remote object-storage compatibility.
       - Only latest recovery from one full backup with one post-backup WAL segment was exercised.
       - The observation is a controlled local release-artifact drill, not a production RTO or support-range claim.
+  - id: provider.wal-g.field.v0-2-0-rc-2-pitr
+    component: provider
+    implementation: wal-g
+    evidence_level: field
+    capabilities:
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - timestamp_pitr
+      - wal_replay
+    recovery_targets:
+      - timestamp
+    implementation_versions:
+      - "3.0.8"
+    pgdrill_versions:
+      - v0.2.0-rc.2
+    pgdrill_commits:
+      - 97ad852ecb2c9493c1c4a1e7718f61bf496efa17
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-27"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64-pgdrill-v0.2.0-rc.2-pitr/report.json
+      - kind: field_note
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64-pgdrill-v0.2.0-rc.2-pitr/README.md#validated-scope
+    limitations:
+      - One disposable local file repository does not establish remote object-storage compatibility.
+      - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
+      - The observation is a controlled published-artifact drill, not a production RTO or support-range claim.
   - id: provider.wal-g.fixture
     component: provider
     implementation: wal-g

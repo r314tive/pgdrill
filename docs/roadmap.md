@@ -157,9 +157,10 @@ in progress.
 
 ## Phase 5: Engine v0.2 Hardening
 
-Status: published as `v0.2.0-rc.1` after protocol hardening, exact alpha.10
-consolidation, and the reproducible aggregate gate passed from clean commit
-`e9cb257c8312020166b5dff9c91f9bd9cde4ca25`. Fleet planning contracts remain
+Status: published as `v0.2.0-rc.2` after protocol hardening, exact alpha.10
+consolidation, and reproducible aggregate gates. Clean commit
+`97ad852ecb2c9493c1c4a1e7718f61bf496efa17` additionally passed a real WAL-G
+timestamp boundary before publication. Fleet planning contracts remain
 architecture only.
 
 Completed foundation:
@@ -261,8 +262,9 @@ claim is recorded yet.
   cluster from inheriting an active archive command and writing back to the
   source backup repository.
 - A local rehearsal that executes an exact checksum-verified published Linux
-  archive through the real WAL-G/PostgreSQL drill and requires report,
-  post-backup WAL, policy, and cleanup proof.
+  archive through real WAL-G/PostgreSQL latest and timestamp-PITR drills and
+  requires report, post-backup WAL, before/after boundary, policy, and cleanup
+  proof.
 - Explicit repository boundaries between disposable developer integration
   tests, operator-facing demo topology, and retained compatibility evidence.
 
@@ -351,7 +353,7 @@ provider/version coverage are explicitly outside the GA gate.
 
 ## Release Readiness
 
-Status: implemented and exercised through the published `v0.2.0-rc.1`
+Status: implemented and exercised through the published `v0.2.0-rc.2`
 prerelease, including its exact-candidate gate, green branch and tag workflows,
 immutable annotated tag, published assets, and independent checksum
 verification. Every future release requires the same gates.
@@ -366,7 +368,7 @@ verification. Every future release requires the same gates.
 - Changelog-derived release notes and annotated-tag validation.
 - Read-only build job separated from the write-enabled publication job.
 - Cross-host checksum parity between all four local release archives and the
-  corresponding published `v0.2.0-rc.1` assets.
+  corresponding published `v0.2.0-rc.2` assets.
 - One clean-tree aggregate candidate command binding release artifacts, all
   four native drills, and disposable CNPG to the same version and commit.
 - Dependabot, contribution, security, compatibility, issue, and pull request

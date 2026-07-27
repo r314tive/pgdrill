@@ -22,8 +22,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 16 {
-		t.Fatalf("matrix entry count = %d, want 16", len(matrix.Entries))
+	if len(matrix.Entries) != 17 {
+		t.Fatalf("matrix entry count = %d, want 17", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -45,6 +45,12 @@ func TestCommittedMatrix(t *testing.T) {
 	}
 	if levels["provider.wal-g.field"] != EvidenceLevelField {
 		t.Fatalf("WAL-G field level = %q, want field", levels["provider.wal-g.field"])
+	}
+	if levels["provider.wal-g.field.v0-2-0-rc-2-pitr"] != EvidenceLevelField {
+		t.Fatalf(
+			"WAL-G PITR field level = %q, want field",
+			levels["provider.wal-g.field.v0-2-0-rc-2-pitr"],
+		)
 	}
 	if levels["provider.barman.field"] != EvidenceLevelField {
 		t.Fatalf("Barman field level = %q, want field", levels["provider.barman.field"])
@@ -69,6 +75,11 @@ func TestCommittedMatrix(t *testing.T) {
 
 	fixtureProviders := make(map[model.ProviderType]Entry)
 	for _, entry := range matrix.Entries {
+		if entry.ID == "provider.wal-g.field.v0-2-0-rc-2-pitr" {
+			if len(entry.RecoveryTargets) != 1 || entry.RecoveryTargets[0] != model.RecoveryTargetTimestamp {
+				t.Fatalf("WAL-G PITR recovery targets = %#v, want timestamp", entry.RecoveryTargets)
+			}
+		}
 		if entry.Component == ComponentProvider && entry.EvidenceLevel == EvidenceLevelFixture {
 			provider := model.ProviderType(entry.Implementation)
 			if _, exists := fixtureProviders[provider]; exists {

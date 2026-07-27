@@ -102,6 +102,26 @@ execution point. It does not create a new storage, platform, PITR, hosted-cloud,
 or customer compatibility claim; the narrower committed matrix entries below
 remain the compatibility source of truth.
 
+### v0.2.0-rc.2 Release And PITR Gate
+
+On 2026-07-27, the exact clean `v0.2.0-rc.2` commit
+`97ad852ecb2c9493c1c4a1e7718f61bf496efa17` passed the aggregate release gate,
+all four native-provider drills, and the disposable CNPG drill. Its WAL-G path
+completed both latest recovery and an inclusive timestamp PITR boundary. Branch
+CI, annotated-tag verification, deterministic release construction, and GitHub
+Release publication passed.
+
+All four independently downloaded archives matched the published checksum
+file. The published Linux arm64 archive then repeated the WAL-G drill without a
+Go toolchain in the execution path. Timestamp recovery retained row 101,
+committed after the base backup but before the target, and excluded archived row
+102 committed after the target. The exact report and runtime inventory are
+retained in the compatibility matrix.
+
+This adds one WAL-G 3.0.8 / PostgreSQL 18.3 / Linux arm64 timestamp field point.
+It does not imply timestamp support for other providers, versions, platforms,
+backup modes, or storage backends.
+
 ### WAL-G Field Validation
 
 On 2026-07-21, pgdrill `v0.1.0-dev` at commit
