@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r314tive/pgdrill/internal/history"
 	"github.com/r314tive/pgdrill/internal/model"
@@ -150,6 +151,99 @@ report:
 	}
 }
 
+func TestHistoryVerifyAndConfirmedPruneCommands(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "history")
+	for index, runID := range []string{"retention-cli-1", "retention-cli-2"} {
+		reportPath := filepath.Join(dir, runID+".json")
+		started := mustTime(t, "2026-07-27T10:00:00Z").Add(time.Duration(index) * time.Hour)
+		writeDrillReport(t, reportPath, model.DrillResult{
+			ID:             runID,
+			Cluster:        "production-main",
+			Provider:       model.ProviderWALG,
+			Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/retention-cli"},
+			RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			StartedAt:      started,
+			FinishedAt:     started.Add(time.Minute),
+			Status:         model.DrillStatusPassed,
+		})
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		if code := run([]string{"history", "import", "-store", storePath, reportPath}, &stdout, &stderr); code != 0 {
+			t.Fatalf("history import %s exit = %d, stderr = %q", runID, code, stderr.String())
+		}
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := run([]string{"history", "verify", "-store", storePath, "-format", "json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("history verify exit = %d, stderr = %q", code, stderr.String())
+	}
+	var verification history.VerificationResult
+	if err := json.Unmarshal(stdout.Bytes(), &verification); err != nil {
+		t.Fatalf("decode history verification: %v", err)
+	}
+	if verification.Runs != 2 || verification.Attempts != 2 || verification.TerminalReports != 2 {
+		t.Fatalf("history verification = %#v", verification)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	pruneArgs := []string{
+		"history", "prune",
+		"-store", storePath,
+		"-before", "2026-07-28T00:00:00Z",
+		"-keep-latest", "0",
+		"-format", "json",
+	}
+	if code := run(pruneArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("history prune plan exit = %d, stderr = %q", code, stderr.String())
+	}
+	var plan history.RetentionPlan
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatalf("decode history retention plan: %v", err)
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("retention plan validation: %v", err)
+	}
+	if len(plan.Attempts) != 2 || len(plan.Runs) != 2 {
+		t.Fatalf("retention plan = %#v", plan)
+	}
+	summaries, err := (history.DirectoryStore{Path: storePath}).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("dry-run changed history: %#v", summaries)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	applyArgs := append(append([]string(nil), pruneArgs...), "-confirm", plan.Digest)
+	if code := run(applyArgs, &stdout, &stderr); code != 0 {
+		t.Fatalf("history prune apply exit = %d, stderr = %q", code, stderr.String())
+	}
+	var result history.PruneResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode history prune result: %v", err)
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("validate history prune result: %v", err)
+	}
+	if result.PlanDigest != plan.Digest || result.DeletedAttempts != 2 || result.DeletedRuns != 2 {
+		t.Fatalf("history prune result = %#v", result)
+	}
+	summaries, err = (history.DirectoryStore{Path: storePath}).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("history after prune = %#v", summaries)
+	}
+}
+
 func TestHistoryCommandsRejectInvalidUsage(t *testing.T) {
 	t.Parallel()
 
@@ -158,6 +252,11 @@ func TestHistoryCommandsRejectInvalidUsage(t *testing.T) {
 		{"history", "list", "-limit", "0"},
 		{"history", "show"},
 		{"history", "import"},
+		{"history", "verify", "unexpected"},
+		{"history", "prune"},
+		{"history", "prune", "-before", "not-a-time"},
+		{"history", "prune", "-before", "2026-07-28T00:00:00Z", "-keep-latest", "-1"},
+		{"history", "prune", "-before", "2026-07-28T00:00:00Z", "-format", "xml"},
 		{"history", "unknown"},
 	}
 	for _, args := range tests {

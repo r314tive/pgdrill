@@ -28,6 +28,17 @@ called out explicitly even while the major version is `0`.
   locking.
 - `pgdrill history list`, `history show`, and `history import` commands, plus
   opt-in `-history-dir` event/report persistence for native and CNPG drills.
+- `pgdrill history verify` for full decoding and integrity validation of every
+  retained spec, event, report, summary relationship, artifact reference, and
+  resumable retention state.
+- A deterministic `history prune` plan/apply protocol with an RFC3339 cutoff,
+  per-run latest-attempt protection, audit-artifact protection, exact digest
+  confirmation, stale-plan rejection, exclusive locking, atomic same-store
+  moves, durable progress markers, and process-loss resume. Dry-run is the
+  default and artifact blobs are never deleted.
+- A frozen private-history archive from the exact `v0.3.0-alpha.1` WAL-G
+  rehearsal at commit `0b8358cde90abfcf6b96964ce7ecd6443dbfb1c3`,
+  establishing the first explicit pre-GA read-compatibility fixture.
 - Failure, corruption, schema-version, permissions, idempotency, concurrent
   retry, canceled-run, planner determinism, capacity, and expansion-bound tests
   for the new planner and history contracts.
@@ -51,6 +62,9 @@ called out explicitly even while the major version is `0`.
   events exist, indexed lists verify their event/report file set and aggregate
   bounds, list fallback performs the same terminal consistency checks as full
   reads, and addressed `history show -attempt-id` reads no unrelated reports.
+- Disposable provider and CNPG drills now run a full `history verify` after
+  indexed/list assertions and retain both text and JSON verification results
+  before archiving the private store.
 - Plan validation now binds deterministic run IDs to every component
   reference, revision, the canonical spec, and fleet identity instead of
   trusting a self-consistent outer plan digest.

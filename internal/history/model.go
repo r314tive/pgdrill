@@ -8,11 +8,15 @@ import (
 )
 
 const (
+	PreGACompatibilityFloor     = "v0.3.0-alpha.1"
 	CurrentStoreSchemaVersion   = "pgdrill.history-store/v1alpha1"
 	CurrentRunSchemaVersion     = "pgdrill.history-run/v1alpha1"
 	CurrentAttemptSchemaVersion = "pgdrill.history-attempt/v1alpha1"
 	CurrentSummarySchemaVersion = "pgdrill.history-summary/v1alpha1"
 	CurrentViewSchemaVersion    = "pgdrill.history-view/v1alpha1"
+	CurrentRetentionPlanSchema  = "pgdrill.history-retention-plan/v1alpha1"
+	CurrentPruneResultSchema    = "pgdrill.history-prune-result/v1alpha1"
+	CurrentVerificationSchema   = "pgdrill.history-verification/v1alpha1"
 
 	CurrentLayoutVersion = 1
 	MaxRuns              = 10_000

@@ -50,6 +50,10 @@ func runHistory(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return runHistoryShow(ctx, args[1:], stdout, stderr)
 	case "import":
 		return runHistoryImport(ctx, args[1:], stdout, stderr)
+	case "verify":
+		return runHistoryVerify(ctx, args[1:], stdout, stderr)
+	case "prune":
+		return runHistoryPrune(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printHistoryUsage(stdout)
 		return 0
@@ -204,6 +208,144 @@ func runHistoryImport(ctx context.Context, args []string, stdout, stderr io.Writ
 		result.Status,
 		oneLine(path),
 	)
+	return 0
+}
+
+func runHistoryVerify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("history verify", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var storePath string
+	var format string
+	fs.StringVar(&storePath, "store", "", "history store path")
+	fs.StringVar(&format, "format", "text", "output format: text or json")
+	if ok, code := parseFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "history verify does not accept positional arguments")
+		return 2
+	}
+	format, err := validateHistoryFormat(format)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	path, err := resolveHistoryPath(storePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve history store: %v\n", err)
+		return 1
+	}
+	verification, err := (history.DirectoryStore{Path: path}).Verify(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "verify history: %v\n", err)
+		return 1
+	}
+	if format == "json" {
+		if err := writeIndentedJSON(stdout, verification); err != nil {
+			fmt.Fprintf(stderr, "write history verification: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if err := writeHistoryVerificationText(stdout, path, verification); err != nil {
+		fmt.Fprintf(stderr, "write history verification: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runHistoryPrune(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("history prune", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var storePath string
+	var beforeValue string
+	var format string
+	var confirmation string
+	var keepLatest int
+	var includeAudit bool
+	fs.StringVar(&storePath, "store", "", "history store path")
+	fs.StringVar(&beforeValue, "before", "", "remove eligible attempts finished before this RFC3339 timestamp")
+	fs.IntVar(&keepLatest, "keep-latest", 1, "protect this many latest terminal attempts per run")
+	fs.BoolVar(&includeAudit, "include-audit", false, "allow attempts linked to audit-class artifacts")
+	fs.StringVar(&confirmation, "confirm", "", "apply the exact sha256 plan digest")
+	fs.StringVar(&format, "format", "text", "output format: text or json")
+	if ok, code := parseFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "history prune does not accept positional arguments")
+		return 2
+	}
+	format, err := validateHistoryFormat(format)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if strings.TrimSpace(beforeValue) == "" {
+		fmt.Fprintln(stderr, "history prune requires -before with an RFC3339 timestamp")
+		return 2
+	}
+	before, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(beforeValue))
+	if err != nil {
+		fmt.Fprintf(stderr, "history prune -before must be RFC3339: %v\n", err)
+		return 2
+	}
+	if keepLatest < 0 || keepLatest > history.MaxAttemptsPerRun {
+		fmt.Fprintf(
+			stderr,
+			"history prune -keep-latest must be between 0 and %d\n",
+			history.MaxAttemptsPerRun,
+		)
+		return 2
+	}
+	path, err := resolveHistoryPath(storePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve history store: %v\n", err)
+		return 1
+	}
+	policy := history.RetentionPolicy{
+		Before:           before,
+		KeepLatestPerRun: keepLatest,
+		IncludeAudit:     includeAudit,
+	}
+	confirmation = strings.TrimSpace(confirmation)
+	store := history.DirectoryStore{Path: path}
+	if confirmation == "" {
+		plan, err := store.PlanRetention(ctx, policy)
+		if err != nil {
+			fmt.Fprintf(stderr, "plan history retention: %v\n", err)
+			return 1
+		}
+		if format == "json" {
+			if err := writeIndentedJSON(stdout, plan); err != nil {
+				fmt.Fprintf(stderr, "write history retention plan: %v\n", err)
+				return 1
+			}
+			return 0
+		}
+		if err := writeHistoryRetentionPlanText(stdout, path, plan); err != nil {
+			fmt.Fprintf(stderr, "write history retention plan: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	result, err := store.ApplyRetention(ctx, policy, confirmation)
+	if err != nil {
+		fmt.Fprintf(stderr, "apply history retention: %v\n", err)
+		return 1
+	}
+	if format == "json" {
+		if err := writeIndentedJSON(stdout, result); err != nil {
+			fmt.Fprintf(stderr, "write history prune result: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if err := writeHistoryPruneResultText(stdout, path, result); err != nil {
+		fmt.Fprintf(stderr, "write history prune result: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -365,6 +507,118 @@ func writeHistoryShowText(w io.Writer, path string, record history.RunRecord) er
 	return table.Flush()
 }
 
+func writeHistoryVerificationText(
+	w io.Writer,
+	path string,
+	verification history.VerificationResult,
+) error {
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	rows := [][2]string{
+		{"Store", path},
+		{"Schema", verification.SchemaVersion},
+		{"Compatibility floor", verification.CompatibilityFloor},
+		{"Store schema", verification.StoreSchemaVersion},
+		{"Layout", strconv.Itoa(verification.LayoutVersion)},
+		{"Runs", strconv.Itoa(verification.Runs)},
+		{"Attempts", strconv.Itoa(verification.Attempts)},
+		{"Terminal reports", strconv.Itoa(verification.TerminalReports)},
+		{"Incomplete attempts", strconv.Itoa(verification.IncompleteAttempts)},
+		{"Events", strconv.Itoa(verification.Events)},
+		{"Artifact references", strconv.Itoa(verification.ArtifactReferences)},
+		{"Maintenance required", strconv.FormatBool(verification.MaintenanceRequired)},
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(table, "%s:\t%s\n", row[0], oneLine(row[1])); err != nil {
+			return err
+		}
+	}
+	for _, digest := range verification.PendingRetentionOperations {
+		if _, err := fmt.Fprintf(table, "Pending retention:\t%s\n", digest); err != nil {
+			return err
+		}
+	}
+	for _, digest := range verification.PendingRetentionCleanup {
+		if _, err := fmt.Fprintf(table, "Pending cleanup:\t%s\n", digest); err != nil {
+			return err
+		}
+	}
+	return table.Flush()
+}
+
+func writeHistoryRetentionPlanText(w io.Writer, path string, plan history.RetentionPlan) error {
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	rows := [][2]string{
+		{"Store", path},
+		{"Mode", "plan only; no history deleted"},
+		{"Schema", plan.SchemaVersion},
+		{"Compatibility floor", plan.CompatibilityFloor},
+		{"Before", formatHistoryTime(plan.Policy.Before)},
+		{"Keep latest per run", strconv.Itoa(plan.Policy.KeepLatestPerRun)},
+		{"Include audit", strconv.FormatBool(plan.Policy.IncludeAudit)},
+		{"Plan digest", plan.Digest},
+		{"Selected attempts", strconv.Itoa(plan.Summary.SelectedAttempts)},
+		{"Selected empty runs", strconv.Itoa(plan.Summary.SelectedRuns)},
+		{"Protected incomplete", strconv.Itoa(plan.Summary.ProtectedIncomplete)},
+		{"Protected latest", strconv.Itoa(plan.Summary.ProtectedLatest)},
+		{"Protected recent", strconv.Itoa(plan.Summary.ProtectedRecent)},
+		{"Protected audit", strconv.Itoa(plan.Summary.ProtectedAudit)},
+		{"Artifact references retained", strconv.Itoa(plan.Summary.RetainedArtifactReferences)},
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(table, "%s:\t%s\n", row[0], oneLine(row[1])); err != nil {
+			return err
+		}
+	}
+	if len(plan.Attempts) > 0 {
+		if _, err := fmt.Fprintln(table, "\nFINISHED\tSTATUS\tRUN ID\tATTEMPT ID\tARTIFACTS\tAUDIT"); err != nil {
+			return err
+		}
+		for _, attempt := range plan.Attempts {
+			if _, err := fmt.Fprintf(
+				table,
+				"%s\t%s\t%s\t%s\t%d\t%d\n",
+				formatHistoryTime(attempt.FinishedAt),
+				attempt.Status,
+				oneLine(attempt.RunID),
+				oneLine(attempt.AttemptID),
+				attempt.ArtifactCount,
+				attempt.AuditArtifactCount,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return table.Flush()
+}
+
+func writeHistoryPruneResultText(w io.Writer, path string, result history.PruneResult) error {
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	rows := [][2]string{
+		{"Store", path},
+		{"Schema", result.SchemaVersion},
+		{"Plan digest", result.PlanDigest},
+		{"Deleted attempts", strconv.Itoa(result.DeletedAttempts)},
+		{"Deleted runs", strconv.Itoa(result.DeletedRuns)},
+		{"Artifact references retained", strconv.Itoa(result.RetainedArtifactReferences)},
+		{"Resumed", strconv.FormatBool(result.Resumed)},
+		{"Already applied", strconv.FormatBool(result.AlreadyApplied)},
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(table, "%s:\t%s\n", row[0], oneLine(row[1])); err != nil {
+			return err
+		}
+	}
+	return table.Flush()
+}
+
+func validateHistoryFormat(value string) (string, error) {
+	format := strings.ToLower(strings.TrimSpace(value))
+	if format != "text" && format != "json" {
+		return "", fmt.Errorf("unsupported format %q", value)
+	}
+	return format, nil
+}
+
 func writeIndentedJSON(w io.Writer, value any) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
@@ -386,6 +640,8 @@ Commands:
   list             List recent execution attempts.
   show             Inspect one logical run and its attempts.
   import           Import an existing terminal JSON report.
+  verify           Fully validate every retained event and report.
+  prune            Plan or confirm bounded terminal-history retention.
   help             Show this help.
 
 Store resolution:

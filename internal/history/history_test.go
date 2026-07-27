@@ -590,6 +590,109 @@ func TestDirectoryStoreListFallbackVerifiesTerminalConsistency(t *testing.T) {
 	}
 }
 
+func TestDirectoryStoreExposesInterruptedEventOnlyAttempt(t *testing.T) {
+	t.Parallel()
+
+	store := DirectoryStore{Path: filepath.Join(t.TempDir(), "history")}
+	result := validResult(t, "run-process-loss", "attempt-1", model.DrillStatusPassed)
+	if err := store.WriteEvent(context.Background(), validEvents(result)[0]); err != nil {
+		t.Fatalf("WriteEvent() error = %v", err)
+	}
+	summaries, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(summaries) != 1 ||
+		summaries[0].Status != model.DrillStatusUnknown ||
+		summaries[0].ReportAvailable ||
+		summaries[0].EventCount != 1 {
+		t.Fatalf("interrupted attempt summary = %#v", summaries)
+	}
+	record, err := store.ShowAttempt(context.Background(), result.ID, result.AttemptID)
+	if err != nil {
+		t.Fatalf("ShowAttempt() error = %v", err)
+	}
+	if len(record.Attempts) != 1 ||
+		record.Attempts[0].Report != nil ||
+		len(record.Attempts[0].Events) != 1 {
+		t.Fatalf("interrupted attempt record = %#v", record)
+	}
+}
+
+func TestDirectoryStoreRecoversMissingSummaryAfterTerminalReport(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "history")
+	store := DirectoryStore{Path: root}
+	result := validResult(t, "run-summary-process-loss", "attempt-1", model.DrillStatusPassed)
+	for _, event := range validEvents(result) {
+		if err := store.WriteEvent(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SaveReport(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	summaryPath := filepath.Join(
+		root,
+		"runs",
+		runDirectoryName(result.ID),
+		"attempts",
+		attemptDirectoryName(result.ID, result.AttemptID),
+		"summary.json",
+	)
+	if err := os.Remove(summaryPath); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() missing summary error = %v", err)
+	}
+	if len(summaries) != 1 ||
+		summaries[0].Status != model.DrillStatusPassed ||
+		!summaries[0].ReportAvailable ||
+		summaries[0].EventCount != 2 {
+		t.Fatalf("fallback summary = %#v", summaries)
+	}
+	record, err := store.ShowAttempt(context.Background(), result.ID, result.AttemptID)
+	if err != nil {
+		t.Fatalf("ShowAttempt() missing summary error = %v", err)
+	}
+	if len(record.Attempts) != 1 || record.Attempts[0].Report == nil {
+		t.Fatalf("fallback record = %#v", record)
+	}
+}
+
+func TestDirectoryStoreExposesImportedReportWithoutEvents(t *testing.T) {
+	t.Parallel()
+
+	store := DirectoryStore{Path: filepath.Join(t.TempDir(), "history")}
+	result := validResult(t, "run-imported-report", "attempt-1", model.DrillStatusFailed)
+	if err := store.SaveReport(context.Background(), result); err != nil {
+		t.Fatalf("SaveReport() error = %v", err)
+	}
+	summaries, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(summaries) != 1 ||
+		summaries[0].Status != model.DrillStatusFailed ||
+		!summaries[0].ReportAvailable ||
+		summaries[0].EventCount != 0 {
+		t.Fatalf("report-only summary = %#v", summaries)
+	}
+	record, err := store.ShowAttempt(context.Background(), result.ID, result.AttemptID)
+	if err != nil {
+		t.Fatalf("ShowAttempt() error = %v", err)
+	}
+	if len(record.Attempts) != 1 ||
+		record.Attempts[0].Report == nil ||
+		len(record.Attempts[0].Events) != 0 {
+		t.Fatalf("report-only record = %#v", record)
+	}
+}
+
 func TestDirectoryStoreShowRejectsReportWithoutSpecOrTerminalEvent(t *testing.T) {
 	t.Parallel()
 

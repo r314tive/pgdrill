@@ -141,6 +141,10 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read history document: %w", err)
 	}
+	upgradeDocument, err := os.ReadFile(filepath.Join(opts.SourceDir, "docs", "upgrade.md"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read upgrade document: %w", err)
+	}
 	fleetExample, err := os.ReadFile(filepath.Join(opts.SourceDir, "examples", "fleet.yaml"))
 	if err != nil {
 		return Result{}, fmt.Errorf("read fleet example: %w", err)
@@ -195,6 +199,7 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 			{Name: filepath.ToSlash(filepath.Join(rootName, "HISTORY.md")), Mode: 0o644, Body: historyDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "LICENSE")), Mode: 0o644, Body: license},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "README.md")), Mode: 0o644, Body: readme},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "UPGRADE.md")), Mode: 0o644, Body: upgradeDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "compatibility-matrix.yaml")), Mode: 0o644, Body: compatibilityMatrix},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "fleet.example.yaml")), Mode: 0o644, Body: fleetExample},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "pgdrill")), Mode: 0o755, Body: binary},

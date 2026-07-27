@@ -213,6 +213,9 @@ go run ./cmd/pgdrill plan validate -f examples/fleet.yaml
 go run ./cmd/pgdrill plan show -f examples/fleet.yaml
 go run ./cmd/pgdrill history list -store path/to/history
 go run ./cmd/pgdrill history show -store path/to/history run-id
+go run ./cmd/pgdrill history verify -store path/to/history
+go run ./cmd/pgdrill history prune -store path/to/history \
+  -before 2026-08-01T00:00:00Z -keep-latest 2
 go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```
@@ -232,6 +235,7 @@ pgdrill run -f pgdrill.yaml \
   -history-dir /var/lib/pgdrill/history
 pgdrill history list -store /var/lib/pgdrill/history
 pgdrill history show -store /var/lib/pgdrill/history nightly-main
+pgdrill history verify -store /var/lib/pgdrill/history
 ```
 
 The planner never resolves credentials or creates targets. Its strict
@@ -239,6 +243,8 @@ inventory and output contracts are documented in
 [docs/fleet-plan-format.md](docs/fleet-plan-format.md); the on-disk journal,
 crash boundaries, and upgrade policy are documented in
 [docs/history-format.md](docs/history-format.md).
+Binary and local-state upgrade, rollback, and retention preparation are
+documented in [docs/upgrade.md](docs/upgrade.md).
 
 Long-running commands handle `SIGINT` and `SIGTERM`. The active provider,
 target, or probe command is canceled first; pgdrill then uses a bounded
@@ -281,6 +287,8 @@ internal immutable run input is documented in
 daemon-free fleet and plan contracts are documented in
 [docs/fleet-plan-format.md](docs/fleet-plan-format.md), and local persistence
 is documented in [docs/history-format.md](docs/history-format.md). The
+current pre-GA upgrade and rollback boundary is documented in
+[docs/upgrade.md](docs/upgrade.md). The
 engine/control-plane boundary is recorded in
 [ADR 0001](docs/adr/0001-engine-v0.2-and-control-plane-boundary.md).
 The typed topology and CLI/TUI/web sequence are expanded in

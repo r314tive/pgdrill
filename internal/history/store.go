@@ -23,7 +23,8 @@ import (
 var ErrStoreNotFound = errors.New("history store not found")
 
 type DirectoryStore struct {
-	Path string
+	Path          string
+	retentionHook func(step string, index int) error
 }
 
 // WriteEvent durably appends one lifecycle event. Exact retries are

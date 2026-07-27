@@ -323,18 +323,24 @@ Implemented foundation:
 4. Private `pgdrill.history-store/v1alpha1` persistence for immutable specs,
    multiple attempts, ordered idempotent events, terminal reports, and bounded
    artifact references.
-5. `history list/show/import` plus opt-in local persistence for native and CNPG
-   execution; direct runs remain independent.
+5. `history list/show/import/verify/prune` plus opt-in local persistence for
+   native and CNPG execution; direct runs remain independent. Prune is
+   deterministic, digest-confirmed, audit-protecting, and resumable after
+   process loss.
 6. History-backed acceptance in all disposable WAL-G, Barman, pgBackRest,
-   pg_probackup, and CNPG drills, with retained full views, list views, and raw
-   store archives.
+   pg_probackup, and CNPG drills, with retained full views, list views, full
+   verification views, and raw store archives.
+7. A frozen exact `v0.3.0-alpha.1` WAL-G store establishes the first declared
+   history read-compatibility floor.
 
 Next implementation order:
 
-1. Stabilize the pre-GA fleet, plan, history, event, report, and spec schemas
-   with an explicit migration/read-compatibility floor.
-2. Extend real-drill history coverage to interrupted/process-loss attempts and
-   define retention plus artifact garbage collection.
+1. Promote the pre-GA fleet, plan, history, event, report, and spec schemas to
+   stable identifiers with a backup-safe migration from the documented
+   `v0.3.0-alpha.1` floor.
+2. Exercise interrupted history/retention recovery in a killed real drill and
+   add reference-aware artifact garbage collection; unit fault injection and
+   history-only retention are implemented.
 3. Controller and executor binaries with leases, heartbeats, idempotency, and
    executor-local secret resolution.
 4. Schedules, concurrency controls, RBAC, audit, and notifications.
@@ -347,10 +353,10 @@ detailed in [control-plane-roadmap.md](control-plane-roadmap.md).
 
 ## Phase 7: Operator Interfaces
 
-Status: direct, planning, and local-history CLI implemented; TUI and web UI
-deliberately deferred. Real operator use of the new history must establish
-comparison, retention, and cancellation requirements before another surface is
-justified.
+Status: direct, planning, verification, and digest-confirmed local-history
+retention CLI implemented; TUI and web UI deliberately deferred. Real operator
+use must establish comparison and cancellation workflows before another
+surface is justified.
 
 Recommended order:
 

@@ -42,11 +42,11 @@ The retention classes are policy inputs, not hard-coded expiration periods:
 - `history`: retained with normal drill history
 - `audit`: retained according to an external audit policy
 
-The current artifact and history directory stores do not delete blobs
-automatically. Local history retains terminal report references but does not
-yet provide cross-run garbage collection. A future retention implementation
-must account for every report reference before removing a content-addressed
-blob.
+The artifact directory store does not delete blobs automatically. Local
+history can now prune terminal records through a separate digest-confirmed
+operation, but it does not remove referenced blobs or provide cross-run
+garbage collection. A future artifact collector must account for every report
+reference before removing a content-addressed blob.
 
 There is deliberately no durable `unredacted` state. A producer must redact the
 payload before calling the sink or classify it as `not_required` because its

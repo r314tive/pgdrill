@@ -110,7 +110,8 @@ source commit, release compiler, version, and commit timestamp:
 
 Each `.tar.gz` contains `pgdrill`, `README.md`, `LICENSE`, the release
 `.go-version` compiler pin, `COMPATIBILITY.md`, `FLEET_PLAN.md`, `HISTORY.md`,
-the validated `compatibility-matrix.yaml`, and `fleet.example.yaml`. The
+`UPGRADE.md`, the validated `compatibility-matrix.yaml`, and
+`fleet.example.yaml`. The
 release builder compiles the packaged fleet example and rejects placement
 rejections before creating archives. Archive paths, modes, ordering,
 timestamps, architecture levels, Go workspace settings, and build flags are

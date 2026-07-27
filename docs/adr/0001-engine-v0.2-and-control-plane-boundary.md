@@ -121,15 +121,16 @@ tagging; fixture evidence is never promoted to native-version claims.
 1. add a daemon-free fleet planner and `plan` output
 2. persist run/event history and bounded artifact references
 3. add controller/agent leases, heartbeats, and local secret resolution
-4. add schedules, RBAC, audit, notifications, and retention
+4. add schedules, RBAC, audit, notifications, and fleet-wide artifact retention
 5. add a TUI for history before considering a web UI
 
 Implementation status: steps 1 and 2 are complete on the post-`v0.2.0-rc.2`
 main branch as strict `pgdrill.fleet/v1alpha1`,
 `pgdrill.plan/v1alpha1`, and `pgdrill.history-store/v1alpha1` local
 contracts. They remain daemon-free and internal to this module. Steps 3
-through 5 are deferred until schema migration, retention, real-drill, and
-process-loss gates are proven.
+through 5 are deferred until schema migration, artifact garbage collection,
+real-drill, and process-loss gates are proven. Local history-only retention is
+implemented; it is not the future fleet artifact lifecycle.
 
 ## Consequences
 

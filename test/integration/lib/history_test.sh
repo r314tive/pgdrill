@@ -73,6 +73,18 @@ JSON
   list/text)
     printf 'Attempts: 1\n'
     ;;
+  verify/json)
+    cat <<'JSON'
+{
+  "schema_version": "pgdrill.history-verification/v1alpha1",
+  "attempts": 1,
+  "maintenance_required": false
+}
+JSON
+    ;;
+  verify/text)
+    printf 'Attempts: 1\nMaintenance required: false\n'
+    ;;
   *)
     printf 'unexpected mock invocation: %s\n' "$*" >&2
     exit 1
@@ -100,6 +112,8 @@ pgdrill_integration_capture_history_store \
 [[ -s "${output}/attempt.txt" ]]
 [[ -s "${output}/history-list.json" ]]
 [[ -s "${output}/history-list.txt" ]]
+[[ -s "${output}/history-verify.json" ]]
+[[ -s "${output}/history-verify.txt" ]]
 [[ -s "${output}/history-store.tar.gz" ]]
 grep -F 'history/store.json' "${output}/history-store-contents.txt" >/dev/null
 

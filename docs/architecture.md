@@ -30,7 +30,8 @@ probes, and evidence, not in terms of one provider's command output.
   compatibility validation, deterministic capacity-aware placement, and
   immutable plan/run digests.
 - `internal/history`: versioned private local persistence for immutable specs,
-  attempts, append-only events, terminal reports, and validated inspection.
+  attempts, append-only events, terminal reports, full verification, and
+  digest-confirmed crash-resumable history retention.
 - `internal/compatibility`: strict validation for the versioned compatibility
   evidence matrix and its repository references.
 - `internal/preflight`: config-derived executable requirements and native
@@ -61,7 +62,9 @@ probes, and evidence, not in terms of one provider's command output.
 - `docs/fleet-plan-format.md`: daemon-free inventory, compatibility, bounds,
   deterministic placement, revisions, and rejection semantics.
 - `docs/history-format.md`: local on-disk layout, identity, ordering,
-  idempotency, crash boundaries, and upgrade behavior.
+  idempotency, verification, retention, crash boundaries, and upgrade behavior.
+- `docs/upgrade.md`: pre-GA compatibility floor, backup, binary upgrade,
+  rollback, and data-removal procedure.
 - `docs/restore-targets.md`: lifecycle requirements for disposable restore
   environments, including Kubernetes/CNPG notes.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.

@@ -66,6 +66,8 @@ pgdrill_integration_capture_history_store() {
   local _history_expected_attempts="$4"
   local _history_list_json="${_history_output_dir}/history-list.json"
   local _history_list_text="${_history_output_dir}/history-list.txt"
+  local _history_verify_json="${_history_output_dir}/history-verify.json"
+  local _history_verify_text="${_history_output_dir}/history-verify.txt"
   local _history_archive="${_history_output_dir}/history-store.tar.gz"
   local _history_archive_index="${_history_output_dir}/history-store-contents.txt"
   local _history_observed_attempts
@@ -107,6 +109,24 @@ pgdrill_integration_capture_history_store() {
     pgdrill_integration_history_error "history contains an attempt without a terminal report" ||
       return 1
   fi
+  if ! "${_history_binary}" history verify \
+    -store "${_history_store}" \
+    -format json >"${_history_verify_json}"; then
+    pgdrill_integration_history_error "cannot fully verify history store ${_history_store}" ||
+      return 1
+  fi
+  if ! "${_history_binary}" history verify \
+    -store "${_history_store}" >"${_history_verify_text}"; then
+    pgdrill_integration_history_error "cannot render history verification for ${_history_store}" ||
+      return 1
+  fi
+  grep -F "\"attempts\": ${_history_expected_attempts}" "${_history_verify_json}" >/dev/null ||
+    pgdrill_integration_history_error \
+      "history verification attempt count does not match ${_history_expected_attempts}" ||
+    return 1
+  grep -F '"maintenance_required": false' "${_history_verify_json}" >/dev/null ||
+    pgdrill_integration_history_error "history verification requires maintenance" ||
+    return 1
 
   _history_store_parent="$(cd -- "$(dirname -- "${_history_store}")" && pwd)"
   _history_store_name="$(basename -- "${_history_store}")"

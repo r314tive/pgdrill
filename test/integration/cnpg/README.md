@@ -60,7 +60,8 @@ artifacts are retained under:
 ```
 
 The retained set includes full and text history views, a bounded history list,
-the private raw store, an archive of that store, and recursive checksums.
+full-store verification views, the private raw store, an archive of that
+store, and recursive checksums.
 
 As with the native scenarios, a passing run is developer evidence until its
 report is reviewed, bound to an exact clean commit, and deliberately promoted

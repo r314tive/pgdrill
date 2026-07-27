@@ -282,14 +282,22 @@ run/spec/attempt identities, ordered idempotent events, terminal reports, and
 bounded artifact references. It rejects unknown store versions and corrupted
 identity/order instead of silently repairing them.
 
+Completed prerequisite: the local store now has full verification plus
+deterministic digest-confirmed retention. Incomplete/latest/audit-linked
+attempts are protected by default, history deletion is resumable across
+process-loss boundaries, and a frozen real `v0.3.0-alpha.1` store establishes
+the first read-compatibility floor. Artifact-blob garbage collection remains
+separate.
+
 Completed prerequisite: every disposable native-provider and CNPG integration
 drill now enables that store, reads the complete attempt back through the CLI,
 requires a matching passed report and terminal event, and retains both bounded
 views and the raw private store archive.
 
 1. Complete real-repository and live-target compatibility gates.
-2. Stabilize planner/history schemas and prove a pre-GA migration floor,
-   retention policy, and repeated process-loss behavior.
+2. Promote planner/history schemas to stable identifiers, migrate from the
+   proven `v0.3.0-alpha.1` floor, add reference-aware artifact garbage
+   collection, and repeat process-loss behavior in real drills.
 3. Run one executor/controller on a single host with process-loss recovery.
 4. Add remote executors and leases only after single-host reconciliation works.
 5. Add TUI, then multi-user controller capabilities, then web UI if validated

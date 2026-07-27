@@ -36,8 +36,8 @@ tmpfs state.
 
 Each run writes `report.json`, doctor/catalog output, source and command logs,
 package and runtime inventories, operation checkpoints, the validated history
-attempt/list views, an archive of the raw private history store, and recursive
-checksums under the ignored
+attempt/list/full-verification views, an archive of the raw private history
+store, and recursive checksums under the ignored
 `.cache/integration/pgbackrest/runs/<timestamp>/` directory. An explicit
 `PGDRILL_INTEGRATION_PGBACKREST_IMAGE` override must already exist locally; the
 runtime still refuses unexpected pgBackRest or PostgreSQL versions and records
