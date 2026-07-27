@@ -332,15 +332,18 @@ Implemented foundation:
    verification views, and raw store archives.
 7. A frozen exact `v0.3.0-alpha.1` WAL-G store establishes the first declared
    history read-compatibility floor.
+8. Local directory artifacts now carry immutable classification claims and
+   support full verification plus age-gated, history-reference-aware,
+   digest-confirmed, crash-resumable garbage collection. Live, audit, legacy,
+   and temporary-file protection is explicit and tested.
 
 Next implementation order:
 
 1. Promote the pre-GA fleet, plan, history, event, report, and spec schemas to
    stable identifiers with a backup-safe migration from the documented
    `v0.3.0-alpha.1` floor.
-2. Exercise interrupted history/retention recovery in a killed real drill and
-   add reference-aware artifact garbage collection; unit fault injection and
-   history-only retention are implemented.
+2. Exercise interrupted history, retention, and artifact-GC recovery in killed
+   real drills; deterministic unit fault injection is implemented.
 3. Controller and executor binaries with leases, heartbeats, idempotency, and
    executor-local secret resolution.
 4. Schedules, concurrency controls, RBAC, audit, and notifications.

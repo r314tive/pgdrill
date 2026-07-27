@@ -74,6 +74,8 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return runPlan(args[1:], stdout, stderr)
 	case "history":
 		return runHistory(ctx, args[1:], stdout, stderr)
+	case "artifact":
+		return runArtifact(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -762,6 +764,7 @@ Commands:
   target           Inspect restore target artifacts.
   plan             Validate and inspect daemon-free fleet plans.
   history          Inspect local durable run history.
+  artifact         Verify and garbage-collect local evidence blobs.
   report           Inspect drill reports.
   help             Show this help.
 
@@ -1250,6 +1253,7 @@ Probe          Runs post-restore checks against the recovered PostgreSQL instanc
 EvidenceSink   Persists drill facts, timings, command outputs, and final status.
 FleetPlanner   Compiles typed inventory into bounded immutable run specs without mutation.
 HistoryStore   Persists optional local specs, attempts, events, reports, and artifact references.
+ArtifactStore  Persists, verifies, and retires bounded content-addressed evidence blobs.
 
 Implemented target command paths:
   pgdrill run              local
@@ -1261,6 +1265,8 @@ Implemented daemon-free operator paths:
   pgdrill plan show
   pgdrill history list
   pgdrill history show
+  pgdrill artifact verify
+  pgdrill artifact gc
 
 Canonical but not yet executable target type: container.
 

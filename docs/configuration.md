@@ -174,4 +174,7 @@ terminal report so executor loss still leaves reconciliation state. See
 CNPG target verification also derives `<report.path>.artifacts`. It stores the
 exact generated manifest before `kubectl create` and links the content digest
 from report evidence. Keep that sibling directory with the report when moving
-or archiving a run. See [artifact-format.md](artifact-format.md).
+or archiving a run. When `-history-dir` is enabled, that history store becomes
+the explicit complete reference scope for `artifact verify` and `artifact gc`;
+do not share one artifact directory with untracked reports. See
+[artifact-format.md](artifact-format.md).

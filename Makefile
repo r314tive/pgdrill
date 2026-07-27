@@ -141,6 +141,9 @@ smoke: build
 	$(BINDIR)/$(BINARY) history help >/dev/null
 	$(BINDIR)/$(BINARY) history verify -h >/dev/null
 	$(BINDIR)/$(BINARY) history prune -h >/dev/null
+	$(BINDIR)/$(BINARY) artifact help >/dev/null
+	$(BINDIR)/$(BINARY) artifact verify -h >/dev/null
+	$(BINDIR)/$(BINARY) artifact gc -h >/dev/null
 	$(BINDIR)/$(BINARY) report help >/dev/null
 	$(BINDIR)/$(BINARY) run -h >/dev/null
 
@@ -193,6 +196,9 @@ release-snapshot: toolchain-check check
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history verify -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history prune -h >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) artifact help >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) artifact verify -h >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) artifact gc -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) report help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) run -h >/dev/null
 	@echo "snapshot: $(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY)"

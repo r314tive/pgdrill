@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/r314tive/pgdrill/internal/filelock"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -102,6 +103,7 @@ type DirectoryStore struct {
 	Path     string
 	URIBase  string
 	MaxBytes int64
+	gcHook   func(step string, index int) error
 }
 
 func (s DirectoryStore) Put(ctx context.Context, metadata model.ArtifactMetadata, content io.Reader) (model.ArtifactRef, error) {
@@ -118,73 +120,106 @@ func (s DirectoryStore) Put(ctx context.Context, metadata model.ArtifactMetadata
 	if err := ctx.Err(); err != nil {
 		return model.ArtifactRef{}, err
 	}
-	if err := ensureDirectory(settings.root); err != nil {
-		return model.ArtifactRef{}, fmt.Errorf("create artifact store: %w", err)
-	}
+	var ref model.ArtifactRef
+	err = withStoreLock(ctx, settings.root, filelock.Exclusive, true, func() error {
+		state, err := inspectGCState(settings.root)
+		if err != nil {
+			return err
+		}
+		if err := requireCleanGCStateValues(state); err != nil {
+			return err
+		}
+		if err := ensureStoreMetadata(ctx, settings); err != nil {
+			return err
+		}
+		file, err := os.CreateTemp(settings.root, ".artifact-*.tmp")
+		if err != nil {
+			return fmt.Errorf("create temporary artifact: %w", err)
+		}
+		tmpPath := file.Name()
+		defer os.Remove(tmpPath) //nolint:errcheck
+		if err := file.Chmod(0o600); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("chmod temporary artifact: %w", err)
+		}
 
-	file, err := os.CreateTemp(settings.root, ".artifact-*.tmp")
+		hasher := sha256.New()
+		limited := io.LimitReader(&contextReader{ctx: ctx, reader: content}, settings.maxBytes+1)
+		size, copyErr := io.CopyBuffer(io.MultiWriter(file, hasher), limited, make([]byte, 32<<10))
+		if copyErr != nil {
+			_ = file.Close()
+			return fmt.Errorf("write temporary artifact: %w", copyErr)
+		}
+		if size > settings.maxBytes {
+			_ = file.Close()
+			return fmt.Errorf("artifact exceeds %d bytes", settings.maxBytes)
+		}
+		if err := file.Sync(); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("sync temporary artifact: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close temporary artifact: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		hexDigest := hex.EncodeToString(hasher.Sum(nil))
+		ref, err = model.NewArtifactRef(
+			"sha256:"+hexDigest,
+			settings.uri(hexDigest),
+			size,
+			metadata,
+		)
+		if err != nil {
+			return fmt.Errorf("create artifact reference: %w", err)
+		}
+		digestRoot := filepath.Join(settings.root, blobDirectoryName)
+		if err := ensureDirectory(digestRoot); err != nil {
+			return fmt.Errorf("create artifact digest directory: %w", err)
+		}
+		finalDir := filepath.Join(digestRoot, hexDigest[:2])
+		if err := ensureDirectory(finalDir); err != nil {
+			return fmt.Errorf("create content-addressed artifact directory: %w", err)
+		}
+		finalPath := filepath.Join(finalDir, hexDigest)
+		exists, err := privateRegularFileExists(finalPath)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			count, err := countStoredBlobs(digestRoot)
+			if err != nil {
+				return err
+			}
+			if count >= MaxStoreBlobs {
+				return fmt.Errorf(
+					"artifact store exceeds maximum blob count %d",
+					MaxStoreBlobs,
+				)
+			}
+		}
+		if err := os.Link(tmpPath, finalPath); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("publish artifact %s: %w", ref.ID, err)
+			}
+			if err := verifyArtifactFile(ctx, finalPath, ref); err != nil {
+				return fmt.Errorf("verify existing artifact %s: %w", ref.ID, err)
+			}
+		} else if err := syncDirectory(finalDir); err != nil {
+			return fmt.Errorf("sync artifact directory: %w", err)
+		}
+		if err := writeBlobClaim(ctx, settings, ref); err != nil {
+			return err
+		}
+		if err := observeBlob(finalPath); err != nil {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
-		return model.ArtifactRef{}, fmt.Errorf("create temporary artifact: %w", err)
-	}
-	tmpPath := file.Name()
-	defer os.Remove(tmpPath) //nolint:errcheck
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return model.ArtifactRef{}, fmt.Errorf("chmod temporary artifact: %w", err)
-	}
-
-	hasher := sha256.New()
-	limited := io.LimitReader(&contextReader{ctx: ctx, reader: content}, settings.maxBytes+1)
-	size, copyErr := io.CopyBuffer(io.MultiWriter(file, hasher), limited, make([]byte, 32<<10))
-	if copyErr != nil {
-		_ = file.Close()
-		return model.ArtifactRef{}, fmt.Errorf("write temporary artifact: %w", copyErr)
-	}
-	if size > settings.maxBytes {
-		_ = file.Close()
-		return model.ArtifactRef{}, fmt.Errorf("artifact exceeds %d bytes", settings.maxBytes)
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return model.ArtifactRef{}, fmt.Errorf("sync temporary artifact: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return model.ArtifactRef{}, fmt.Errorf("close temporary artifact: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
 		return model.ArtifactRef{}, err
-	}
-
-	hexDigest := hex.EncodeToString(hasher.Sum(nil))
-	ref, err := model.NewArtifactRef(
-		"sha256:"+hexDigest,
-		settings.uri(hexDigest),
-		size,
-		metadata,
-	)
-	if err != nil {
-		return model.ArtifactRef{}, fmt.Errorf("create artifact reference: %w", err)
-	}
-	digestRoot := filepath.Join(settings.root, "sha256")
-	if err := ensureDirectory(digestRoot); err != nil {
-		return model.ArtifactRef{}, fmt.Errorf("create artifact digest directory: %w", err)
-	}
-	finalDir := filepath.Join(digestRoot, hexDigest[:2])
-	if err := ensureDirectory(finalDir); err != nil {
-		return model.ArtifactRef{}, fmt.Errorf("create content-addressed artifact directory: %w", err)
-	}
-	finalPath := filepath.Join(finalDir, hexDigest)
-	if err := os.Link(tmpPath, finalPath); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return model.ArtifactRef{}, fmt.Errorf("publish artifact %s: %w", ref.ID, err)
-		}
-		if err := verifyArtifactFile(ctx, finalPath, ref); err != nil {
-			return model.ArtifactRef{}, fmt.Errorf("verify existing artifact %s: %w", ref.ID, err)
-		}
-		return ref, nil
-	}
-	if err := syncDirectory(finalDir); err != nil {
-		return model.ArtifactRef{}, fmt.Errorf("sync artifact directory: %w", err)
 	}
 	return ref, nil
 }
@@ -197,35 +232,39 @@ func (s DirectoryStore) Read(ctx context.Context, ref model.ArtifactRef) ([]byte
 	if err := ref.Validate(); err != nil {
 		return nil, fmt.Errorf("validate artifact reference: %w", err)
 	}
-	if err := requireRealDirectory(settings.root); err != nil {
-		return nil, fmt.Errorf("inspect artifact store: %w", err)
-	}
 	hexDigest := strings.TrimPrefix(ref.ID, "sha256:")
 	if ref.URI != settings.uri(hexDigest) {
 		return nil, fmt.Errorf("artifact %s uri does not belong to store %q", ref.ID, settings.uriBase)
 	}
-	digestRoot := filepath.Join(settings.root, "sha256")
-	prefixDir := filepath.Join(digestRoot, hexDigest[:2])
-	if err := requireRealDirectory(digestRoot); err != nil {
-		return nil, fmt.Errorf("inspect artifact digest directory: %w", err)
-	}
-	if err := requireRealDirectory(prefixDir); err != nil {
-		return nil, fmt.Errorf("inspect artifact prefix directory: %w", err)
-	}
-	artifactPath := filepath.Join(prefixDir, hexDigest)
-	if err := verifyArtifactFile(ctx, artifactPath, ref); err != nil {
-		return nil, err
-	}
-	file, err := os.Open(artifactPath)
+	var payload []byte
+	err = withStoreLock(ctx, settings.root, filelock.Shared, false, func() error {
+		if _, _, err := readStoreMetadata(settings); err != nil {
+			return err
+		}
+		digestRoot := filepath.Join(settings.root, blobDirectoryName)
+		prefixDir := filepath.Join(digestRoot, hexDigest[:2])
+		if err := requireRealDirectory(digestRoot); err != nil {
+			return fmt.Errorf("inspect artifact digest directory: %w", err)
+		}
+		if err := requireRealDirectory(prefixDir); err != nil {
+			return fmt.Errorf("inspect artifact prefix directory: %w", err)
+		}
+		artifactPath := filepath.Join(prefixDir, hexDigest)
+		if err := verifyArtifactFile(ctx, artifactPath, ref); err != nil {
+			return err
+		}
+		file, err := os.Open(artifactPath)
+		if err != nil {
+			return fmt.Errorf("open artifact %s: %w", ref.ID, err)
+		}
+		defer file.Close()
+		payload, err = io.ReadAll(io.LimitReader(&contextReader{ctx: ctx, reader: file}, ref.SizeBytes+1))
+		if err != nil {
+			return fmt.Errorf("read artifact %s: %w", ref.ID, err)
+		}
+		return verifyPayload(ref, payload)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("open artifact %s: %w", ref.ID, err)
-	}
-	defer file.Close()
-	payload, err := io.ReadAll(io.LimitReader(&contextReader{ctx: ctx, reader: file}, ref.SizeBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read artifact %s: %w", ref.ID, err)
-	}
-	if err := verifyPayload(ref, payload); err != nil {
 		return nil, err
 	}
 	return payload, nil
@@ -325,14 +364,7 @@ func ensureDirectory(directoryPath string) error {
 	if err := os.MkdirAll(directoryPath, 0o700); err != nil {
 		return err
 	}
-	info, err := os.Lstat(directoryPath)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("path is not a real directory: %s", directoryPath)
-	}
-	return nil
+	return requireRealDirectory(directoryPath)
 }
 
 func requireRealDirectory(directoryPath string) error {
@@ -342,6 +374,9 @@ func requireRealDirectory(directoryPath string) error {
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return fmt.Errorf("path is not a real directory: %s", directoryPath)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("directory permissions %o are not private: %s", info.Mode().Perm(), directoryPath)
 	}
 	return nil
 }

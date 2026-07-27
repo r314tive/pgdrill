@@ -39,6 +39,16 @@ called out explicitly even while the major version is `0`.
 - A frozen private-history archive from the exact `v0.3.0-alpha.1` WAL-G
   rehearsal at commit `0b8358cde90abfcf6b96964ce7ecd6443dbfb1c3`,
   establishing the first explicit pre-GA read-compatibility fixture.
+- A versioned local artifact-store metadata and immutable claim layer that
+  preserves every observed retention/redaction classification for a
+  content-addressed blob and refreshes last-observed state on deduplicated use.
+- `pgdrill artifact verify` for full blob hashing, claim/layout validation,
+  complete locked-history reference resolution, and interrupted-GC
+  maintenance reporting.
+- A dry-run/digest-confirmed `pgdrill artifact gc` protocol with a strict age
+  cutoff, live-reference protection, default audit/legacy/temporary
+  protection, stale-scope rejection, same-store trash, durable progress, and
+  deterministic process-loss resume.
 - Failure, corruption, schema-version, permissions, idempotency, concurrent
   retry, canceled-run, planner determinism, capacity, and expansion-bound tests
   for the new planner and history contracts.
@@ -65,6 +75,13 @@ called out explicitly even while the major version is `0`.
 - Disposable provider and CNPG drills now run a full `history verify` after
   indexed/list assertions and retain both text and JSON verification results
   before archiving the private store.
+- The disposable CNPG drill now also hashes its generated-manifest artifact,
+  resolves it from retained history, requires a clean artifact verification,
+  and proves that a future-cutoff GC dry run cannot select the live blob.
+- Artifact directory reads and writes now use a cross-process store lock.
+  Successful publication persists immutable classification claims before
+  returning and updates the blob observation time so concurrent GC cannot
+  treat a reused old digest as stale.
 - Plan validation now binds deterministic run IDs to every component
   reference, revision, the canonical spec, and fleet identity instead of
   trusting a self-consistent outer plan digest.

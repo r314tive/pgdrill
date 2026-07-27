@@ -26,7 +26,9 @@ restore commands, and acceptance assertions stay in their scenario directory.
 requires a readable full attempt, a terminal `run_finished` event, a passed
 terminal report, the exact expected attempt count, a clean full-store
 `history verify`, and an inspectable archive of the private local history
-store.
+store. The artifact-producing CNPG scenario additionally requires a clean
+full-blob `artifact verify` against that history scope and a future-cutoff GC
+plan with zero candidates.
 
 By default, a clean checkout produces and executes a deterministic release
 archive from `HEAD`. Native scenarios can instead consume an existing Linux

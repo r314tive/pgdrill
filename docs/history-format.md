@@ -194,11 +194,13 @@ Selection is deliberately conservative:
 
 The command removes history identities, events, summaries, reports, and their
 artifact references. It does **not** delete content-addressed artifact blobs or
-ordinary report files outside the history store. Cross-run artifact garbage
-collection remains a separate pre-GA gate because a blob can be referenced by
-more than one retained report. Capture the plan and result externally when
-they are required as audit evidence, and take a store backup before irreversible
-removal.
+ordinary report files outside the history store. Run `artifact verify` and the
+separate digest-confirmed `artifact gc` against the complete retained history
+scope after pruning; a blob can be referenced by more than one retained
+report, so the two operations are deliberately not an implicit cascade. See
+[artifact-format.md](artifact-format.md). Capture both plans and results
+externally when they are required as audit evidence, and take a store backup
+before irreversible removal.
 
 ## Versioning And Upgrade Boundary
 

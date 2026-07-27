@@ -516,6 +516,12 @@ pgdrill_integration_capture_history_store \
   "${HISTORY}" \
   "${RUN_DIR}" \
   1
+pgdrill_integration_verify_artifact_store \
+  "${PGDRILL_INT_BINARY}" \
+  "${REPORT}.artifacts" \
+  "${HISTORY}" \
+  "${RUN_DIR}" \
+  1
 
 if k get cluster "${VERIFY_CLUSTER}" -n "${NAMESPACE}" >/dev/null 2>&1; then
   die "verify cluster remains after pgdrill cleanup"

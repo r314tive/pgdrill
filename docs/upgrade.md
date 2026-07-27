@@ -31,15 +31,28 @@ schemas remain prerelease contracts until the GA migration is implemented.
 
 4. If `maintenance_required` is true, resume the reported retention digest
    with the same original policy before continuing.
-5. Archive the private store on the same trust boundary:
+5. Verify each local artifact store against its complete history scope:
+
+   ```sh
+   pgdrill artifact verify \
+     -store /var/lib/pgdrill/report.json.artifacts \
+     -history-store /var/lib/pgdrill/history
+   ```
+
+   Resume a pending artifact GC digest before continuing. Legacy blobs without
+   immutable claims are valid but remain protected from default GC.
+6. Archive the private history and sibling artifact stores on the same trust
+   boundary:
 
    ```sh
    umask 077
    tar -C /var/lib/pgdrill -czf pgdrill-history-before-upgrade.tar.gz history
+   tar -C /var/lib/pgdrill -czf pgdrill-artifacts-before-upgrade.tar.gz report.json.artifacts
    sha256sum pgdrill-history-before-upgrade.tar.gz
+   sha256sum pgdrill-artifacts-before-upgrade.tar.gz
    ```
 
-6. Retain the current binary, its checksum, version output, and configuration.
+7. Retain the current binary, its checksum, version output, and configuration.
 
 The archive contains operational evidence and can contain infrastructure
 identifiers. Do not upload it to a public issue or release.
@@ -52,6 +65,9 @@ Replace only the pgdrill binary, then run:
 pgdrill version
 pgdrill history verify -store /var/lib/pgdrill/history
 pgdrill history list -store /var/lib/pgdrill/history -limit 1000
+pgdrill artifact verify \
+  -store /var/lib/pgdrill/report.json.artifacts \
+  -history-store /var/lib/pgdrill/history
 ```
 
 Unknown schemas, unknown fields, broken identities, non-private permissions,
@@ -80,5 +96,18 @@ remove eligible terminal history. It never removes:
 - artifact blobs or report files outside the history store
 
 Because pruning is irreversible after completion, take and checksum a private
-archive when rollback or audit retention is required. Cross-run artifact
-garbage collection is not implemented yet.
+archive when rollback or audit retention is required. Artifact removal is a
+second dry-run/confirm workflow:
+
+```sh
+pgdrill artifact gc \
+  -store /var/lib/pgdrill/report.json.artifacts \
+  -history-store /var/lib/pgdrill/history \
+  -before 2026-08-01T00:00:00Z
+```
+
+Live references are never selected. Audit-classified, legacy, and abandoned
+temporary files require separate explicit flags. Use a cutoff longer than the
+maximum artifact-to-terminal-history publication interval, stop schedulers and
+out-of-band imports, archive the store, then apply only the exact reviewed
+digest. See [artifact-format.md](artifact-format.md).

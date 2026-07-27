@@ -59,21 +59,24 @@ func TestDirectoryStoreRejectsOversizedArtifactWithoutPublishingBlob(t *testing.
 		t.Fatalf("Put() error = %v", err)
 	}
 
-	regularFiles := 0
-	walkErr := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	publishedBlobs := 0
+	walkErr := filepath.WalkDir(filepath.Join(root, blobDirectoryName), func(path string, entry os.DirEntry, err error) error {
+		if errors.Is(err, os.ErrNotExist) {
+			return filepath.SkipDir
+		}
 		if err != nil {
 			return err
 		}
 		if entry.Type().IsRegular() {
-			regularFiles++
+			publishedBlobs++
 		}
 		return nil
 	})
 	if walkErr != nil {
 		t.Fatalf("walk artifact root: %v", walkErr)
 	}
-	if regularFiles != 0 {
-		t.Fatalf("oversized artifact published %d regular files", regularFiles)
+	if publishedBlobs != 0 {
+		t.Fatalf("oversized artifact published %d blobs", publishedBlobs)
 	}
 }
 

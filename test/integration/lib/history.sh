@@ -146,3 +146,52 @@ pgdrill_integration_capture_history_store() {
     pgdrill_integration_history_error "history archive has no store metadata" ||
     return 1
 }
+
+pgdrill_integration_verify_artifact_store() {
+  local _artifact_binary="$1"
+  local _artifact_store="$2"
+  local _artifact_history_store="$3"
+  local _artifact_output_dir="$4"
+  local _artifact_expected_blobs="$5"
+  local _artifact_verify_json="${_artifact_output_dir}/artifact-verify.json"
+  local _artifact_verify_text="${_artifact_output_dir}/artifact-verify.txt"
+  local _artifact_gc_plan="${_artifact_output_dir}/artifact-gc-plan.json"
+
+  [[ -d "${_artifact_store}" ]] ||
+    pgdrill_integration_history_error "artifact store does not exist: ${_artifact_store}" ||
+    return 1
+  if ! "${_artifact_binary}" artifact verify \
+    -store "${_artifact_store}" \
+    -history-store "${_artifact_history_store}" \
+    -format json >"${_artifact_verify_json}"; then
+    pgdrill_integration_history_error "cannot verify artifact store ${_artifact_store}" ||
+      return 1
+  fi
+  if ! "${_artifact_binary}" artifact verify \
+    -store "${_artifact_store}" \
+    -history-store "${_artifact_history_store}" >"${_artifact_verify_text}"; then
+    pgdrill_integration_history_error "cannot render artifact verification for ${_artifact_store}" ||
+      return 1
+  fi
+  grep -F "\"blobs\": ${_artifact_expected_blobs}" "${_artifact_verify_json}" >/dev/null ||
+    pgdrill_integration_history_error \
+      "artifact verification blob count does not match ${_artifact_expected_blobs}" ||
+    return 1
+  grep -F "\"referenced_blobs\": ${_artifact_expected_blobs}" "${_artifact_verify_json}" >/dev/null ||
+    pgdrill_integration_history_error "artifact verification has unreferenced blobs" ||
+    return 1
+  grep -F '"maintenance_required": false' "${_artifact_verify_json}" >/dev/null ||
+    pgdrill_integration_history_error "artifact verification requires maintenance" ||
+    return 1
+  if ! "${_artifact_binary}" artifact gc \
+    -store "${_artifact_store}" \
+    -history-store "${_artifact_history_store}" \
+    -before 2100-01-01T00:00:00Z \
+    -format json >"${_artifact_gc_plan}"; then
+    pgdrill_integration_history_error "cannot plan artifact GC for ${_artifact_store}" ||
+      return 1
+  fi
+  grep -F '"candidate_blobs": 0' "${_artifact_gc_plan}" >/dev/null ||
+    pgdrill_integration_history_error "artifact GC selected a retained history reference" ||
+    return 1
+}

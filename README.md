@@ -30,6 +30,8 @@ The CLI implements:
 - daemon-free typed fleet validation and deterministic bounded placement
 - optional private local history for immutable specs, ordered events, terminal
   reports, policy verdicts, and artifact references
+- full local artifact hashing plus age-gated, history-reference-aware,
+  digest-confirmed garbage collection
 - text report inspection and Prometheus export
 
 Native and CNPG paths share one lifecycle, cancellation, reconciliation, and
@@ -216,6 +218,11 @@ go run ./cmd/pgdrill history show -store path/to/history run-id
 go run ./cmd/pgdrill history verify -store path/to/history
 go run ./cmd/pgdrill history prune -store path/to/history \
   -before 2026-08-01T00:00:00Z -keep-latest 2
+go run ./cmd/pgdrill artifact verify \
+  -store path/to/report.json.artifacts -history-store path/to/history
+go run ./cmd/pgdrill artifact gc \
+  -store path/to/report.json.artifacts -history-store path/to/history \
+  -before 2026-08-01T00:00:00Z
 go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```
@@ -237,6 +244,13 @@ pgdrill history list -store /var/lib/pgdrill/history
 pgdrill history show -store /var/lib/pgdrill/history nightly-main
 pgdrill history verify -store /var/lib/pgdrill/history
 ```
+
+Local content-addressed artifacts have a separate lifecycle. `artifact verify`
+hashes every blob and resolves references while holding the complete history
+scope under a shared lock. `artifact gc` is dry-run by default, requires a
+strict age cutoff, protects live, audit-classified, and legacy blobs, and
+applies only an exact confirmed plan digest. See
+[docs/artifact-format.md](docs/artifact-format.md).
 
 The planner never resolves credentials or creates targets. Its strict
 inventory and output contracts are documented in
@@ -286,8 +300,10 @@ internal immutable run input is documented in
 [docs/drill-spec-format.md](docs/drill-spec-format.md). The
 daemon-free fleet and plan contracts are documented in
 [docs/fleet-plan-format.md](docs/fleet-plan-format.md), and local persistence
-is documented in [docs/history-format.md](docs/history-format.md). The
-current pre-GA upgrade and rollback boundary is documented in
+is documented in [docs/history-format.md](docs/history-format.md). The local
+artifact verification and GC contract is documented in
+[docs/artifact-format.md](docs/artifact-format.md). The current pre-GA upgrade
+and rollback boundary is documented in
 [docs/upgrade.md](docs/upgrade.md). The
 engine/control-plane boundary is recorded in
 [ADR 0001](docs/adr/0001-engine-v0.2-and-control-plane-boundary.md).

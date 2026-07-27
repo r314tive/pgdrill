@@ -25,7 +25,9 @@ probes, and evidence, not in terms of one provider's command output.
 - `internal/checkpoint`: atomic attempt-scoped mutation checkpoint stores with
   monotonic transition validation and process-local or durable implementations.
 - `internal/artifact`: bounded content-addressed artifact sinks with streaming
-  disk publication, deduplication, and verified reads.
+  disk publication, deduplication, immutable classification claims, verified
+  full-store reads, and digest-confirmed crash-resumable local garbage
+  collection.
 - `internal/planner`: strict secret-free fleet inventory, selector expansion,
   compatibility validation, deterministic capacity-aware placement, and
   immutable plan/run digests.
@@ -322,6 +324,9 @@ confirmation guard so another presentation layer cannot bypass it accidentally.
 - Large immutable payloads cross a bounded artifact sink before infrastructure
   mutation and remain linked from evidence by a content digest. Durable sinks
   never accept an unclassified redaction state.
+- Local artifact deletion consumes a complete history reference snapshot under
+  lock. It is age-gated, dry-run by default, protects audit and legacy blobs,
+  and never cascades implicitly from history retention.
 - Cleanup must be explicit and observable.
 - Native and managed-target execution must use the common lifecycle recorder;
   presentation layers must not assemble result or cleanup state machines.

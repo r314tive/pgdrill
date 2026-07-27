@@ -42,11 +42,11 @@ The retention classes are policy inputs, not hard-coded expiration periods:
 - `history`: retained with normal drill history
 - `audit`: retained according to an external audit policy
 
-The artifact directory store does not delete blobs automatically. Local
-history can now prune terminal records through a separate digest-confirmed
-operation, but it does not remove referenced blobs or provide cross-run
-garbage collection. A future artifact collector must account for every report
-reference before removing a content-addressed blob.
+The artifact directory store never deletes blobs during report writes. Local
+history retention and artifact garbage collection are separate,
+digest-confirmed operations: pruning a terminal attempt removes references,
+while `artifact gc` removes only blobs that are absent from the complete
+retained reference scope.
 
 There is deliberately no durable `unredacted` state. A producer must redact the
 payload before calling the sink or classify it as `not_required` because its
@@ -59,7 +59,10 @@ Secret values. Operators must not place credentials in custom labels.
 CLI-managed CNPG artifacts are stored below:
 
 ```text
-<report.path>.artifacts/sha256/<digest-prefix>/<digest>
+<report.path>.artifacts/
+  store.json
+  sha256/<digest-prefix>/<digest>
+  claims/sha256/<digest-prefix>/<digest>/<claim-digest>.json
 ```
 
 The report URI is relative and begins with the artifact directory base name,
@@ -73,6 +76,94 @@ synced after publication.
 Reads verify the expected store URI, regular-file type, exact size, and SHA-256
 digest. Existing blobs are verified before deduplication succeeds; corruption
 or a symbolic-link substitution is a hard error.
+
+`store.json` binds the alpha store schema, layout version, and URI base.
+Every successful `Put` writes an immutable classification claim and updates
+the blob's last-observed timestamp under the same exclusive store lock. Reuse
+of an old content digest therefore becomes recent before a producer can return
+its reference. Claims accumulate rather than weaken: a blob ever observed as
+`audit` stays audit-protected by default even when another report classified
+the same bytes as `history`.
+
+Stores written before this metadata layer remain readable. Blobs without
+claims are reported as legacy and are never selected by default.
+
+## Verification
+
+Verification requires both the local artifact store and the canonical history
+store that completely owns its references:
+
+```sh
+pgdrill artifact verify \
+  -store /var/lib/pgdrill/report.json.artifacts \
+  -history-store /var/lib/pgdrill/history
+```
+
+The command holds the history store under a shared lock, then hashes every
+active blob, validates all immutable claims and local references, rejects
+missing or corrupted blobs, and reports foreign references without treating
+them as owned by this store. It also validates interrupted GC state.
+`maintenance_required` is true for abandoned temporary files or an unfinished
+GC operation.
+
+The explicit history path is a safety boundary, not a convenience hint. Every
+run that can reference this artifact store must persist its terminal report to
+that history store before GC is allowed. A standalone report, another history
+store, or an out-of-band import is not discovered automatically. For a
+one-off run that did not enable `-history-dir`, first import its terminal
+report into a dedicated scope:
+
+```sh
+pgdrill history import \
+  -store /var/lib/pgdrill/history \
+  /var/lib/pgdrill/report.json
+```
+
+## Garbage Collection
+
+Planning is read-only:
+
+```sh
+pgdrill artifact gc \
+  -store /var/lib/pgdrill/report.json.artifacts \
+  -history-store /var/lib/pgdrill/history \
+  -before 2026-08-01T00:00:00Z
+```
+
+Apply only the exact plan digest with the same cutoff and options:
+
+```sh
+pgdrill artifact gc \
+  -store /var/lib/pgdrill/report.json.artifacts \
+  -history-store /var/lib/pgdrill/history \
+  -before 2026-08-01T00:00:00Z \
+  -confirm sha256:<plan-digest>
+```
+
+The plan hashes the full store and canonical reference set. Apply reacquires
+the history shared lock and artifact exclusive lock, recomputes the plan, and
+rejects stale confirmation before mutation. Selection is conservative:
+
+- a currently referenced blob is never eligible
+- `last_observed_at` must be strictly earlier than `-before`
+- any blob with an `audit` claim is protected unless `-include-audit` is set
+- a blob without claims is protected unless `-include-legacy` is set
+- abandoned temporary files are protected unless `-include-temporary` is set
+
+The cutoff must exceed the longest expected interval between artifact
+publication and terminal-history persistence. Stop schedulers and out-of-band
+history imports for maintenance; the local lock protocol cannot coordinate an
+unrelated report file or remote database.
+
+Deletion first moves each exact blob and claim directory into same-filesystem
+private trash, records immutable progress, and removes it. The operation can
+resume after process loss between blob rename, claim rename, progress
+publication, completion, and final cleanup. `artifact verify` exposes the
+digest required to resume, and new artifact publication is rejected while that
+maintenance is pending. An unrelated safe reference-scope change is reported
+as `reference_scope_changed`; a new reference to any selected candidate fails
+closed. GC removes only this local directory-store content;
+remote/object-store artifact lifecycle is not implemented.
 
 ## Mutation Ordering
 

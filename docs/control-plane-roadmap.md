@@ -286,8 +286,14 @@ Completed prerequisite: the local store now has full verification plus
 deterministic digest-confirmed retention. Incomplete/latest/audit-linked
 attempts are protected by default, history deletion is resumable across
 process-loss boundaries, and a frozen real `v0.3.0-alpha.1` store establishes
-the first read-compatibility floor. Artifact-blob garbage collection remains
-separate.
+the first read-compatibility floor.
+
+Completed prerequisite: the local directory artifact store now persists
+immutable classification claims and last-observed state under lock. Full
+verification resolves a complete history snapshot; garbage collection is
+age-gated, dry-run/digest-confirmed, protects live/audit/legacy blobs, and
+resumes across deterministic process-loss windows. This remains a local
+single-host lifecycle, not the future fleet artifact service.
 
 Completed prerequisite: every disposable native-provider and CNPG integration
 drill now enables that store, reads the complete attempt back through the CLI,
@@ -296,8 +302,8 @@ views and the raw private store archive.
 
 1. Complete real-repository and live-target compatibility gates.
 2. Promote planner/history schemas to stable identifiers, migrate from the
-   proven `v0.3.0-alpha.1` floor, add reference-aware artifact garbage
-   collection, and repeat process-loss behavior in real drills.
+   proven `v0.3.0-alpha.1` floor, and repeat history/retention/artifact-GC
+   process-loss behavior in killed real drills.
 3. Run one executor/controller on a single host with process-loss recovery.
 4. Add remote executors and leases only after single-host reconciliation works.
 5. Add TUI, then multi-user controller capabilities, then web UI if validated
