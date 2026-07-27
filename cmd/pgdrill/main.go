@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/r314tive/pgdrill/internal/adapters"
 	"github.com/r314tive/pgdrill/internal/application/cnpgverify"
@@ -69,6 +70,10 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return runTarget(ctx, args[1:], stdout, stderr)
 	case "report":
 		return runReport(args[1:], stdout, stderr)
+	case "plan":
+		return runPlan(args[1:], stdout, stderr)
+	case "history":
+		return runHistory(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -87,10 +92,12 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	var configPathLong string
 	var runID string
 	var attemptID string
+	var historyDir string
 	fs.StringVar(&configPath, "f", "", "configuration file")
 	fs.StringVar(&configPathLong, "config", "", "configuration file")
 	fs.StringVar(&runID, "run-id", "", "logical run id")
 	fs.StringVar(&attemptID, "attempt-id", "", "execution attempt id")
+	fs.StringVar(&historyDir, "history-dir", "", "optional local durable history store")
 	if ok, code := parseFlags(fs, args); !ok {
 		return code
 	}
@@ -103,6 +110,14 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 	if configPath == "" {
 		fmt.Fprintln(stderr, "run requires -f or -config")
+		return 2
+	}
+	if err := validateOptionalIdentity("run id", runID); err != nil {
+		fmt.Fprintf(stderr, "invalid -run-id: %v\n", err)
+		return 2
+	}
+	if err := validateOptionalIdentity("attempt id", attemptID); err != nil {
+		fmt.Fprintf(stderr, "invalid -attempt-id: %v\n", err)
 		return 2
 	}
 
@@ -153,12 +168,17 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		Preflight:        preflight.NewSuite(preflightRequirements, nil, 0),
 		Probes:           configuredProbes,
 		Sink:             report.JSONFileSink{Path: cfg.Report.Path},
+		EventSink:        historyEventSink(historyDir),
 		Checkpoints:      checkpoint.DirectoryStore{Path: checkpoint.PathForReport(cfg.Report.Path)},
 		PGDrillVersion:   version.String(),
 	}.Run(ctx, core.DrillRequest{ID: runID, AttemptID: attemptID, Spec: drillSpec})
+	historyErr := persistHistory(ctx, historyDir, result)
 	if err := writeRunSummary(stdout, result, cfg.Report.Path); err != nil {
 		fmt.Fprintf(stderr, "write run summary: %v\n", err)
 		return 1
+	}
+	if historyErr != nil {
+		fmt.Fprintf(stderr, "persist run history: %v\n", historyErr)
 	}
 	if runErr != nil {
 		if result.Status == model.DrillStatusAborted {
@@ -167,6 +187,9 @@ func runDrill(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			fmt.Fprintf(stderr, "run failed: %v\n", runErr)
 		}
 		return failureExitCode(ctx, result.Status)
+	}
+	if historyErr != nil {
+		return 1
 	}
 	if result.Status != model.DrillStatusPassed {
 		fmt.Fprintf(stderr, "run finished with status %s\n", result.Status)
@@ -410,6 +433,10 @@ func runTargetManifest(ctx context.Context, args []string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, "target manifest requires -f or -config")
 		return 2
 	}
+	if err := validateOptionalIdentity("drill id", drillID); err != nil {
+		fmt.Fprintf(stderr, "invalid -drill-id: %v\n", err)
+		return 2
+	}
 
 	cfg, err := config.LoadTargetFile(configPath)
 	if err != nil {
@@ -457,12 +484,14 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 	var attemptID string
 	var discover bool
 	var confirmCreate bool
+	var historyDir string
 	fs.StringVar(&configPath, "f", "", "configuration file")
 	fs.StringVar(&configPathLong, "config", "", "configuration file")
 	fs.StringVar(&drillID, "drill-id", "", "drill id used for generated labels and report id")
 	fs.StringVar(&attemptID, "attempt-id", "", "execution attempt id")
 	fs.BoolVar(&discover, "discover", false, "discover missing CNPG backup_name and image_name through kubectl")
 	fs.BoolVar(&confirmCreate, "confirm-create", false, "confirm that pgdrill may create and delete Kubernetes resources")
+	fs.StringVar(&historyDir, "history-dir", "", "optional local durable history store")
 	if ok, code := parseFlags(fs, args); !ok {
 		return code
 	}
@@ -475,6 +504,14 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	if configPath == "" {
 		fmt.Fprintln(stderr, "target verify requires -f or -config")
+		return 2
+	}
+	if err := validateOptionalIdentity("drill id", drillID); err != nil {
+		fmt.Fprintf(stderr, "invalid -drill-id: %v\n", err)
+		return 2
+	}
+	if err := validateOptionalIdentity("attempt id", attemptID); err != nil {
+		fmt.Fprintf(stderr, "invalid -attempt-id: %v\n", err)
 		return 2
 	}
 	if !confirmCreate {
@@ -496,7 +533,7 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 		return 2
 	}
 
-	result, runErr := (cnpgverify.Service{}).Run(ctx, cfg, cnpgverify.Options{
+	result, runErr := (cnpgverify.Service{EventSink: historyEventSink(historyDir)}).Run(ctx, cfg, cnpgverify.Options{
 		DrillID:       drillID,
 		AttemptID:     attemptID,
 		Discover:      discover,
@@ -506,7 +543,15 @@ func runTargetVerify(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "prepare target verify: %v\n", runErr)
 		return failureExitCode(ctx, model.DrillStatusUnknown)
 	}
-	return finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
+	historyErr := persistHistory(ctx, historyDir, result)
+	code := finishCNPGTargetVerify(ctx, stdout, stderr, cfg.Report.Path, result, runErr)
+	if historyErr != nil {
+		fmt.Fprintf(stderr, "persist target verify history: %v\n", historyErr)
+		if code == 0 {
+			return 1
+		}
+	}
+	return code
 }
 
 func finishCNPGTargetVerify(ctx context.Context, stdout, stderr io.Writer, reportPath string, result model.DrillResult, runErr error) int {
@@ -715,6 +760,8 @@ Commands:
   explain          Explain the project model.
   catalog          Discover and inspect backup catalogs.
   target           Inspect restore target artifacts.
+  plan             Validate and inspect daemon-free fleet plans.
+  history          Inspect local durable run history.
   report           Inspect drill reports.
   help             Show this help.
 
@@ -729,6 +776,13 @@ func parseFlags(fs *flag.FlagSet, args []string) (bool, int) {
 		return false, 2
 	}
 	return true, 0
+}
+
+func validateOptionalIdentity(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	return model.ValidateIdentity(field, value)
 }
 
 func printReportUsage(w io.Writer) {
@@ -800,7 +854,7 @@ func writeRunSummary(w io.Writer, result model.DrillResult, reportPath string) e
 		[2]string{"Report", valueOrDash(reportPath)},
 	)
 	for _, row := range rows {
-		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
+		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], oneLine(row[1])); err != nil {
 			return err
 		}
 	}
@@ -812,9 +866,9 @@ func writeDoctorText(w io.Writer, result preflight.Result) error {
 	if _, err := fmt.Fprintf(
 		table,
 		"Schema\t%s\npgdrill\t%s\nCluster\t%s\nProvider\t%s\nTarget\t%s\nStatus\t%s\nTools\t%d checked, %d failed\n",
-		result.SchemaVersion,
-		valueOrDash(result.PGDrillVersion),
-		valueOrDash(result.Cluster),
+		oneLine(result.SchemaVersion),
+		oneLine(result.PGDrillVersion),
+		oneLine(result.Cluster),
 		valueOrDash(string(result.Provider)),
 		valueOrDash(string(result.Target)),
 		result.Status,
@@ -833,11 +887,11 @@ func writeDoctorText(w io.Writer, result preflight.Result) error {
 		if _, err := fmt.Fprintf(
 			table,
 			"%s\t%s\t%s\t%s\t%s\t%s\n",
-			valueOrDash(check.Attributes["tool"]),
-			valueOrDash(check.Attributes["components"]),
+			oneLine(check.Attributes["tool"]),
+			oneLine(check.Attributes["components"]),
 			check.Status,
-			valueOrDash(check.Attributes["binary"]),
-			valueOrDash(check.Attributes["resolved_path"]),
+			oneLine(check.Attributes["binary"]),
+			oneLine(check.Attributes["resolved_path"]),
 			oneLine(check.Message),
 		); err != nil {
 			return err
@@ -856,7 +910,7 @@ func writeCatalogListText(w io.Writer, output catalogListOutput) error {
 			table,
 			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			backup.Provider,
-			backup.ID,
+			oneLine(backup.ID),
 			backup.Kind,
 			backup.Status,
 			timeField(backup.StartedAt),
@@ -902,7 +956,7 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 		[2]string{"Artifacts", fmt.Sprintf("%d referenced", len(result.Artifacts))},
 	)
 	for _, row := range rows {
-		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], row[1]); err != nil {
+		if _, err := fmt.Fprintf(table, "%s\t%s\n", row[0], oneLine(row[1])); err != nil {
 			return err
 		}
 	}
@@ -940,7 +994,7 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 			if _, err := fmt.Fprintf(
 				table,
 				"%s\t%s\t%s\t%s\n",
-				valueOrDash(check.Name),
+				oneLine(check.Name),
 				valueOrDash(string(check.Probe)),
 				check.Status,
 				oneLine(check.Message),
@@ -960,7 +1014,7 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 			if _, err := fmt.Fprintf(
 				table,
 				"%s\t%s\t%s\t%t\t%s\n",
-				checkpoint.Operation.Name,
+				oneLine(checkpoint.Operation.Name),
 				checkpoint.Operation.Kind,
 				checkpoint.State,
 				checkpoint.Reconciled,
@@ -982,11 +1036,11 @@ func writeReportShowText(w io.Writer, result model.DrillResult) error {
 				table,
 				"%s\t%s\t%d\t%s\t%s\t%s\n",
 				artifact.ID,
-				artifact.MediaType,
+				oneLine(artifact.MediaType),
 				artifact.SizeBytes,
 				artifact.RetentionClass,
 				artifact.RedactionState,
-				artifact.URI,
+				oneLine(artifact.URI),
 			); err != nil {
 				return err
 			}
@@ -1099,9 +1153,16 @@ func oneLine(value string) string {
 	if value == "" {
 		return "-"
 	}
-	value = strings.ReplaceAll(value, "\t", " ")
-	value = strings.ReplaceAll(value, "\r", " ")
-	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.Map(func(char rune) rune {
+		if unicode.IsControl(char) || unicode.Is(unicode.Cf, char) {
+			return ' '
+		}
+		return char
+	}, value)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
 	return value
 }
 
@@ -1187,11 +1248,19 @@ RecoveryTarget Describes what recovery point must be reached.
 RecoveryPolicy Evaluates RTO, RPO, backup age, target, and cleanup assertions.
 Probe          Runs post-restore checks against the recovered PostgreSQL instance.
 EvidenceSink   Persists drill facts, timings, command outputs, and final status.
+FleetPlanner   Compiles typed inventory into bounded immutable run specs without mutation.
+HistoryStore   Persists optional local specs, attempts, events, reports, and artifact references.
 
 Implemented target command paths:
   pgdrill run              local
   pgdrill target manifest  kubernetes (CloudNativePG)
   pgdrill target verify    kubernetes (CloudNativePG)
+
+Implemented daemon-free operator paths:
+  pgdrill plan validate
+  pgdrill plan show
+  pgdrill history list
+  pgdrill history show
 
 Canonical but not yet executable target type: container.
 

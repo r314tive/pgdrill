@@ -117,11 +117,12 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 	})
 }
 
-// ID returns an explicit normalized drill ID or a collision-resistant default
-// derived from the attempt start time.
+// ID returns an explicit drill ID unchanged or a collision-resistant default
+// derived from the attempt start time. The managed lifecycle validates an
+// explicit value instead of silently normalizing its identity.
 func ID(id string, startedAt time.Time) string {
-	if trimmed := strings.TrimSpace(id); trimmed != "" {
-		return trimmed
+	if id != "" {
+		return id
 	}
 	return "target-verify-" + startedAt.UTC().Format("20060102T150405.000000000Z")
 }

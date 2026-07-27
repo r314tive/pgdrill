@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/finalize"
@@ -128,9 +127,6 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	err = lifecycle.RunStage(ctx, model.DrillStageRequestValidation, func() error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("start drill: %w", err)
-		}
-		if req.AttemptID != "" && req.AttemptID != strings.TrimSpace(req.AttemptID) {
-			return fmt.Errorf("attempt id must not contain surrounding whitespace")
 		}
 		if !providerType.IsKnown() {
 			return fmt.Errorf("backup provider type %q is unsupported", providerType)
@@ -424,8 +420,8 @@ func (e Engine) clock() func() time.Time {
 }
 
 func drillID(id string, startedAt time.Time) string {
-	if trimmed := strings.TrimSpace(id); trimmed != "" {
-		return trimmed
+	if id != "" {
+		return id
 	}
 	return "drill-" + startedAt.UTC().Format("20060102T150405.000000000Z")
 }

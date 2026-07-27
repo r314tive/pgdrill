@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -17,6 +18,7 @@ import (
 const (
 	DefaultMaxOutputBytes   int64 = 64 << 20
 	DefaultMaxEvidenceBytes int64 = 1 << 20
+	DefaultWaitDelay              = 2 * time.Second
 )
 
 type Runner interface {
@@ -57,6 +59,7 @@ type Options struct {
 	DefaultTimeout          time.Duration
 	DefaultMaxOutputBytes   int64
 	DefaultMaxEvidenceBytes int64
+	WaitDelay               time.Duration
 	Redactor                Redactor
 }
 
@@ -64,6 +67,7 @@ type ExecRunner struct {
 	defaultTimeout          time.Duration
 	defaultMaxOutputBytes   int64
 	defaultMaxEvidenceBytes int64
+	waitDelay               time.Duration
 	redactor                Redactor
 }
 
@@ -72,6 +76,7 @@ func NewRunner(opts Options) *ExecRunner {
 		defaultTimeout:          opts.DefaultTimeout,
 		defaultMaxOutputBytes:   positiveOrDefault(opts.DefaultMaxOutputBytes, DefaultMaxOutputBytes),
 		defaultMaxEvidenceBytes: positiveOrDefault(opts.DefaultMaxEvidenceBytes, DefaultMaxEvidenceBytes),
+		waitDelay:               durationOrDefault(opts.WaitDelay, DefaultWaitDelay),
 		redactor:                opts.Redactor,
 	}
 }
@@ -90,9 +95,11 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, inv.Path, inv.Args...)
+	configureCommandProcessGroup(cmd)
+	cmd.WaitDelay = r.waitDelay
 	cmd.Dir = inv.WorkDir
 	if len(inv.Env) > 0 {
-		cmd.Env = append(os.Environ(), envList(inv.Env)...)
+		cmd.Env = mergeEnv(os.Environ(), inv.Env)
 	}
 	if inv.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(inv.Stdin)
@@ -113,6 +120,10 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 
 	status := exitStatus(cmd.ProcessState, err, timedOut, canceled)
 	result := buildResult(inv, cmd.Path, stdout, stderr, maxEvidenceBytes, status, startedAt, finishedAt, r.effectiveRedactor(inv))
+	if errors.Is(err, exec.ErrWaitDelay) {
+		terminateCommandProcessGroup(cmd)
+		return result, redactedError{message: result.Evidence.ExitStatus.Error, cause: err}
+	}
 	if cmd.ProcessState == nil && err != nil {
 		if runCtx.Err() != nil {
 			return result, runCtx.Err()
@@ -172,7 +183,7 @@ func exitStatus(state *os.ProcessState, err error, timedOut, canceled bool) mode
 	}
 	if state != nil {
 		status.ExitCode = state.ExitCode()
-		status.Success = state.Success() && !timedOut && !canceled
+		status.Success = state.Success() && err == nil && !timedOut && !canceled
 	}
 	if err != nil && !status.Success {
 		status.Error = err.Error()
@@ -245,6 +256,13 @@ func positiveOrDefault(value, fallback int64) int64 {
 	return fallback
 }
 
+func durationOrDefault(value, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
 type limitedBuffer struct {
 	buffer    bytes.Buffer
 	limit     int64
@@ -296,6 +314,23 @@ func envList(env map[string]string) []string {
 		values = append(values, key+"="+env[key])
 	}
 	return values
+}
+
+func mergeEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return append([]string(nil), base...)
+	}
+	merged := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		name, _, found := strings.Cut(entry, "=")
+		if found {
+			if _, overridden := overrides[name]; overridden {
+				continue
+			}
+		}
+		merged = append(merged, entry)
+	}
+	return append(merged, envList(overrides)...)
 }
 
 func copyEnv(env map[string]string) map[string]string {

@@ -3,7 +3,9 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,6 +57,37 @@ func TestRunnerCapturesRawAndRedactedEvidence(t *testing.T) {
 	}
 	if got := result.Evidence.Env["WALG_FILE_PREFIX"]; got != "/backups/postgresql/main" {
 		t.Fatalf("expected non-sensitive env to remain visible, got %q", got)
+	}
+}
+
+func TestRunnerEnvironmentOverridesParentWithoutDuplicates(t *testing.T) {
+	const name = "PGDRILL_COMMAND_ENV_OVERRIDE"
+	t.Setenv(name, "parent")
+	runner := NewRunner(Options{})
+
+	result, err := runner.Run(context.Background(), Invocation{
+		Path: os.Args[0],
+		Args: []string{
+			"-test.run=TestHelperProcess",
+			"--",
+			"print-env",
+			name,
+		},
+		Env: map[string]string{
+			"PGDRILL_COMMAND_HELPER": "1",
+			name:                     "invocation",
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(string(result.Raw.Stdout)); got != "invocation" {
+		t.Fatalf("child environment = %q, want invocation override", got)
+	}
+	merged := mergeEnv([]string{name + "=first", "OTHER=value", name + "=second"}, map[string]string{name: "override"})
+	if got := strings.Join(merged, "\n"); strings.Count(got, name+"=") != 1 || !strings.Contains(got, name+"=override") {
+		t.Fatalf("mergeEnv() = %#v, want one override", merged)
 	}
 }
 
@@ -281,6 +314,12 @@ func TestHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString(payload + "\n")
 		_, _ = os.Stderr.WriteString("stderr " + payload + "\n")
 		os.Exit(0)
+	case "print-env":
+		if len(args) != 2 {
+			os.Exit(2)
+		}
+		_, _ = os.Stdout.WriteString(os.Getenv(args[1]) + "\n")
+		os.Exit(0)
 	case "exit":
 		if len(args) != 2 || args[1] != "7" {
 			os.Exit(2)
@@ -308,6 +347,57 @@ func TestHelperProcess(t *testing.T) {
 			os.Exit(2)
 		}
 		time.Sleep(duration)
+		os.Exit(0)
+	case "spawn-delayed-write":
+		if len(args) != 2 || os.Getenv("PGDRILL_COMMAND_MARKER") == "" ||
+			os.Getenv("PGDRILL_COMMAND_READY") == "" {
+			os.Exit(2)
+		}
+		child := exec.Command(
+			os.Args[0],
+			"-test.run=TestHelperProcess",
+			"--",
+			"delayed-write",
+			args[1],
+		)
+		child.Env = os.Environ()
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			os.Exit(2)
+		}
+		readyDeadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(os.Getenv("PGDRILL_COMMAND_READY")); err == nil {
+				break
+			}
+			if time.Now().After(readyDeadline) {
+				_ = child.Process.Kill()
+				os.Exit(2)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		os.Exit(0)
+	case "delayed-write":
+		if len(args) != 2 || os.Getenv("PGDRILL_COMMAND_MARKER") == "" ||
+			os.Getenv("PGDRILL_COMMAND_READY") == "" {
+			os.Exit(2)
+		}
+		duration, err := time.ParseDuration(args[1])
+		if err != nil {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(
+			os.Getenv("PGDRILL_COMMAND_READY"),
+			[]byte(fmt.Sprintf("%d\n", os.Getpid())),
+			0o600,
+		); err != nil {
+			os.Exit(2)
+		}
+		time.Sleep(duration)
+		if err := os.WriteFile(os.Getenv("PGDRILL_COMMAND_MARKER"), []byte("finished\n"), 0o600); err != nil {
+			os.Exit(2)
+		}
 		os.Exit(0)
 	case "bounded-output":
 		_, _ = os.Stdout.WriteString(strings.Repeat("x", 32))

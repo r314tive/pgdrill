@@ -17,12 +17,20 @@ probes, and evidence, not in terms of one provider's command output.
 - `internal/core`: native and managed-target interfaces, backup selection,
   shared probe execution semantics, ordered run events, and the common drill
   lifecycle recorder.
-- `internal/command`: direct command runner with timeout, bounded raw
+- `internal/command`: direct command runner with Unix process-group or
+  platform process termination, bounded inherited-pipe wait, bounded raw
   stdout/stderr, bounded redacted evidence, and structured exit status.
+- `internal/filelock`: context-aware platform advisory locking shared by
+  durable checkpoint and history stores.
 - `internal/checkpoint`: atomic attempt-scoped mutation checkpoint stores with
   monotonic transition validation and process-local or durable implementations.
 - `internal/artifact`: bounded content-addressed artifact sinks with streaming
   disk publication, deduplication, and verified reads.
+- `internal/planner`: strict secret-free fleet inventory, selector expansion,
+  compatibility validation, deterministic capacity-aware placement, and
+  immutable plan/run digests.
+- `internal/history`: versioned private local persistence for immutable specs,
+  attempts, append-only events, terminal reports, and validated inspection.
 - `internal/compatibility`: strict validation for the versioned compatibility
   evidence matrix and its repository references.
 - `internal/preflight`: config-derived executable requirements and native
@@ -50,6 +58,10 @@ probes, and evidence, not in terms of one provider's command output.
   ownership, and unknown-outcome reconciliation contract.
 - `docs/artifact-format.md`: immutable artifact references, classification,
   local persistence, and evidence-link integrity.
+- `docs/fleet-plan-format.md`: daemon-free inventory, compatibility, bounds,
+  deterministic placement, revisions, and rejection semantics.
+- `docs/history-format.md`: local on-disk layout, identity, ordering,
+  idempotency, crash boundaries, and upgrade behavior.
 - `docs/restore-targets.md`: lifecycle requirements for disposable restore
   environments, including Kubernetes/CNPG notes.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.
@@ -243,9 +255,24 @@ When configured, the engine also emits ordered
 drills and operator-managed targets use the same lifecycle recorder, terminal
 status rules, cancellation handling, and report finalization. Event delivery
 is fail-closed before normal stage side effects; cleanup remains mandatory even
-when its event journal is unavailable. The standalone CLI has no default event
-journal yet. The provisional delivery contract is defined in
-[run-event-format.md](run-event-format.md).
+when its event journal is unavailable. The standalone CLI remains journal-free
+by default and enables `internal/history` only through explicit
+`-history-dir`. The delivery contract is defined in
+[run-event-format.md](run-event-format.md), and local persistence is defined in
+[history-format.md](history-format.md).
+
+`internal/planner` is a pure compiler above the single-attempt engine. It
+normalizes one `pgdrill.fleet/v1alpha1` inventory, expands exact selectors,
+places sources onto explicitly compatible targets within capacity, and emits
+canonical engine specs under deterministic logical run IDs. It does not resolve
+execution credentials or call engine adapters. The resulting plan includes
+resource revisions that a future executor must verify before execution.
+
+The planner and local history remain in this repository and module because
+they evolve with engine identity and report contracts. They are not an
+out-of-process API, scheduler, lease service, or alternate orchestration path.
+Cross-process public types remain deferred until an actual controller/executor
+consumer exists.
 
 The durable report is validated at both producer and consumer boundaries. This
 gate covers top-level terminal-state coherence, canonical identities and enums,

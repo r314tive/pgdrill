@@ -51,7 +51,9 @@ network.
 
 Each run writes latest and timestamp-PITR reports, the rendered PITR
 configuration, doctor/catalog output, logs, exact runtime inventory, durable
-operation checkpoints, and recursive checksums under the ignored
+operation checkpoints, per-attempt history views, a two-attempt history list,
+an archive of the raw private history store, and recursive checksums under the
+ignored
 `.cache/integration/walg/runs/<timestamp>/` directory. A dirty source tree is
 allowed for development, but both version and commit metadata are suffixed
 with `dirty`; such output must not be promoted to compatibility evidence.

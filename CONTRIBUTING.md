@@ -38,7 +38,7 @@ separate reviewed evidence update.
 Release-candidate owners should use the clean-tree aggregate gate:
 
 ```sh
-make -s release-candidate-check VERSION=v0.2.0-rc.2
+make -s release-candidate-check VERSION=v0.3.0-alpha.1
 ```
 
 ## Engineering Rules

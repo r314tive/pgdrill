@@ -379,6 +379,8 @@ func TestNewRunLifecycleValidatesBaseResult(t *testing.T) {
 	}{
 		{name: "nil", edit: nil, want: "result"},
 		{name: "id", edit: func(r *model.DrillResult) { r.ID = "" }, want: "id"},
+		{name: "id whitespace", edit: func(r *model.DrillResult) { r.ID = " run-1 " }, want: "surrounding whitespace"},
+		{name: "id control", edit: func(r *model.DrillResult) { r.ID = "run\n1" }, want: "control characters"},
 		{name: "started at", edit: func(r *model.DrillResult) { r.StartedAt = time.Time{} }, want: "started_at"},
 		{name: "status", edit: func(r *model.DrillResult) { r.Status = model.DrillStatusPassed }, want: "must start"},
 	}
@@ -395,6 +397,16 @@ func TestNewRunLifecycleValidatesBaseResult(t *testing.T) {
 				t.Fatalf("newRunLifecycle() error = %v, want substring %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewRunLifecycleRejectsInvalidExplicitAttemptID(t *testing.T) {
+	result := baseLifecycleResult(time.Now().UTC())
+	for _, attemptID := range []string{" attempt-1 ", "attempt\n1", strings.Repeat("a", 513)} {
+		_, err := newRunLifecycle(&result, attemptID, nil, nil, nil, 0)
+		if err == nil {
+			t.Fatalf("newRunLifecycle() accepted invalid attempt id %q", attemptID)
+		}
 	}
 }
 

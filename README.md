@@ -27,6 +27,9 @@ The CLI implements:
   checkpoints, artifact references, and versioned JSON reports
 - fail-closed recovery-policy verdicts for RTO, RPO, backup age, recovery
   target, and cleanup
+- daemon-free typed fleet validation and deterministic bounded placement
+- optional private local history for immutable specs, ordered events, terminal
+  reports, policy verdicts, and artifact references
 - text report inspection and Prometheus export
 
 Native and CNPG paths share one lifecycle, cancellation, reconciliation, and
@@ -50,7 +53,9 @@ published Linux arm64 archive passed local WAL-G latest recovery and timestamp
 PITR, proving both sides of an archived transaction boundary. These are
 release and controlled-demo gates, not broader compatibility claims.
 
-Fleet scheduling, durable multi-run history, a controller/agent protocol, TUI,
+The typed planner and local history are implemented on the current `main`
+branch after `v0.2.0-rc.2`; they are not part of that published archive yet.
+Fleet scheduling, leases, remote executors, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
 than become a second orchestration implementation.
 
@@ -95,7 +100,8 @@ Additional providers can be added behind the same internal provider contract.
 - **Failure stage**: a stable lifecycle stage and human-readable reason for a
   failed or aborted drill, linked to the evidence collected before failure.
 - **Run event**: an optional ordered stage transition identified by logical run
-  and execution attempt; the CLI does not persist an event journal by default.
+  and execution attempt. Direct execution remains journal-free by default;
+  `-history-dir` enables the local durable journal.
 - **Operation checkpoint**: a durable intent and terminal mutation state bound
   to one attempt. It lets a replacement executor reconcile owned resources
   without assuming that a failed command had no effect.
@@ -166,7 +172,7 @@ make check
 Release-affecting changes should also pass:
 
 ```sh
-make -s release-check VERSION=v0.2.0-dev
+make -s release-check VERSION=v0.3.0-dev
 ```
 
 Run any real local provider path independently, or all native integration gates
@@ -190,7 +196,7 @@ For a clean release-candidate commit with Docker available, run the complete
 artifact, lint, native-provider, and disposable CNPG gate:
 
 ```sh
-make -s release-candidate-check VERSION=v0.2.0-rc.2
+make -s release-candidate-check VERSION=v0.3.0-alpha.1
 ```
 
 ```sh
@@ -203,6 +209,10 @@ go run ./cmd/pgdrill run -f examples/pgdrill.yaml
 go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml
 go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml -discover
 go run ./cmd/pgdrill target verify -f path/to/cnpg-verify-config.yaml -discover -confirm-create
+go run ./cmd/pgdrill plan validate -f examples/fleet.yaml
+go run ./cmd/pgdrill plan show -f examples/fleet.yaml
+go run ./cmd/pgdrill history list -store path/to/history
+go run ./cmd/pgdrill history show -store path/to/history run-id
 go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```
@@ -211,6 +221,24 @@ Automation may provide stable correlation identities with the `-run-id` or
 `-drill-id` flag and the `-attempt-id` flag. Reusing an attempt that already has
 mutation checkpoints is rejected until its orphaned state has been reconciled;
 it is not permission to replay commands.
+
+Local history is opt-in for execution, so cron and CI jobs do not acquire a
+new availability dependency:
+
+```sh
+pgdrill run -f pgdrill.yaml \
+  -run-id nightly-main \
+  -attempt-id nightly-main-1 \
+  -history-dir /var/lib/pgdrill/history
+pgdrill history list -store /var/lib/pgdrill/history
+pgdrill history show -store /var/lib/pgdrill/history nightly-main
+```
+
+The planner never resolves credentials or creates targets. Its strict
+inventory and output contracts are documented in
+[docs/fleet-plan-format.md](docs/fleet-plan-format.md); the on-disk journal,
+crash boundaries, and upgrade policy are documented in
+[docs/history-format.md](docs/history-format.md).
 
 Long-running commands handle `SIGINT` and `SIGTERM`. The active provider,
 target, or probe command is canceled first; pgdrill then uses a bounded
@@ -250,6 +278,9 @@ the versioned JSON report contract is documented in
 documented in [docs/run-event-format.md](docs/run-event-format.md), and the
 internal immutable run input is documented in
 [docs/drill-spec-format.md](docs/drill-spec-format.md). The
+daemon-free fleet and plan contracts are documented in
+[docs/fleet-plan-format.md](docs/fleet-plan-format.md), and local persistence
+is documented in [docs/history-format.md](docs/history-format.md). The
 engine/control-plane boundary is recorded in
 [ADR 0001](docs/adr/0001-engine-v0.2-and-control-plane-boundary.md).
 The typed topology and CLI/TUI/web sequence are expanded in

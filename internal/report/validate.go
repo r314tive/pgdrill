@@ -23,11 +23,8 @@ func validateReport(result model.DrillResult, produced bool) error {
 	if result.SchemaVersion != model.CurrentReportSchemaVersion {
 		return fmt.Errorf("schema_version must be %q", model.CurrentReportSchemaVersion)
 	}
-	if strings.TrimSpace(result.ID) == "" {
-		return fmt.Errorf("id is required")
-	}
-	if result.ID != strings.TrimSpace(result.ID) {
-		return fmt.Errorf("id must not contain surrounding whitespace")
+	if err := model.ValidateIdentity("id", result.ID); err != nil {
+		return err
 	}
 	if result.Provider != "" && !result.Provider.IsKnown() {
 		return fmt.Errorf("unsupported provider %q", result.Provider)
@@ -223,8 +220,10 @@ func validateOperations(result model.DrillResult, produced bool) error {
 }
 
 func validateRunIdentity(result model.DrillResult, produced bool) error {
-	if result.AttemptID != "" && result.AttemptID != strings.TrimSpace(result.AttemptID) {
-		return fmt.Errorf("attempt_id must not contain surrounding whitespace")
+	if result.AttemptID != "" {
+		if err := model.ValidateIdentity("attempt_id", result.AttemptID); err != nil {
+			return err
+		}
 	}
 	if result.SpecDigest != "" && !model.IsSHA256Digest(result.SpecDigest) {
 		return fmt.Errorf("spec_digest must be a sha256 digest")

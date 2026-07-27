@@ -473,10 +473,10 @@ func TestEngineRunStopsBeforeStageOperationWhenEventDeliveryFails(t *testing.T) 
 	}
 }
 
-func TestDrillIDIsTrimmedAndNanosecondUnique(t *testing.T) {
+func TestDrillIDPreservesExplicitValueAndIsNanosecondUnique(t *testing.T) {
 	startedAt := time.Date(2026, 7, 20, 12, 34, 56, 123456789, time.UTC)
 
-	if got, want := drillID("  explicit-id  ", startedAt), "explicit-id"; got != want {
+	if got, want := drillID("explicit-id", startedAt), "explicit-id"; got != want {
 		t.Fatalf("drillID() = %q, want %q", got, want)
 	}
 	if got, want := drillID("", startedAt), "drill-20260720T123456.123456789Z"; got != want {

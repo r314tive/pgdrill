@@ -27,6 +27,7 @@ func TestValidateRejectsMalformedCurrentReports(t *testing.T) {
 		want   string
 	}{
 		{name: "missing id", mutate: func(result *model.DrillResult) { result.ID = "" }, want: "id is required"},
+		{name: "id control", mutate: func(result *model.DrillResult) { result.ID = "run\n1" }, want: "control characters"},
 		{name: "attempt whitespace", mutate: func(result *model.DrillResult) { result.AttemptID = " attempt-1" }, want: "attempt_id"},
 		{name: "invalid spec digest", mutate: func(result *model.DrillResult) { result.SpecDigest = "md5:no" }, want: "spec_digest must be a sha256"},
 		{name: "missing spec", mutate: func(result *model.DrillResult) { result.Spec = nil }, want: "spec is required when spec_digest"},

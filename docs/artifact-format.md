@@ -8,8 +8,9 @@ schema:
 pgdrill.artifact-reference/v1alpha1
 ```
 
-The reference is additive within `pgdrill.report/v1alpha1`. It remains under
-`internal/` until local history or an out-of-process consumer proves the API.
+The reference is additive within `pgdrill.report/v1alpha1`. Local history now
+retains and validates these references, but the Go type remains under
+`internal/` until an out-of-process consumer proves a stable public API.
 
 ## Reference
 
@@ -41,9 +42,11 @@ The retention classes are policy inputs, not hard-coded expiration periods:
 - `history`: retained with normal drill history
 - `audit`: retained according to an external audit policy
 
-The current directory store does not delete blobs automatically. Future local
-history owns indexing and garbage collection, and must account for every report
-reference before removing a content-addressed blob.
+The current artifact and history directory stores do not delete blobs
+automatically. Local history retains terminal report references but does not
+yet provide cross-run garbage collection. A future retention implementation
+must account for every report reference before removing a content-addressed
+blob.
 
 There is deliberately no durable `unredacted` state. A producer must redact the
 payload before calling the sink or classify it as `not_required` because its

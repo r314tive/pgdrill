@@ -7,9 +7,10 @@ runbooks without requiring a server.
 ## Version Direction
 
 - `v0.2`: harden and publish the single-attempt engine contract.
-- Next pre-1.0 milestones: broaden real latest/PITR evidence, add daemon-free
-  typed planning and local durable history, then stabilize schemas,
-  distribution, upgrades, and pilot operations.
+- `v0.3`: stabilize the newly implemented daemon-free typed planner and local
+  durable history while broadening real latest/PITR evidence.
+- Later pre-1.0 work: complete stable schemas, distribution, upgrades, and
+  pilot operations.
 - `v1.0.0`: the stable self-managed product described by the
   [v1.0 release contract](v1.0-release-contract.md).
 - `v1.x`: remote executors, schedules, notifications, multi-user control-plane
@@ -28,7 +29,8 @@ Status: complete for the initial CLI engine.
   selection before repository mutation or restore planning.
 - Core drill engine: discover, select backup, validate, plan, restore, start
   PostgreSQL, run probes, cleanup, write evidence.
-- Command runner with timeout, bounded raw/evidence capture, redaction,
+- Command runner with Unix process-group or platform process termination,
+  bounded inherited-pipe wait, bounded raw/evidence capture, redaction,
   truncation metadata, and structured exit status.
 - WAL-G and Barman catalog discovery adapters with fixture tests.
 - Strict YAML/JSON config loading.
@@ -105,7 +107,10 @@ pgdrill catalog list -f pgdrill.yaml
 Status: implemented and field-exercised in disposable CNPG 1.26.0 /
 PostgreSQL 15.13 and CNPG 1.26.3 / PostgreSQL 15.17 environments. Both exact
 observations are recorded in the versioned evidence matrix; broader field
-coverage remains pending.
+coverage remains pending. The current path is the native `barmanObjectStore`
+API; CNPG reports it as deprecated for removal in 1.29, so Barman Cloud Plugin
+support is a separate required implementation/evidence cell rather than an
+inferred continuation of the 1.26 result.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
@@ -140,6 +145,11 @@ coverage remains pending.
   post-backup WAL replay, four probes, immutable manifest evidence, policy,
   and cleanup.
 
+Remaining compatibility extension:
+
+- Barman Cloud Plugin discovery and recovery-manifest support before claiming
+  CNPG versions where native `barmanObjectStore` is removed.
+
 ## Phase 4: More Providers And Probes
 
 Status: initial four-provider surface and semantic config validation
@@ -160,8 +170,9 @@ in progress.
 Status: published as `v0.2.0-rc.2` after protocol hardening, exact alpha.10
 consolidation, and reproducible aggregate gates. Clean commit
 `97ad852ecb2c9493c1c4a1e7718f61bf496efa17` additionally passed a real WAL-G
-timestamp boundary before publication. Fleet planning contracts remain
-architecture only.
+timestamp boundary before publication. The daemon-free planning and local
+history foundation is additionally implemented on the post-`rc.2` main branch;
+scheduling and distributed execution remain deferred.
 
 Completed foundation:
 
@@ -241,8 +252,8 @@ Remaining external engine gate:
    storage backends, versions, platforms, backup modes, and PITR targets.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this
-migration. The event sink is injectable but the CLI does not persist an event
-journal by default yet.
+migration. The CLI remains journal-free by default and can persist ordered
+events plus terminal snapshots through explicit `-history-dir`.
 
 ## Demo And Pilot Readiness
 
@@ -283,10 +294,11 @@ Remaining gates, in order:
 
 ## Phase 6: Fleet Control Plane
 
-Status: architecture only. Do not implement a daemon before the Engine v0.2
-spec, idempotency, reconciliation, and real-repository gates are complete. The
-daemon-free planner and local history are part of the `v1.0.0` product
-boundary; distributed controller/executor operation is not.
+Status: daemon-free typed planning and local durable history implemented on the
+post-`rc.2` main branch. Do not implement a daemon before the remaining
+real-repository, schema-stability, migration, and process-loss gates are
+complete. Distributed controller/executor operation is not part of the
+`v1.0.0` boundary.
 
 The control plane will compile typed fleet resources into independent immutable
 engine runs:
@@ -299,14 +311,33 @@ engine runs:
 - `DrillSet`: source selectors, target pool, schedule, and concurrency policy.
 - `DrillRun`: one concrete planner output and its attempt history.
 
-Implementation order:
+Implemented foundation:
 
-1. Daemon-free `plan` command that expands selectors and placement without
-   mutating infrastructure.
-2. Local durable run/event history and bounded artifact index.
+1. Strict `pgdrill.fleet/v1alpha1` resources and deterministic
+   `pgdrill.plan/v1alpha1` output.
+2. Exact ID/label selectors, execution-pool/driver/mode compatibility,
+   capacity-aware concrete placement, global/per-set expansion bounds,
+   immutable revisions and digests, mutation count, and typed rejections.
+3. Read-only `plan validate/show` CLI commands with no secret resolution or
+   infrastructure access.
+4. Private `pgdrill.history-store/v1alpha1` persistence for immutable specs,
+   multiple attempts, ordered idempotent events, terminal reports, and bounded
+   artifact references.
+5. `history list/show/import` plus opt-in local persistence for native and CNPG
+   execution; direct runs remain independent.
+6. History-backed acceptance in all disposable WAL-G, Barman, pgBackRest,
+   pg_probackup, and CNPG drills, with retained full views, list views, and raw
+   store archives.
+
+Next implementation order:
+
+1. Stabilize the pre-GA fleet, plan, history, event, report, and spec schemas
+   with an explicit migration/read-compatibility floor.
+2. Extend real-drill history coverage to interrupted/process-loss attempts and
+   define retention plus artifact garbage collection.
 3. Controller and executor binaries with leases, heartbeats, idempotency, and
    executor-local secret resolution.
-4. Schedules, concurrency controls, RBAC, audit, notifications, and retention.
+4. Schedules, concurrency controls, RBAC, audit, and notifications.
 
 Keep these binaries in this repository and Go module while contracts evolve
 together. Split a module or repository only when versioning, ownership,
@@ -316,9 +347,10 @@ detailed in [control-plane-roadmap.md](control-plane-roadmap.md).
 
 ## Phase 7: Operator Interfaces
 
-Status: CLI implemented; TUI and web UI deliberately deferred. Real drill
-history and operator workflows must establish storage and comparison
-requirements before another surface is justified.
+Status: direct, planning, and local-history CLI implemented; TUI and web UI
+deliberately deferred. Real operator use of the new history must establish
+comparison, retention, and cancellation requirements before another surface is
+justified.
 
 Recommended order:
 

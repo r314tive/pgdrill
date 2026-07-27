@@ -3,6 +3,9 @@
 set -Eeuo pipefail
 umask 022
 
+# shellcheck source=test/integration/lib/history.sh
+source /opt/pgdrill/test/history.sh
+
 readonly PGBIN="/usr/lib/postgresql/18/bin"
 readonly PGDRILL="/opt/pgdrill/bin/pgdrill"
 readonly PGBACKREST="/usr/bin/pgbackrest"
@@ -13,6 +16,7 @@ readonly ROOT="/validation"
 readonly SOURCE_DATA="${ROOT}/source-data"
 readonly SOURCE_SOCKET="${ROOT}/source-socket"
 readonly SOURCE_LOG="${ROOT}/source.log"
+readonly HISTORY="${ROOT}/history"
 readonly WORK_DIR="${ROOT}/work/restore"
 readonly SOURCE_PORT="55431"
 readonly EXPECTED_COMMIT="${PGDRILL_EXPECTED_COMMIT:?PGDRILL_EXPECTED_COMMIT is required}"
@@ -182,7 +186,8 @@ log "running pgdrill restore attempt ${run_id}/attempt-1"
 "${PGDRILL}" run \
   -f "${CONFIG}" \
   -run-id "${run_id}" \
-  -attempt-id attempt-1 2>&1 | tee /output/run.log
+  -attempt-id attempt-1 \
+  -history-dir "${HISTORY}" 2>&1 | tee /output/run.log
 
 [[ -f /output/report.json ]] || die "pgdrill did not persist report.json"
 "${PGDRILL}" report show /output/report.json | tee /output/report.txt
@@ -205,6 +210,13 @@ grep -Eq '^cleanup[[:space:]]+true[[:space:]]+passed' /output/report.txt ||
 grep -F '"archive_mode": "off"' /output/report.json >/dev/null ||
   die "report does not retain the local-target archive_mode override"
 [[ ! -e "${WORK_DIR}" ]] || die "owned restore work directory remains after cleanup"
+pgdrill_integration_verify_history_attempt \
+  "${PGDRILL}" \
+  "${HISTORY}" \
+  "${run_id}" \
+  attempt-1 \
+  /output/history-attempt
+pgdrill_integration_capture_history_store "${PGDRILL}" "${HISTORY}" /output 1
 
 {
   printf 'pgdrill=%s\n' "${pgdrill_version}"

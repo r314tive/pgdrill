@@ -4,15 +4,17 @@
 the engine when an `EventSink` is configured. It complements the terminal
 `pgdrill.report/v1alpha1` report; it does not replace that report.
 
-The standalone CLI does not persist an event journal by default yet. The
-schema and engine delivery boundary exist so a later local journal or control
-plane can consume the same lifecycle without parsing logs or wrapping CLI
-output.
+The standalone CLI does not persist an event journal by default. Passing
+`-history-dir` to `pgdrill run` or `pgdrill target verify` enables the local
+append-only history store. A later networked control plane must consume the
+same lifecycle without parsing logs or wrapping CLI output.
 
 ## Identity And Ordering
 
 - `run_id` identifies one logical drill.
 - `attempt_id` identifies one execution attempt of that run.
+- Both identities follow the shared 512-byte canonical identity rule: valid
+  UTF-8, no surrounding whitespace, and no control characters.
 - `spec_digest` binds the attempt to the immutable drill input used by the
   terminal report.
 - `sequence` starts at 1 and increases only after the configured sink accepts
@@ -57,10 +59,13 @@ A configured event sink is part of execution correctness:
 - cancellation during cleanup remains `aborted` even when cleanup itself
   succeeds through a detached finalization context
 
-The report sink and event sink are not a distributed transaction. Durable
-multi-process or remote delivery therefore remains behind the future
-idempotency and reconciliation gate described in
-[ADR 0001](adr/0001-engine-v0.2-and-control-plane-boundary.md).
+The report sink and event sink are not a distributed transaction. The local
+store therefore exposes event-only and imported report-only attempts instead
+of fabricating missing records. Durable remote delivery remains behind the
+future lease, idempotency, and reconciliation gate described in
+[ADR 0001](adr/0001-engine-v0.2-and-control-plane-boundary.md). The local
+layout and crash boundaries are defined in
+[history-format.md](history-format.md).
 
 ## Compatibility
 
@@ -71,5 +76,7 @@ optional fields may be introduced within `v1alpha1`; incompatible identity,
 ordering, or state-transition changes require a new schema version.
 
 Messages and attributes are diagnostic context, not machine-parsed protocol.
-They must contain only redacted, bounded values and must not contain resolved
-secrets.
+They must contain only redacted values and must not contain resolved secrets.
+Messages and individual attribute values are bounded to 4 KiB, attribute keys
+to 128 bytes, and one event to at most 32 attributes. All diagnostic strings
+must be valid UTF-8.

@@ -4,9 +4,18 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const CurrentRunEventSchemaVersion = "pgdrill.run-event/v1alpha1"
+
+const (
+	MaxRunEventMessageBytes   = 4 << 10
+	MaxRunEventAttributes     = 32
+	maxRunEventAttributeKey   = 128
+	maxRunEventAttributeValue = 4 << 10
+)
 
 type RunEventType string
 
@@ -62,17 +71,11 @@ func (e RunEvent) Validate() error {
 	if e.SchemaVersion != CurrentRunEventSchemaVersion {
 		return fmt.Errorf("unsupported run event schema version %q", e.SchemaVersion)
 	}
-	if strings.TrimSpace(e.RunID) == "" {
-		return fmt.Errorf("run event run_id is required")
+	if err := ValidateIdentity("run event run_id", e.RunID); err != nil {
+		return err
 	}
-	if e.RunID != strings.TrimSpace(e.RunID) {
-		return fmt.Errorf("run event run_id must not contain surrounding whitespace")
-	}
-	if strings.TrimSpace(e.AttemptID) == "" {
-		return fmt.Errorf("run event attempt_id is required")
-	}
-	if e.AttemptID != strings.TrimSpace(e.AttemptID) {
-		return fmt.Errorf("run event attempt_id must not contain surrounding whitespace")
+	if err := ValidateIdentity("run event attempt_id", e.AttemptID); err != nil {
+		return err
 	}
 	if e.SpecDigest != "" && !IsSHA256Digest(e.SpecDigest) {
 		return fmt.Errorf("run event spec_digest must be a sha256 digest")
@@ -86,9 +89,30 @@ func (e RunEvent) Validate() error {
 	if e.OccurredAt.IsZero() {
 		return fmt.Errorf("run event occurred_at is required")
 	}
-	for key := range e.Attributes {
+	if !utf8.ValidString(e.Message) {
+		return fmt.Errorf("run event message must be valid UTF-8")
+	}
+	if len(e.Message) > MaxRunEventMessageBytes {
+		return fmt.Errorf("run event message exceeds %d bytes", MaxRunEventMessageBytes)
+	}
+	if len(e.Attributes) > MaxRunEventAttributes {
+		return fmt.Errorf("run event attributes exceed maximum count %d", MaxRunEventAttributes)
+	}
+	for key, value := range e.Attributes {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("run event attribute key is required")
+		}
+		if key != strings.TrimSpace(key) {
+			return fmt.Errorf("run event attribute key must not contain surrounding whitespace")
+		}
+		if len(key) > maxRunEventAttributeKey || !utf8.ValidString(key) {
+			return fmt.Errorf("run event attribute key must be bounded valid UTF-8")
+		}
+		if strings.IndexFunc(key, unicode.IsControl) >= 0 {
+			return fmt.Errorf("run event attribute key must not contain control characters")
+		}
+		if len(value) > maxRunEventAttributeValue || !utf8.ValidString(value) {
+			return fmt.Errorf("run event attribute %q value must be bounded valid UTF-8", key)
 		}
 	}
 

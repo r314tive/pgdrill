@@ -1,6 +1,7 @@
 package report
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/model"
 )
+
+const MaxJSONBytes int64 = 64 << 20
 
 type JSONFileSink struct {
 	Path string
@@ -99,8 +102,23 @@ func ReadJSONFile(path string) (model.DrillResult, error) {
 }
 
 func ReadJSON(reader io.Reader) (model.DrillResult, error) {
+	return readJSON(reader, MaxJSONBytes)
+}
+
+func readJSON(reader io.Reader, maxBytes int64) (model.DrillResult, error) {
+	if reader == nil {
+		return model.DrillResult{}, fmt.Errorf("report JSON input is required")
+	}
+	payload, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return model.DrillResult{}, fmt.Errorf("read report json: %w", err)
+	}
+	if int64(len(payload)) > maxBytes {
+		return model.DrillResult{}, fmt.Errorf("report JSON exceeds %d bytes", maxBytes)
+	}
+
 	var result model.DrillResult
-	decoder := json.NewDecoder(reader)
+	decoder := json.NewDecoder(bytes.NewReader(payload))
 	if err := decoder.Decode(&result); err != nil {
 		return model.DrillResult{}, fmt.Errorf("parse report json: %w", err)
 	}
@@ -121,16 +139,33 @@ func ReadJSON(reader io.Reader) (model.DrillResult, error) {
 }
 
 func WriteJSON(writer io.Writer, result model.DrillResult) error {
+	return writeJSON(writer, result, MaxJSONBytes)
+}
+
+func writeJSON(writer io.Writer, result model.DrillResult, maxBytes int64) error {
+	if writer == nil {
+		return fmt.Errorf("report JSON output is required")
+	}
 	if err := normalizeSchemaVersion(&result); err != nil {
 		return err
 	}
 	if err := Validate(result); err != nil {
 		return fmt.Errorf("validate report: %w", err)
 	}
-	encoder := json.NewEncoder(writer)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(result); err != nil {
+	payload, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
 		return fmt.Errorf("encode report json: %w", err)
+	}
+	payload = append(payload, '\n')
+	if int64(len(payload)) > maxBytes {
+		return fmt.Errorf("report JSON exceeds %d bytes", maxBytes)
+	}
+	written, err := writer.Write(payload)
+	if err != nil {
+		return fmt.Errorf("write report json: %w", err)
+	}
+	if written != len(payload) {
+		return fmt.Errorf("write report json: %w", io.ErrShortWrite)
 	}
 	return nil
 }

@@ -73,6 +73,7 @@ log "starting network-isolated rootless drill"
 pgdrill_integration_docker_run "${CONTAINER_NAME}" "${arch}" 4294967296 \
   --mount "type=bind,src=${PGDRILL_BINARY},dst=/opt/pgdrill/bin/pgdrill,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/run-in-container.sh,dst=/opt/pgdrill/test/run-in-container.sh,readonly" \
+  --mount "type=bind,src=${SCRIPT_DIR}/../lib/history.sh,dst=/opt/pgdrill/test/history.sh,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/pgdrill.yaml,dst=/opt/pgdrill/test/pgdrill.yaml,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/barman.conf,dst=/opt/pgdrill/test/barman.conf,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/barman.d,dst=/opt/pgdrill/test/barman.d,readonly" \

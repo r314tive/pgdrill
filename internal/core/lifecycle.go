@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/finalize"
@@ -34,8 +33,8 @@ func newRunLifecycle(
 	if result == nil {
 		return nil, fmt.Errorf("lifecycle result is required")
 	}
-	if strings.TrimSpace(result.ID) == "" {
-		return nil, fmt.Errorf("lifecycle result id is required")
+	if err := model.ValidateIdentity("lifecycle result id", result.ID); err != nil {
+		return nil, err
 	}
 	if result.StartedAt.IsZero() {
 		return nil, fmt.Errorf("lifecycle result started_at is required")
@@ -46,9 +45,11 @@ func newRunLifecycle(
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	attemptID = strings.TrimSpace(attemptID)
 	if attemptID == "" {
 		attemptID = derivedAttemptID(result.ID, result.StartedAt)
+	}
+	if err := model.ValidateIdentity("lifecycle attempt id", attemptID); err != nil {
+		return nil, err
 	}
 	result.AttemptID = attemptID
 	emitter, err := newEventEmitter(eventSink, result.ID, attemptID, result.SpecDigest, clock)

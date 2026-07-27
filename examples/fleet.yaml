@@ -1,0 +1,68 @@
+schema_version: pgdrill.fleet/v1alpha1
+max_runs: 20
+
+sources:
+  - id: production/main
+    revision: sha256:1111111111111111111111111111111111111111111111111111111111111111
+    labels:
+      environment: production
+      recovery-tier: critical
+    mode: native
+    cluster: production-main
+    driver: wal-g
+    provider: wal-g
+    execution_pool: recovery-lab
+
+target_pools:
+  - id: isolated-local
+    revision: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    execution_pool: recovery-lab
+    targets:
+      - id: restore-01
+        revision: sha256:3333333333333333333333333333333333333333333333333333333333333333
+        labels:
+          failure-domain: lab-a
+        driver: local
+        type: local
+        work_dir: /var/lib/pgdrill/production-main
+        capacity: 1
+        modes: [native]
+        source_drivers: [wal-g]
+
+probe_profiles:
+  - id: standard
+    revision: sha256:4444444444444444444444444444444444444444444444444444444444444444
+    probes:
+      - type: pg_isready
+      - type: sql
+        name: select-1
+      - type: amcheck
+      - type: pg_dump
+        name: schema-dump
+
+recovery_policies:
+  - id: latest-critical
+    revision: sha256:5555555555555555555555555555555555555555555555555555555555555555
+    modes: [native]
+    backup_selection:
+      type: latest_available
+    recovery_target:
+      type: latest
+    assertions:
+      maximum_rto: 2h
+      maximum_rpo: 15m
+      maximum_backup_age: 24h
+      require_recovery_target: true
+      require_cleanup: true
+
+drill_sets:
+  - id: critical-latest
+    revision: sha256:6666666666666666666666666666666666666666666666666666666666666666
+    source_selector:
+      match_labels:
+        environment: production
+        recovery-tier: critical
+    target_pool: isolated-local
+    probe_profile: standard
+    recovery_policy: latest-critical
+    max_runs: 10

@@ -137,6 +137,56 @@ func TestSubcommandHelpReturnsSuccess(t *testing.T) {
 	}
 }
 
+func TestCommandsRejectInvalidIdentityFlagsBeforeReadingConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "run id",
+			args: []string{"run", "-f", "missing.yaml", "-run-id", "run\n1"},
+			want: "invalid -run-id",
+		},
+		{
+			name: "run attempt id",
+			args: []string{"run", "-f", "missing.yaml", "-attempt-id", " attempt-1 "},
+			want: "invalid -attempt-id",
+		},
+		{
+			name: "manifest drill id",
+			args: []string{"target", "manifest", "-f", "missing.yaml", "-drill-id", " drill-1 "},
+			want: "invalid -drill-id",
+		},
+		{
+			name: "verify attempt id",
+			args: []string{"target", "verify", "-f", "missing.yaml", "-attempt-id", "attempt\n1"},
+			want: "invalid -attempt-id",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(tt.args, &stdout, &stderr)
+			if code != 2 || !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("code=%d stdout=%q stderr=%q, want usage error containing %q", code, stdout.String(), stderr.String(), tt.want)
+			}
+			if strings.Contains(stderr.String(), "load config") {
+				t.Fatalf("command read config before rejecting invalid identity: %s", stderr.String())
+			}
+		})
+	}
+}
+
+func TestOneLineRemovesTerminalControlAndFormatCharacters(t *testing.T) {
+	input := "  line\tone\n\u001b[31mred\u001b[0m\u202etwo  "
+	if got, want := oneLine(input), "line one  [31mred [0m two"; got != want {
+		t.Fatalf("oneLine() = %q, want %q", got, want)
+	}
+	if got := oneLine("\n\t\u202e"); got != "-" {
+		t.Fatalf("oneLine(control only) = %q, want dash", got)
+	}
+}
+
 func TestDoctorCommandJSONChecksKubernetesClientWithoutServer(t *testing.T) {
 	dir := t.TempDir()
 	kubectlPath := filepath.Join(dir, "kubectl")

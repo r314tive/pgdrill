@@ -6,6 +6,33 @@ import (
 	"time"
 )
 
+func TestValidateIdentityRejectsUnboundedOrUnsafeText(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "empty", value: "", want: "required"},
+		{name: "surrounding whitespace", value: " run-1", want: "surrounding whitespace"},
+		{name: "control", value: "run\n1", want: "control characters"},
+		{name: "invalid utf8", value: string([]byte{0xff}), want: "valid UTF-8"},
+		{name: "oversized", value: strings.Repeat("x", maxIdentityBytes+1), want: "exceeds"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateIdentity("run_id", test.value); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateIdentity() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateIdentityAcceptsMaximumCanonicalValue(t *testing.T) {
+	if err := ValidateIdentity("run_id", strings.Repeat("x", maxIdentityBytes)); err != nil {
+		t.Fatalf("ValidateIdentity() rejected maximum canonical value: %v", err)
+	}
+}
+
 func TestOperationIdentityIsDeterministicAndAttemptScoped(t *testing.T) {
 	identity := AttemptIdentity{
 		RunID:      "run-1",

@@ -1,6 +1,8 @@
 # Control Plane And Interface Roadmap
 
-Status: design draft, not a supported configuration or wire API.
+Status: daemon-free planner and local history implemented on the post-`rc.2`
+main branch; distributed control-plane sections remain a design draft and are
+not a supported wire API.
 
 This document describes how `pgdrill` can grow from a single-run CLI engine
 into a fleet product without moving restore correctness into a scheduler or UI.
@@ -92,40 +94,48 @@ source, backup-selection intent, target placement, policy/profile revisions,
 and idempotency identity. A retry creates another attempt under the same
 logical run; changing resolved inputs creates a new run.
 
-## Supported Topologies
+## Topology Coverage
 
-Selectors and placement cover the useful cases without a general DAG:
+The current planner supports:
 
 - one source to one fixed target
 - many selected sources to one compatible target pool
-- one source exercised across several target classes or regions
-- source-by-target compatibility matrix
+- exact source/target ID filters combined with exact label matches
+- explicit execution-pool, engine-mode, source-driver, and native-target
+  compatibility
+- deterministic least-assigned placement with per-target capacity
+- fleet-wide and per-drill-set expansion bounds
+
+The following topology behavior remains future work:
+
+- one source intentionally expanded across several target classes or regions
+- a full source-by-target compatibility matrix
 - spread across zones or executors
-- anti-affinity and explicit source/target exclusions
+- anti-affinity and failure-domain exclusions
+- schedules and concurrency across separately compiled plans
 
 The planner must reject an empty or incompatible expansion and expose the
 reason before scheduling. It must also provide a bounded expansion preview so a
 broad selector cannot create an accidental fleet-wide drill storm.
 
-The following shape is illustrative only; it is not accepted configuration:
+The accepted pre-GA inventory shape is documented in
+[fleet-plan-format.md](fleet-plan-format.md), with a runnable example in
+[`examples/fleet.yaml`](../examples/fleet.yaml):
 
 ```yaml
-kind: DrillSet
-metadata:
-  name: production-weekly
-spec:
-  sources:
-    matchLabels:
-      environment: production
-      recovery-tier: critical
-  targetPool: isolated-cnpg
-  policy: weekly-full-proof
-  placement:
-    spreadBy: region
-    excludeSameFailureDomain: true
-  concurrency:
-    maxActive: 2
-    perSource: 1
+schema_version: pgdrill.fleet/v1alpha1
+max_runs: 20
+drill_sets:
+  - id: production-weekly
+    revision: sha256:...
+    source_selector:
+      match_labels:
+        environment: production
+        recovery-tier: critical
+    target_pool: isolated-local
+    probe_profile: standard
+    recovery_policy: weekly-full-proof
+    max_runs: 10
 ```
 
 ## Planning And Execution Flow
@@ -158,9 +168,13 @@ The minimum durable records are:
 Large logs and manifests belong in an artifact store, not in controller rows or
 event payloads. Reports retain bounded evidence summaries and references.
 
-SQLite is sufficient for the first daemon-free local history. A networked
-controller should use a transactional database plus an artifact store only
-after the local persistence and reconciliation contracts are proven.
+The first daemon-free local history uses a private append-only directory store
+instead of adding SQLite/CGO or another release dependency. It proves identity,
+ordering, atomic immutable publication, strict inspection, and crash-visible
+partial states. Its layout and limits are documented in
+[history-format.md](history-format.md). A networked controller should use a
+transactional database plus an artifact store only after local persistence,
+retention, migration, and reconciliation contracts are proven.
 
 ## Interface Sequence
 
@@ -169,9 +183,9 @@ after the local persistence and reconciliation contracts are proven.
 Keep direct one-run commands stable for cron, CI, Kubernetes Jobs, and incident
 work. The engine must remain fully usable without a daemon.
 
-### Planning CLI
+### Planning And History CLI
 
-Add read-only commands before a controller:
+Implemented read-only planning and local inspection commands:
 
 ```text
 pgdrill plan validate -f fleet.yaml
@@ -182,6 +196,9 @@ pgdrill history show <run-id>
 
 `plan show` must display concrete expansion, placement, policy revisions, and
 mutation count without resolving secret values or creating resources.
+`history list/show` validates the on-disk store while exposing attempts, failed
+stages, policy verdicts, evidence counts, artifact references, and lifecycle
+events. Direct runs use history only when `-history-dir` is explicit.
 
 ### TUI
 
@@ -248,15 +265,31 @@ verified reads; it is not the future fleet artifact service.
 Completed prerequisite: recovery assertions now live in the immutable drill
 spec and produce typed fail-closed verdicts for RTO, RPO, backup age,
 recovery-target satisfaction, and configured cleanup. Fleet policy references
-still need planner-side revision resolution and history storage.
+are now resolved into immutable plan records and terminal history.
 
 Completed prerequisite: every current provider and executable target path now
 runs a reusable protocol conformance suite, including fresh-executor mutation
 reconciliation. A strict versioned matrix separates fixture, controlled, and
 field evidence; native real-repository entries remain an external gate.
 
+Completed prerequisite: the planner now compiles strict typed fleet resources
+into bounded deterministic engine specs with concrete target placement,
+immutable revisions/digests, mutation count, and typed rejection records
+without infrastructure access or secret resolution.
+
+Completed prerequisite: the optional local history now persists immutable
+run/spec/attempt identities, ordered idempotent events, terminal reports, and
+bounded artifact references. It rejects unknown store versions and corrupted
+identity/order instead of silently repairing them.
+
+Completed prerequisite: every disposable native-provider and CNPG integration
+drill now enables that store, reads the complete attempt back through the CLI,
+requires a matching passed report and terminal event, and retains both bounded
+views and the raw private store archive.
+
 1. Complete real-repository and live-target compatibility gates.
-2. Ship daemon-free plan expansion and local history.
+2. Stabilize planner/history schemas and prove a pre-GA migration floor,
+   retention policy, and repeated process-loss behavior.
 3. Run one executor/controller on a single host with process-loss recovery.
 4. Add remote executors and leases only after single-host reconciliation works.
 5. Add TUI, then multi-user controller capabilities, then web UI if validated

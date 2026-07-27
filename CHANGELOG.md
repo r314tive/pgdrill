@@ -13,6 +13,73 @@ called out explicitly even while the major version is `0`.
 - Retained exact `v0.2.0-rc.2` field evidence for WAL-G 3.0.8 timestamp PITR
   with PostgreSQL 18.3 on Linux arm64, including a proven before/after
   transaction boundary and published-archive identity.
+- A strict daemon-free `pgdrill.fleet/v1alpha1` planner with typed sources,
+  target pools, probe profiles, recovery policies, and drill sets; exact
+  ID/label selectors; deterministic capacity-aware placement; bounded
+  expansion; immutable revisions and digests; mutation counts; and structured
+  compatibility rejections.
+- `pgdrill plan validate` and `pgdrill plan show` text/JSON surfaces that
+  compile plans without secret resolution, repository access, or
+  infrastructure mutation, plus a runnable fleet example.
+- A private `pgdrill.history-store/v1alpha1` local directory store with
+  versioned metadata, immutable run/spec/attempt identity, append-only
+  idempotent events, terminal report snapshots, strict integrity reads,
+  bounded immutable list indexes, atomic publication, and cross-process
+  locking.
+- `pgdrill history list`, `history show`, and `history import` commands, plus
+  opt-in `-history-dir` event/report persistence for native and CNPG drills.
+- Failure, corruption, schema-version, permissions, idempotency, concurrent
+  retry, canceled-run, planner determinism, capacity, and expansion-bound tests
+  for the new planner and history contracts.
+- History-backed acceptance in every disposable provider and CNPG integration
+  drill, including strict full-record reads, terminal-event/report assertions,
+  bounded list views, and an archived raw store in the checksummed artifact
+  set.
+- Unix process-group cancellation and platform process termination with
+  bounded inherited-pipe waiting in the command runner, preventing a timed-out
+  provider subprocess from holding evidence capture open indefinitely and
+  preventing Unix descendants from outliving the attempt.
+
+### Changed
+
+- The local history remains optional so direct single-run execution has no new
+  availability dependency; when configured, event delivery is fail-closed and
+  terminal history persistence survives a canceled operation through the
+  existing bounded finalization context.
+- History writes now enforce collection and aggregate-byte limits before
+  publication, terminal reports require a complete terminal event stream when
+  events exist, indexed lists verify their event/report file set and aggregate
+  bounds, list fallback performs the same terminal consistency checks as full
+  reads, and addressed `history show -attempt-id` reads no unrelated reports.
+- Plan validation now binds deterministic run IDs to every component
+  reference, revision, the canonical spec, and fleet identity instead of
+  trusting a self-consistent outer plan digest.
+- Command environments now replace inherited variables by name instead of
+  emitting duplicate entries whose interpretation differs between child
+  runtimes.
+- Advisory checkpoint/history locking and local-target process control now use
+  explicit platform implementations, and the normal check gate cross-compiles
+  Windows amd64 so the documented build portability boundary remains enforced.
+- Canonical run and attempt identities now share a 512-byte, valid-UTF-8,
+  control-character-free validation rule across operations, events, reports,
+  and local history; explicit values are never silently normalized, and long
+  valid run IDs receive bounded deterministic derived attempt IDs.
+- Text report and history renderers now neutralize control and Unicode format
+  characters from diagnostic fields before writing terminal-oriented output.
+- Report readers and writers now reject JSON documents larger than 64 MiB,
+  aligning standalone reports and history import with the history bound.
+- Run-event diagnostics now enforce UTF-8, message/attribute byte limits, and
+  an attribute-count bound in the canonical model; emitters safely bound
+  arbitrary error strings before delivery.
+- Control-plane documentation now distinguishes the implemented local
+  planner/history foundation from deferred schedules, leases, remote
+  executors, TUI, and web UI.
+- CNPG scope documentation now treats the Barman Cloud Plugin as a separate
+  implementation and evidence gate instead of extrapolating the exact
+  `barmanObjectStore` 1.26.3 result beyond that deprecated API.
+- Development builds now default to `v0.3.0-dev`; the new planner/history
+  surface will start a `v0.3.0` prerelease train instead of changing the
+  published Engine v0.2 release candidate in place.
 
 ## [0.2.0-rc.2] - 2026-07-27
 

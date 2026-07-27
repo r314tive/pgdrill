@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -25,13 +27,11 @@ type eventEmitter struct {
 }
 
 func newEventEmitter(sink EventSink, runID, attemptID, specDigest string, clock func() time.Time) (*eventEmitter, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return nil, fmt.Errorf("event emitter run id is required")
+	if err := model.ValidateIdentity("event emitter run id", runID); err != nil {
+		return nil, err
 	}
-	attemptID = strings.TrimSpace(attemptID)
-	if attemptID == "" {
-		return nil, fmt.Errorf("event emitter attempt id is required")
+	if err := model.ValidateIdentity("event emitter attempt id", attemptID); err != nil {
+		return nil, err
 	}
 	if specDigest != "" && !model.IsSHA256Digest(specDigest) {
 		return nil, fmt.Errorf("event emitter spec digest must be a sha256 digest")
@@ -67,7 +67,7 @@ func (e *eventEmitter) stageCompleted(ctx context.Context, stage model.DrillStag
 		Type:    model.RunEventStageCompleted,
 		Stage:   stage,
 		Outcome: outcome,
-		Message: message,
+		Message: boundedEventMessage(message),
 	})
 }
 
@@ -75,7 +75,7 @@ func (e *eventEmitter) runFinished(ctx context.Context, status model.DrillStatus
 	return e.emit(ctx, model.RunEvent{
 		Type:    model.RunEventFinished,
 		Status:  status,
-		Message: message,
+		Message: boundedEventMessage(message),
 	})
 }
 
@@ -114,5 +114,21 @@ func cloneStrings(values map[string]string) map[string]string {
 }
 
 func derivedAttemptID(runID string, startedAt time.Time) string {
-	return strings.TrimSpace(runID) + "@" + startedAt.UTC().Format("20060102T150405.000000000Z")
+	candidate := runID + "@" + startedAt.UTC().Format("20060102T150405.000000000Z")
+	if model.ValidateIdentity("attempt_id", candidate) == nil {
+		return candidate
+	}
+	return fmt.Sprintf("attempt-%x", sha256.Sum256([]byte(candidate)))
+}
+
+func boundedEventMessage(message string) string {
+	message = strings.ToValidUTF8(strings.TrimSpace(message), "?")
+	if len(message) <= model.MaxRunEventMessageBytes {
+		return message
+	}
+	message = message[:model.MaxRunEventMessageBytes]
+	for !utf8.ValidString(message) {
+		message = message[:len(message)-1]
+	}
+	return message
 }

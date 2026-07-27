@@ -14,10 +14,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
-	"golang.org/x/sys/unix"
-
+	"github.com/r314tive/pgdrill/internal/filelock"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -123,7 +121,7 @@ func (s DirectoryStore) Save(ctx context.Context, checkpoint model.OperationChec
 	if err := checkpoint.Validate(); err != nil {
 		return fmt.Errorf("validate operation checkpoint: %w", err)
 	}
-	return s.withAttemptLock(ctx, checkpoint.Operation.Identity, unix.LOCK_EX, func(dir string) error {
+	return s.withAttemptLock(ctx, checkpoint.Operation.Identity, filelock.Exclusive, func(dir string) error {
 		path := filepath.Join(dir, operationFileName(checkpoint.Operation))
 		previous, found, err := readCheckpoint(path)
 		if err != nil {
@@ -154,7 +152,7 @@ func (s DirectoryStore) Load(ctx context.Context, operation model.Operation) (mo
 	}
 	var checkpoint model.OperationCheckpoint
 	var found bool
-	err := s.withAttemptLock(ctx, operation.Identity, unix.LOCK_SH, func(dir string) error {
+	err := s.withAttemptLock(ctx, operation.Identity, filelock.Shared, func(dir string) error {
 		var err error
 		checkpoint, found, err = readCheckpoint(filepath.Join(dir, operationFileName(operation)))
 		return err
@@ -173,7 +171,7 @@ func (s DirectoryStore) List(ctx context.Context, identity model.AttemptIdentity
 		return nil, fmt.Errorf("validate attempt identity: %w", err)
 	}
 	result := []model.OperationCheckpoint{}
-	err := s.withAttemptLock(ctx, identity, unix.LOCK_SH, func(dir string) error {
+	err := s.withAttemptLock(ctx, identity, filelock.Shared, func(dir string) error {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return fmt.Errorf("read attempt checkpoint directory %s: %w", dir, err)
@@ -200,7 +198,7 @@ func (s DirectoryStore) List(ctx context.Context, identity model.AttemptIdentity
 	return result, nil
 }
 
-func (s DirectoryStore) withAttemptLock(ctx context.Context, identity model.AttemptIdentity, mode int, operation func(string) error) error {
+func (s DirectoryStore) withAttemptLock(ctx context.Context, identity model.AttemptIdentity, mode filelock.Mode, operation func(string) error) error {
 	if strings.TrimSpace(s.Path) == "" {
 		return fmt.Errorf("checkpoint store path is required")
 	}
@@ -220,33 +218,14 @@ func (s DirectoryStore) withAttemptLock(ctx context.Context, identity model.Atte
 		return fmt.Errorf("open attempt checkpoint lock: %w", err)
 	}
 	defer lock.Close()
-	if err := flockContext(ctx, int(lock.Fd()), mode); err != nil {
+	if err := filelock.Lock(ctx, lock, mode); err != nil {
 		return fmt.Errorf("lock attempt checkpoints: %w", err)
 	}
-	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN) //nolint:errcheck
+	defer filelock.Unlock(lock) //nolint:errcheck
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return operation(dir)
-}
-
-func flockContext(ctx context.Context, fd int, mode int) error {
-	for {
-		err := unix.Flock(fd, mode|unix.LOCK_NB)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
-			return err
-		}
-		timer := time.NewTimer(10 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
 }
 
 func validateTransition(previous, next model.OperationCheckpoint) error {

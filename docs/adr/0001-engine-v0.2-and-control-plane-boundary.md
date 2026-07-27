@@ -124,6 +124,13 @@ tagging; fixture evidence is never promoted to native-version claims.
 4. add schedules, RBAC, audit, notifications, and retention
 5. add a TUI for history before considering a web UI
 
+Implementation status: steps 1 and 2 are complete on the post-`v0.2.0-rc.2`
+main branch as strict `pgdrill.fleet/v1alpha1`,
+`pgdrill.plan/v1alpha1`, and `pgdrill.history-store/v1alpha1` local
+contracts. They remain daemon-free and internal to this module. Steps 3
+through 5 are deferred until schema migration, retention, real-drill, and
+process-loss gates are proven.
+
 ## Consequences
 
 This keeps restore correctness and fleet orchestration independently testable.

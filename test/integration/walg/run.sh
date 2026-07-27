@@ -106,6 +106,7 @@ pgdrill_integration_docker_run "${CONTAINER_NAME}" "${arch}" 2147483648 \
   --mount "type=bind,src=${PGDRILL_BINARY},dst=/opt/pgdrill/bin/pgdrill,readonly" \
   --mount "type=bind,src=${WALG_BINARY},dst=/opt/pgdrill/bin/wal-g,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/run-in-container.sh,dst=/opt/pgdrill/test/run-in-container.sh,readonly" \
+  --mount "type=bind,src=${SCRIPT_DIR}/../lib/history.sh,dst=/opt/pgdrill/test/history.sh,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/pgdrill.yaml,dst=/opt/pgdrill/test/pgdrill.yaml,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/pgdrill-pitr.yaml.tmpl,dst=/opt/pgdrill/test/pgdrill-pitr.yaml.tmpl,readonly" \
   --mount "type=bind,src=${OUTPUT_DIR},dst=/output" \

@@ -236,6 +236,15 @@ func TestReadJSONRejectsMultipleValues(t *testing.T) {
 	}
 }
 
+func TestReadJSONRejectsNilAndOversizedInput(t *testing.T) {
+	if _, err := ReadJSON(nil); err == nil || !strings.Contains(err.Error(), "input is required") {
+		t.Fatalf("ReadJSON(nil) error = %v, want required input", err)
+	}
+	if _, err := readJSON(strings.NewReader(strings.Repeat(" ", 129)), 128); err == nil || !strings.Contains(err.Error(), "exceeds 128 bytes") {
+		t.Fatalf("readJSON(oversized) error = %v, want size bound", err)
+	}
+}
+
 func TestWriteJSONAddsSchemaVersion(t *testing.T) {
 	var output bytes.Buffer
 	result := validTestResult()
@@ -254,6 +263,16 @@ func TestWriteJSONRejectsUnsupportedSchema(t *testing.T) {
 	err := WriteJSON(&output, model.DrillResult{SchemaVersion: "pgdrill.report/v99"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported report schema_version") {
 		t.Fatalf("expected unsupported schema error, got %v", err)
+	}
+}
+
+func TestWriteJSONRejectsNilAndOversizedOutput(t *testing.T) {
+	result := validTestResult()
+	if err := WriteJSON(nil, result); err == nil || !strings.Contains(err.Error(), "output is required") {
+		t.Fatalf("WriteJSON(nil) error = %v, want required output", err)
+	}
+	if err := writeJSON(&bytes.Buffer{}, result, 1); err == nil || !strings.Contains(err.Error(), "exceeds 1 bytes") {
+		t.Fatalf("writeJSON(oversized) error = %v, want size bound", err)
 	}
 }
 

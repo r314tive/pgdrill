@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -20,7 +21,7 @@ func TestEventEmitterWritesValidatedOrderedEvents(t *testing.T) {
 		}
 		events = append(events, event)
 		return nil
-	}), " run-1 ", " attempt-1 ", specDigest, func() time.Time { return now })
+	}), "run-1", "attempt-1", specDigest, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("newEventEmitter() error = %v", err)
 	}
@@ -113,7 +114,9 @@ func TestEventEmitterRejectsInvalidConstruction(t *testing.T) {
 		want       string
 	}{
 		{name: "run id", runID: " ", attemptID: "attempt-1", want: "run id"},
+		{name: "run id control", runID: "run\n1", attemptID: "attempt-1", want: "control characters"},
 		{name: "attempt id", runID: "run-1", attemptID: "", want: "attempt id"},
+		{name: "attempt id whitespace", runID: "run-1", attemptID: " attempt-1 ", want: "surrounding whitespace"},
 		{name: "spec digest", runID: "run-1", attemptID: "attempt-1", specDigest: "md5:no", want: "spec digest"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,7 +130,33 @@ func TestEventEmitterRejectsInvalidConstruction(t *testing.T) {
 
 func TestDerivedAttemptID(t *testing.T) {
 	startedAt := time.Date(2026, 7, 21, 1, 2, 3, 456, time.FixedZone("test", 5*60*60))
-	if got, want := derivedAttemptID(" run-1 ", startedAt), "run-1@20260720T200203.000000456Z"; got != want {
+	if got, want := derivedAttemptID("run-1", startedAt), "run-1@20260720T200203.000000456Z"; got != want {
 		t.Fatalf("derivedAttemptID() = %q, want %q", got, want)
+	}
+	longRunID := strings.Repeat("r", 512)
+	got := derivedAttemptID(longRunID, startedAt)
+	if err := model.ValidateIdentity("attempt_id", got); err != nil {
+		t.Fatalf("derivedAttemptID() produced invalid fallback %q: %v", got, err)
+	}
+	if got == derivedAttemptID(longRunID, startedAt.Add(time.Nanosecond)) {
+		t.Fatalf("derivedAttemptID() fallback must include the start timestamp")
+	}
+}
+
+func TestEventEmitterBoundsDiagnosticMessages(t *testing.T) {
+	events := []model.RunEvent{}
+	emitter, err := newEventEmitter(EventSinkFunc(func(_ context.Context, event model.RunEvent) error {
+		events = append(events, event)
+		return nil
+	}), "run-1", "attempt-1", "", nil)
+	if err != nil {
+		t.Fatalf("newEventEmitter() error = %v", err)
+	}
+	message := strings.Repeat("€", model.MaxRunEventMessageBytes)
+	if err := emitter.stageCompleted(context.Background(), model.DrillStagePreflight, model.StageOutcomeFailed, message); err != nil {
+		t.Fatalf("stageCompleted() error = %v", err)
+	}
+	if len(events) != 1 || len(events[0].Message) > model.MaxRunEventMessageBytes || !utf8.ValidString(events[0].Message) {
+		t.Fatalf("bounded event message = %#v", events)
 	}
 }

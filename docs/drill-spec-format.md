@@ -1,9 +1,10 @@
 # Drill Spec Format
 
 `pgdrill.drill-spec/v1alpha1` is the immutable, secret-free input snapshot for
-one recovery drill. It is currently an internal engine contract, not a public
-cross-process API. Stable external types will move under `api/` only when an
-independent controller or executor consumes them.
+one recovery drill. Its JSON is embedded in terminal reports, daemon-free plan
+output, and local history, while its Go type remains internal and pre-GA.
+Stable cross-process types will move under `api/` only when an independent
+controller or executor consumes them.
 
 ## Identity Levels
 
@@ -17,6 +18,12 @@ Run and attempt IDs are not fields in `DrillSpec` and are not part of its
 digest. Retrying an unchanged run therefore creates a new attempt ID while
 retaining the same spec digest. Changing source, selection, target, recovery,
 policy, or probe-profile intent changes the digest.
+
+At the lifecycle boundary, explicit run and attempt IDs are preserved exactly:
+they must be non-empty valid UTF-8, at most 512 bytes, free of control
+characters, and have no surrounding whitespace. An omitted attempt ID is
+derived deterministically from the run ID and start time; long valid run IDs
+use a bounded hash form.
 
 ## Canonical Content
 
@@ -39,7 +46,7 @@ They are not credentials and must not be treated as secret references.
 `internal/runspec` constructs the canonical JSON used for SHA-256:
 
 - absent schema and selection defaults are materialized
-- identity strings are trimmed
+- component-reference identity strings inside the spec are trimmed
 - empty maps and slices have one representation
 - JSON map keys are sorted by the encoder
 - timestamp targets are converted to UTC RFC3339Nano

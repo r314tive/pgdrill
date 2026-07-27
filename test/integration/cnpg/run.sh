@@ -14,6 +14,8 @@ readonly PGDRILL_INTEGRATION_LOG_PREFIX="integration/cnpg-host"
 
 # shellcheck source=test/integration/lib/runtime.sh
 source "${ROOT}/test/integration/lib/runtime.sh"
+# shellcheck source=test/integration/lib/history.sh
+source "${ROOT}/test/integration/lib/history.sh"
 
 log() {
   pgdrill_integration_log "$@"
@@ -197,10 +199,12 @@ readonly CONTEXT="kind-${CLUSTER_NAME}"
 readonly KUBECONFIG_PATH="${RUN_DIR}/kubeconfig"
 readonly CONFIG="${RUN_DIR}/pgdrill.yaml"
 readonly REPORT="${RUN_DIR}/report.json"
+readonly HISTORY="${RUN_DIR}/history"
 readonly OPERATOR_MANIFEST="${RUN_DIR}/cnpg-${CNPG_VERSION}-pinned.yaml"
 readonly INFRA_MANIFEST="${RUN_DIR}/infra-pinned.yaml"
 readonly SOURCE_MANIFEST="${RUN_DIR}/source-pinned.yaml"
 readonly VERIFY_CLUSTER="verify-source-${run_stamp}"
+readonly drill_id="integration-cnpg-${run_stamp}"
 
 mkdir -p "${RUN_DIR}"
 host_context="$("${KUBECTL}" config current-context 2>/dev/null || true)"
@@ -478,8 +482,9 @@ log "running the candidate artifact through managed CNPG recovery"
   -f "${CONFIG}" \
   -discover \
   -confirm-create \
-  -drill-id "integration-cnpg-${run_stamp}" \
-  -attempt-id attempt-1 2>&1 | tee "${RUN_DIR}/run.log"
+  -drill-id "${drill_id}" \
+  -attempt-id attempt-1 \
+  -history-dir "${HISTORY}" 2>&1 | tee "${RUN_DIR}/run.log"
 
 [[ -f "${REPORT}" ]] || die "pgdrill did not persist report.json"
 "${PGDRILL_INT_BINARY}" report show "${REPORT}" | tee "${RUN_DIR}/report.txt"
@@ -500,6 +505,17 @@ jq -e --arg cnpg "${CNPG_VERSION}" --arg pg "${POSTGRES_VERSION}" '
   ([.operations[] | select(.state != "succeeded")] | length) == 0 and
   (.artifacts | length) == 1
 ' "${REPORT}" >/dev/null || die "report acceptance assertions failed"
+pgdrill_integration_verify_history_attempt \
+  "${PGDRILL_INT_BINARY}" \
+  "${HISTORY}" \
+  "${drill_id}" \
+  attempt-1 \
+  "${RUN_DIR}/history-attempt"
+pgdrill_integration_capture_history_store \
+  "${PGDRILL_INT_BINARY}" \
+  "${HISTORY}" \
+  "${RUN_DIR}" \
+  1
 
 if k get cluster "${VERIFY_CLUSTER}" -n "${NAMESPACE}" >/dev/null 2>&1; then
   die "verify cluster remains after pgdrill cleanup"

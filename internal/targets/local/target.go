@@ -13,7 +13,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/command"
@@ -813,13 +812,11 @@ func postgresProcessMatches(dataDirectory string, pid int) (bool, error) {
 	if err != nil || recordedPID != pid {
 		return false, nil
 	}
-	if err := syscall.Kill(pid, 0); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
-			return false, nil
-		}
+	active, err := postgresProcessExists(pid)
+	if err != nil {
 		return false, fmt.Errorf("inspect postgres process %d: %w", pid, err)
 	}
-	return true, nil
+	return active, nil
 }
 
 func postgresReadiness(dataDirectory string, pid int) (bool, string, error) {
@@ -1166,9 +1163,13 @@ func (t *Target) stopPostgres() model.EvidenceRecord {
 	default:
 	}
 
-	if err := process.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		attributes["postgres_shutdown"] = "signal_failed"
-		attributes["error"] = err.Error()
+	if err := terminateStartedProcess(process.cmd.Process); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			attributes["postgres_shutdown"] = "already_exited"
+		} else {
+			attributes["postgres_shutdown"] = "signal_failed"
+			attributes["error"] = err.Error()
+		}
 		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())
 	}
 
@@ -1197,8 +1198,8 @@ func (t *Target) stopRecoveredPostgres() model.EvidenceRecord {
 		"port":      strconv.Itoa(process.port),
 		"recovered": "true",
 	}
-	if err := syscall.Kill(process.pid, syscall.SIGTERM); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
+	if err := terminateProcessByPID(process.pid); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
 			attributes["postgres_shutdown"] = "already_exited"
 		} else {
 			attributes["postgres_shutdown"] = "signal_failed"
@@ -1208,14 +1209,20 @@ func (t *Target) stopRecoveredPostgres() model.EvidenceRecord {
 	}
 	deadline := time.Now().Add(t.shutdownTimeout())
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(process.pid, 0); errors.Is(err, syscall.ESRCH) {
+		active, err := postgresProcessExists(process.pid)
+		if err != nil {
+			attributes["postgres_shutdown"] = "inspect_failed"
+			attributes["error"] = err.Error()
+			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())
+		}
+		if !active {
 			attributes["postgres_shutdown"] = "terminated"
 			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	attributes["postgres_shutdown"] = "killed"
-	if err := syscall.Kill(process.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := killProcessByPID(process.pid); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		attributes["error"] = err.Error()
 	}
 	return runtimeEvidence("postgres-stop", attributes, time.Now().UTC())

@@ -1,0 +1,85 @@
+schema_version: pgdrill.fleet/v1alpha1
+max_runs: 8
+
+sources:
+  - id: prod/accounts
+    revision: sha256:1111111111111111111111111111111111111111111111111111111111111111
+    labels:
+      environment: production
+      tier: critical
+    mode: native
+    cluster: prod-accounts
+    driver: wal-g
+    provider: wal-g
+    execution_pool: yc-demo
+  - id: prod/ledger
+    revision: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    labels:
+      environment: production
+      tier: critical
+    mode: native
+    cluster: prod-ledger
+    driver: wal-g
+    provider: wal-g
+    execution_pool: yc-demo
+
+target_pools:
+  - id: demo-local
+    revision: sha256:3333333333333333333333333333333333333333333333333333333333333333
+    execution_pool: yc-demo
+    targets:
+      - id: restore-a
+        revision: sha256:4444444444444444444444444444444444444444444444444444444444444444
+        labels:
+          zone: a
+        driver: local
+        type: local
+        work_dir: /var/lib/pgdrill/restore-a
+        capacity: 1
+        modes: [native]
+        source_drivers: [wal-g]
+      - id: restore-b
+        revision: sha256:5555555555555555555555555555555555555555555555555555555555555555
+        labels:
+          zone: b
+        driver: local
+        type: local
+        work_dir: /var/lib/pgdrill/restore-b
+        capacity: 1
+        modes: [native]
+        source_drivers: [wal-g]
+
+probe_profiles:
+  - id: standard
+    revision: sha256:6666666666666666666666666666666666666666666666666666666666666666
+    probes:
+      - type: pg_isready
+      - type: sql
+        name: read-only-smoke
+      - type: amcheck
+
+recovery_policies:
+  - id: latest-critical
+    revision: sha256:7777777777777777777777777777777777777777777777777777777777777777
+    modes: [native]
+    backup_selection:
+      type: latest_available
+    recovery_target:
+      type: latest
+    assertions:
+      maximum_rto: 45m
+      maximum_backup_age: 24h
+      require_recovery_target: true
+      require_cleanup: true
+
+drill_sets:
+  - id: critical-daily
+    revision: sha256:8888888888888888888888888888888888888888888888888888888888888888
+    source_selector:
+      match_labels:
+        environment: production
+        tier: critical
+    target_pool: demo-local
+    probe_profile: standard
+    recovery_policy: latest-critical
+    max_runs: 4

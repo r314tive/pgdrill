@@ -27,6 +27,8 @@ canonical enum values, required identity and timestamps, timestamp ordering,
 provider-scoped backup identity, valid WAL LSN/timeline values, terminal status
 coherence, unique evidence/artifact IDs, and resolvable check, failure, and
 artifact evidence links.
+Readers reject a JSON document larger than 64 MiB before decoding it, and
+producers refuse to write a document that their own readers cannot accept.
 When a canonical drill spec is present, readers also recompute its digest and
 reject non-canonical values or disagreement with report cluster, provider,
 target, recovery target, or exact backup selection.

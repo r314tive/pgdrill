@@ -27,17 +27,11 @@ type AttemptIdentity struct {
 }
 
 func (i AttemptIdentity) Validate() error {
-	if strings.TrimSpace(i.RunID) == "" {
-		return fmt.Errorf("run_id is required")
+	if err := ValidateIdentity("run_id", i.RunID); err != nil {
+		return err
 	}
-	if i.RunID != strings.TrimSpace(i.RunID) {
-		return fmt.Errorf("run_id must not contain surrounding whitespace")
-	}
-	if strings.TrimSpace(i.AttemptID) == "" {
-		return fmt.Errorf("attempt_id is required")
-	}
-	if i.AttemptID != strings.TrimSpace(i.AttemptID) {
-		return fmt.Errorf("attempt_id must not contain surrounding whitespace")
+	if err := ValidateIdentity("attempt_id", i.AttemptID); err != nil {
+		return err
 	}
 	if !IsSHA256Digest(i.SpecDigest) {
 		return fmt.Errorf("spec_digest must be a sha256 digest")

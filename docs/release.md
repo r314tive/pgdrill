@@ -39,6 +39,7 @@ change in `CHANGELOG.md`.
 - `go mod tidy -diff`
 - `go vet ./...`
 - `go test ./...`
+- Windows amd64 cross-compilation (runtime support remains unclaimed)
 - Bash syntax for the versioned demo scripts
 - Bash syntax for disposable integration scripts
 
@@ -79,15 +80,15 @@ must run them explicitly for affected native paths. A pass from a dirty tree is
 marked dirty and is never release evidence.
 
 ```sh
-make -s release-check VERSION=v0.2.0-rc.2
+make -s release-check VERSION=v0.3.0-alpha.1
 ```
 
-The aggregate Engine v0.2 candidate gate requires a clean worktree and runs
-the release gate, ShellCheck, all four native-provider drills, and the
-disposable KinD/CNPG drill:
+The aggregate prerelease-candidate gate requires a clean worktree and runs the
+release gate, ShellCheck, all four native-provider drills, and the disposable
+KinD/CNPG drill:
 
 ```sh
-make -s release-candidate-check VERSION=v0.2.0-rc.2
+make -s release-candidate-check VERSION=v0.3.0-alpha.1
 ```
 
 Every integration process receives the same version and full Git commit.
@@ -108,10 +109,12 @@ source commit, release compiler, version, and commit timestamp:
 - macOS arm64
 
 Each `.tar.gz` contains `pgdrill`, `README.md`, `LICENSE`, the release
-`.go-version` compiler pin, `COMPATIBILITY.md`, and the validated
-`compatibility-matrix.yaml`. Archive paths, modes, ordering, timestamps,
-architecture levels, Go workspace settings, and build flags are normalized.
-The bundle also includes a SHA256 checksum file:
+`.go-version` compiler pin, `COMPATIBILITY.md`, `FLEET_PLAN.md`, `HISTORY.md`,
+the validated `compatibility-matrix.yaml`, and `fleet.example.yaml`. The
+release builder compiles the packaged fleet example and rejects placement
+rejections before creating archives. Archive paths, modes, ordering,
+timestamps, architecture levels, Go workspace settings, and build flags are
+normalized. The bundle also includes a SHA256 checksum file:
 
 ```text
 pgdrill_<version>_linux_amd64.tar.gz
@@ -124,14 +127,14 @@ pgdrill_<version>_checksums.txt
 Build only the artifacts with:
 
 ```sh
-make -s release-artifacts VERSION=v0.2.0-rc.2
+make -s release-artifacts VERSION=v0.3.0-alpha.1
 ```
 
 Verify them on Linux or macOS respectively:
 
 ```sh
-(cd dist && sha256sum -c pgdrill_0.2.0-rc.2_checksums.txt)
-(cd dist && shasum -a 256 -c pgdrill_0.2.0-rc.2_checksums.txt)
+(cd dist && sha256sum -c pgdrill_0.3.0-alpha.1_checksums.txt)
+(cd dist && shasum -a 256 -c pgdrill_0.3.0-alpha.1_checksums.txt)
 ```
 
 `release-snapshot` remains available as a quick host-only build and smoke
@@ -146,7 +149,7 @@ check. It is not a substitute for `release-check`.
 4. Run the exact-candidate gate and extract release notes:
 
 ```sh
-VERSION=v0.2.0-rc.2
+VERSION=v0.3.0-alpha.1
 make -s release-candidate-check VERSION="$VERSION"
 make -s release-notes VERSION="$VERSION"
 ```

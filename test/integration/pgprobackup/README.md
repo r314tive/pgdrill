@@ -39,7 +39,8 @@ uses disposable tmpfs state.
 
 Each run writes `report.json`, doctor/catalog output, source and provider logs,
 generated catalog configuration, source/build and runtime inventories,
-operation checkpoints, and recursive checksums under the ignored
+operation checkpoints, the validated history attempt/list views, an archive of
+the raw private history store, and recursive checksums under the ignored
 `.cache/integration/pgprobackup/runs/<timestamp>/` directory. An explicit
 `PGDRILL_INTEGRATION_PGPROBACKUP_IMAGE` override must already exist locally;
 the runtime still refuses unexpected pg_probackup or PostgreSQL versions and

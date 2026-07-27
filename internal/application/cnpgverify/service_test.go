@@ -14,10 +14,10 @@ import (
 	"github.com/r314tive/pgdrill/internal/report"
 )
 
-func TestIDNormalizesExplicitValueAndUsesNanoseconds(t *testing.T) {
+func TestIDPreservesExplicitValueAndUsesNanoseconds(t *testing.T) {
 	startedAt := time.Date(2026, 7, 20, 12, 34, 56, 123456789, time.UTC)
 
-	if got, want := ID("  explicit-id  ", startedAt), "explicit-id"; got != want {
+	if got, want := ID("explicit-id", startedAt), "explicit-id"; got != want {
 		t.Fatalf("ID() = %q, want %q", got, want)
 	}
 	if got, want := ID("", startedAt), "target-verify-20260720T123456.123456789Z"; got != want {

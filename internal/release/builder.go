@@ -2,6 +2,7 @@ package release
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/compatibility"
+	"github.com/r314tive/pgdrill/internal/planner"
 )
 
 const versionPackage = "github.com/r314tive/pgdrill/internal/version"
@@ -131,6 +133,29 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 	if err := matrix.ValidateReferences(opts.SourceDir); err != nil {
 		return Result{}, fmt.Errorf("validate compatibility evidence references: %w", err)
 	}
+	fleetPlanDocument, err := os.ReadFile(filepath.Join(opts.SourceDir, "docs", "fleet-plan-format.md"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read fleet plan document: %w", err)
+	}
+	historyDocument, err := os.ReadFile(filepath.Join(opts.SourceDir, "docs", "history-format.md"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read history document: %w", err)
+	}
+	fleetExample, err := os.ReadFile(filepath.Join(opts.SourceDir, "examples", "fleet.yaml"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read fleet example: %w", err)
+	}
+	fleet, err := planner.Load(bytes.NewReader(fleetExample), "yaml")
+	if err != nil {
+		return Result{}, fmt.Errorf("validate fleet example: %w", err)
+	}
+	plan, err := planner.Build(fleet)
+	if err != nil {
+		return Result{}, fmt.Errorf("compile fleet example: %w", err)
+	}
+	if len(plan.Rejections) != 0 {
+		return Result{}, fmt.Errorf("fleet example has %d placement rejections", len(plan.Rejections))
+	}
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create release output directory: %w", err)
 	}
@@ -166,9 +191,12 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 		entries := []archiveEntry{
 			{Name: filepath.ToSlash(filepath.Join(rootName, ".go-version")), Mode: 0o644, Body: goVersion},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "COMPATIBILITY.md")), Mode: 0o644, Body: compatibilityDocument},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "FLEET_PLAN.md")), Mode: 0o644, Body: fleetPlanDocument},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "HISTORY.md")), Mode: 0o644, Body: historyDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "LICENSE")), Mode: 0o644, Body: license},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "README.md")), Mode: 0o644, Body: readme},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "compatibility-matrix.yaml")), Mode: 0o644, Body: compatibilityMatrix},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "fleet.example.yaml")), Mode: 0o644, Body: fleetExample},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "pgdrill")), Mode: 0o755, Body: binary},
 		}
 		if err := writeTarGz(archivePath, releaseTime, entries); err != nil {

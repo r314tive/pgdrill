@@ -36,11 +36,13 @@ no network, runs as UID 999 with all Linux capabilities dropped and a read-only
 root filesystem, and uses disposable tmpfs state.
 
 Each run writes `report.json`, doctor/catalog output, PostgreSQL and Barman
-logs, package and runtime inventories, operation checkpoints, and recursive
-checksums under the ignored `.cache/integration/barman/runs/<timestamp>/`
-directory. An explicit `PGDRILL_INTEGRATION_BARMAN_IMAGE` override must already
-exist locally; the runtime still refuses unexpected Barman or PostgreSQL
-versions and records the override.
+logs, package and runtime inventories, operation checkpoints, the validated
+history attempt/list views, an archive of the raw private history store, and
+recursive checksums under the ignored
+`.cache/integration/barman/runs/<timestamp>/` directory. An explicit
+`PGDRILL_INTEGRATION_BARMAN_IMAGE` override must already exist locally; the
+runtime still refuses unexpected Barman or PostgreSQL versions and records the
+override.
 
 A dirty source tree uses a direct developer binary with `dirty` version and
 commit metadata. A clean tree builds one deterministic release archive,

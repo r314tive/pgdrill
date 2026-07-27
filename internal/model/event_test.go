@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -92,9 +93,22 @@ func TestRunEventValidateRejectsMalformedEvents(t *testing.T) {
 		{name: "schema", edit: func(e *RunEvent) { e.SchemaVersion = "future" }, want: "schema version"},
 		{name: "run id", edit: func(e *RunEvent) { e.RunID = " " }, want: "run_id"},
 		{name: "run id whitespace", edit: func(e *RunEvent) { e.RunID = " run-1" }, want: "surrounding whitespace"},
+		{name: "run id control", edit: func(e *RunEvent) { e.RunID = "run\n1" }, want: "control characters"},
 		{name: "attempt id", edit: func(e *RunEvent) { e.AttemptID = "" }, want: "attempt_id"},
 		{name: "attempt id whitespace", edit: func(e *RunEvent) { e.AttemptID = "attempt-1 " }, want: "surrounding whitespace"},
 		{name: "spec digest", edit: func(e *RunEvent) { e.SpecDigest = "md5:no" }, want: "spec_digest"},
+		{name: "message utf8", edit: func(e *RunEvent) { e.Message = string([]byte{0xff}) }, want: "valid UTF-8"},
+		{name: "message size", edit: func(e *RunEvent) { e.Message = strings.Repeat("x", MaxRunEventMessageBytes+1) }, want: "message exceeds"},
+		{name: "attribute count", edit: func(e *RunEvent) {
+			e.Attributes = make(map[string]string, MaxRunEventAttributes+1)
+			for index := 0; index <= MaxRunEventAttributes; index++ {
+				e.Attributes[fmt.Sprintf("key-%d", index)] = "value"
+			}
+		}, want: "maximum count"},
+		{name: "attribute key control", edit: func(e *RunEvent) { e.Attributes = map[string]string{"bad\nkey": "value"} }, want: "control characters"},
+		{name: "attribute value size", edit: func(e *RunEvent) {
+			e.Attributes = map[string]string{"key": strings.Repeat("x", maxRunEventAttributeValue+1)}
+		}, want: "bounded valid UTF-8"},
 		{name: "sequence", edit: func(e *RunEvent) { e.Sequence = 0 }, want: "sequence"},
 		{name: "type", edit: func(e *RunEvent) { e.Type = "future" }, want: "type"},
 		{name: "time", edit: func(e *RunEvent) { e.OccurredAt = time.Time{} }, want: "occurred_at"},

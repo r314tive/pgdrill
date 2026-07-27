@@ -1,6 +1,6 @@
-.PHONY: build check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
+.PHONY: build check cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
 
-VERSION ?= v0.2.0-dev
+VERSION ?= v0.3.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 RELEASE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -21,7 +21,7 @@ DEMO_TERRAFORM_DIR := demo/yandex-cloud/terraform
 VERSION_PKG := github.com/r314tive/pgdrill/internal/version
 LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
-check: fmt mod-check vet test demo-check integration-runtime-test
+check: fmt mod-check vet test cross-compile-check demo-check integration-runtime-test
 
 build:
 	mkdir -p $(BINDIR)
@@ -45,6 +45,14 @@ vet:
 
 test:
 	go test ./...
+
+cross-compile-check:
+	@tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+		-mod=readonly -trimpath -buildvcs=false \
+		-ldflags "$(LDFLAGS)" \
+		-o "$$tmp/pgdrill.exe" ./cmd/pgdrill
 
 demo-check:
 	@for script in $$(find demo -type f -name '*.sh' -print | sort); do \
@@ -80,6 +88,7 @@ integration-syntax-check:
 
 integration-runtime-test: integration-syntax-check
 	test/integration/lib/runtime_test.sh
+	test/integration/lib/history_test.sh
 
 integration-check: integration-syntax-check
 	$(SHELLCHECK) -x $$(find test/integration -type f -name '*.sh' -print | sort)
@@ -127,6 +136,9 @@ smoke: build
 	$(BINDIR)/$(BINARY) target help >/dev/null
 	$(BINDIR)/$(BINARY) target manifest -h >/dev/null
 	$(BINDIR)/$(BINARY) target verify -h >/dev/null
+	$(BINDIR)/$(BINARY) plan help >/dev/null
+	$(BINDIR)/$(BINARY) plan validate -f examples/fleet.yaml >/dev/null
+	$(BINDIR)/$(BINARY) history help >/dev/null
 	$(BINDIR)/$(BINARY) report help >/dev/null
 	$(BINDIR)/$(BINARY) run -h >/dev/null
 
@@ -174,6 +186,9 @@ release-snapshot: toolchain-check check
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target manifest -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) target verify -h >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) plan help >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) plan validate -f examples/fleet.yaml >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) report help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) run -h >/dev/null
 	@echo "snapshot: $(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY)"

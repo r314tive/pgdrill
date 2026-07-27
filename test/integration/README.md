@@ -22,6 +22,10 @@ provider permits it.
 Host-side release-candidate binding, Docker isolation defaults, and artifact
 checksumming live in `lib/runtime.sh`. Provider setup, backup semantics,
 restore commands, and acceptance assertions stay in their scenario directory.
+`lib/history.sh` performs only CLI-level acceptance: every successful scenario
+requires a readable full attempt, a terminal `run_finished` event, a passed
+terminal report, the exact expected attempt count, and an inspectable archive
+of the private local history store.
 
 By default, a clean checkout produces and executes a deterministic release
 archive from `HEAD`. Native scenarios can instead consume an existing Linux

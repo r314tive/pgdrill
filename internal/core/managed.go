@@ -134,9 +134,6 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if e.Resolver == nil {
 			return fmt.Errorf("managed drill resolver is required")
 		}
-		if req.AttemptID != "" && req.AttemptID != strings.TrimSpace(req.AttemptID) {
-			return fmt.Errorf("attempt id must not contain surrounding whitespace")
-		}
 		if specValidationErr != nil {
 			return fmt.Errorf("validate drill spec: %w", specValidationErr)
 		}
