@@ -303,12 +303,14 @@ views and the raw private store archive.
 Completed prerequisite: current producers emit stable `v1` schema identifiers.
 The frozen floor remains readable, and digest-confirmed copy migration
 preserves its historical files byte-for-byte while publishing a separately
-verified stable store. Interrupted and killed migration processes are covered;
-killed real-drill history/retention/artifact-GC evidence remains.
+verified stable store. Actual child-process kills now cover migration, history
+retention, and artifact GC publication boundaries. A killed disposable
+provider drill with target reconciliation remains an integrated release gate.
 
 1. Complete real-repository and live-target compatibility gates.
-2. Repeat history/retention/artifact-GC process-loss behavior in killed real
-   drills.
+2. Kill a disposable provider drill at a deterministic mutation boundary,
+   preserve its incomplete history, and prove target reconciliation plus a
+   clean retry.
 3. Run one executor/controller on a single host with process-loss recovery.
 4. Add remote executors and leases only after single-host reconciliation works.
 5. Add TUI, then multi-user controller capabilities, then web UI if validated

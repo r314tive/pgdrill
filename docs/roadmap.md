@@ -347,8 +347,10 @@ Implemented foundation:
 
 Next implementation order:
 
-1. Exercise interrupted history, retention, and artifact-GC recovery in killed
-   real drills; deterministic unit fault injection is implemented.
+1. Kill a disposable provider drill at a deterministic mutation boundary,
+   retain its incomplete history, and prove target reconciliation plus a clean
+   retry. Actual child-process kills already cover history migration,
+   retention, and artifact-GC publication boundaries.
 2. Controller and executor binaries with leases, heartbeats, idempotency, and
    executor-local secret resolution.
 3. Schedules, concurrency controls, RBAC, audit, and notifications.

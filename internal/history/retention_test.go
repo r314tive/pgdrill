@@ -1,8 +1,11 @@
 package history
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -253,6 +256,110 @@ func TestApplyRetentionResumesAfterProcessLossBoundary(t *testing.T) {
 	}
 }
 
+func TestApplyRetentionRecoversAfterKilledProcess(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "history")
+	ready := filepath.Join(filepath.Dir(storePath), "retention-helper.ready")
+	store := DirectoryStore{Path: storePath}
+	first := validResult(t, "retention-killed", "attempt-1", model.DrillStatusPassed)
+	second := historyRetry(first, "attempt-2", first.StartedAt.Add(time.Hour))
+	saveHistoryReport(t, store, first)
+	saveHistoryReport(t, store, second)
+	policy := RetentionPolicy{Before: second.FinishedAt.Add(time.Hour)}
+	plan, err := store.PlanRetention(context.Background(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "-test.run=^TestHistoryRetentionKilledProcessHelper$")
+	command.Env = append(
+		os.Environ(),
+		"PGDRILL_RETENTION_HELPER=1",
+		"PGDRILL_RETENTION_STORE="+storePath,
+		"PGDRILL_RETENTION_BEFORE="+policy.Before.Format(time.RFC3339Nano),
+		"PGDRILL_RETENTION_DIGEST="+plan.Digest,
+		"PGDRILL_RETENTION_READY="+ready,
+	)
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if command.ProcessState == nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	}()
+	waitForHistoryProcessReady(t, command, ready, &output)
+	if err := command.Process.Kill(); err != nil {
+		t.Fatalf("kill retention helper: %v", err)
+	}
+	if err := command.Wait(); err == nil {
+		t.Fatal("killed retention helper exited successfully")
+	}
+
+	interrupted, err := store.Verify(context.Background())
+	if err != nil {
+		t.Fatalf("Verify() killed retention state error = %v", err)
+	}
+	if !interrupted.MaintenanceRequired ||
+		len(interrupted.PendingRetentionOperations) != 1 ||
+		interrupted.PendingRetentionOperations[0] != plan.Digest {
+		t.Fatalf("killed retention verification = %#v", interrupted)
+	}
+	resumed, err := store.ApplyRetention(context.Background(), policy, plan.Digest)
+	if err != nil {
+		t.Fatalf("ApplyRetention() after killed process error = %v", err)
+	}
+	if !resumed.Resumed || resumed.DeletedAttempts != 2 || resumed.DeletedRuns != 1 {
+		t.Fatalf("killed retention recovery result = %#v", resumed)
+	}
+	clean, err := store.Verify(context.Background())
+	if err != nil {
+		t.Fatalf("Verify() recovered retention state error = %v", err)
+	}
+	if clean.MaintenanceRequired || clean.Runs != 0 || clean.Attempts != 0 {
+		t.Fatalf("recovered retention verification = %#v", clean)
+	}
+}
+
+func TestHistoryRetentionKilledProcessHelper(t *testing.T) {
+	if os.Getenv("PGDRILL_RETENTION_HELPER") != "1" {
+		t.Skip("subprocess helper")
+	}
+	before, err := time.Parse(time.RFC3339Nano, os.Getenv("PGDRILL_RETENTION_BEFORE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := DirectoryStore{
+		Path: os.Getenv("PGDRILL_RETENTION_STORE"),
+		retentionHook: func(step string, index int) error {
+			if step != retentionStepAfterAttemptRename || index != 0 {
+				return nil
+			}
+			if err := os.WriteFile(
+				os.Getenv("PGDRILL_RETENTION_READY"),
+				[]byte("ready\n"),
+				0o600,
+			); err != nil {
+				return err
+			}
+			select {}
+		},
+	}
+	_, err = store.ApplyRetention(
+		context.Background(),
+		RetentionPolicy{Before: before},
+		os.Getenv("PGDRILL_RETENTION_DIGEST"),
+	)
+	t.Fatalf("retention helper returned unexpectedly: %v", err)
+}
+
 func TestApplyRetentionRecoversUnpublishedOperationDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -323,6 +430,30 @@ func TestApplyRetentionFinishesCompletedPendingDeleteAfterProcessLoss(t *testing
 	}
 	if clean.MaintenanceRequired {
 		t.Fatalf("clean verification = %#v", clean)
+	}
+}
+
+func waitForHistoryProcessReady(
+	t *testing.T,
+	command *exec.Cmd,
+	path string,
+	output *bytes.Buffer,
+) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Lstat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect process-loss helper readiness: %v", err)
+		}
+		if command.ProcessState != nil {
+			t.Fatalf("process-loss helper exited before readiness:\n%s", output.String())
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("process-loss helper did not reach fault boundary:\n%s", output.String())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

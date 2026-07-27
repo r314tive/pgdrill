@@ -165,8 +165,10 @@ private trash, records immutable progress, and removes it. The operation can
 resume after process loss between blob rename, claim rename, progress
 publication, completion, and final cleanup. `artifact verify` exposes the
 digest required to resume, and new artifact publication is rejected while that
-maintenance is pending. An unrelated safe reference-scope change is reported
-as `reference_scope_changed`; a new reference to any selected candidate fails
+maintenance is pending. Tests kill an actual child process after blob rename
+and require verification plus exact resume to converge to a clean store. An
+unrelated safe reference-scope change is reported as
+`reference_scope_changed`; a new reference to any selected candidate fails
 closed. GC removes only this local directory-store content;
 remote/object-store artifact lifecycle is not implemented.
 

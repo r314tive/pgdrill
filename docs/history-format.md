@@ -129,9 +129,11 @@ The confirmed plan is fsynced before data moves. Each selected attempt is
 atomically renamed to private same-filesystem trash, followed by an immutable
 progress marker; only then is the trash copy removed. Empty run metadata is
 handled the same way. A retry with the same policy and digest resumes from the
-manifest and markers. `history verify` reports a structurally valid interrupted
-operation as `maintenance_required: true` instead of treating it as a new
-plan.
+manifest and markers. Tests kill an actual child process after rename and
+before the progress marker, require `history verify` to expose the pending
+operation, and prove exact recovery. A structurally valid interrupted
+operation is reported as `maintenance_required: true` instead of being treated
+as a new plan.
 
 The store is local durability, not a distributed transaction, lease service,
 high-availability database, tamper-evident ledger, or substitute for protecting

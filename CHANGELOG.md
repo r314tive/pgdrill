@@ -23,6 +23,10 @@ called out explicitly even while the major version is `0`.
   remains unchanged, every retained file under `runs/` is copied byte-for-byte,
   interrupted copies can restart, stale plans fail, and the stable destination
   accepts new stable logical runs and attempts.
+- Actual child-process kill tests at post-rename/pre-progress boundaries for
+  history retention and artifact GC. Full verification exposes the interrupted
+  maintenance state, and an exact retry completes it without identity drift or
+  orphaned data.
 - Retained exact `v0.2.0-rc.2` field evidence for WAL-G 3.0.8 timestamp PITR
   with PostgreSQL 18.3 on Linux arm64, including a proven before/after
   transaction boundary and published-archive identity.

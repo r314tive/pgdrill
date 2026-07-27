@@ -1,9 +1,11 @@
 package artifact
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -306,6 +308,114 @@ func TestDirectoryStoreGCResumesAfterBlobRename(t *testing.T) {
 	}
 }
 
+func TestDirectoryStoreGCRecoversAfterKilledProcess(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	ready := filepath.Join(filepath.Dir(root), "gc-helper.ready")
+	store := DirectoryStore{Path: root}
+	ref := putArtifact(
+		t,
+		store,
+		artifactMetadata(t, model.ArtifactRetentionHistory, model.ArtifactRedactionNotRequired),
+		"killed-orphan",
+	)
+	setBlobTime(t, root, ref.ID, time.Now().UTC().Add(-4*time.Hour))
+	policy := GCPolicy{Before: time.Now().UTC().Add(-time.Hour)}
+	plan, err := store.PlanGC(context.Background(), policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "-test.run=^TestArtifactGCKilledProcessHelper$")
+	command.Env = append(
+		os.Environ(),
+		"PGDRILL_GC_HELPER=1",
+		"PGDRILL_GC_STORE="+root,
+		"PGDRILL_GC_BEFORE="+policy.Before.Format(time.RFC3339Nano),
+		"PGDRILL_GC_DIGEST="+plan.Digest,
+		"PGDRILL_GC_READY="+ready,
+	)
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if command.ProcessState == nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	}()
+	waitForArtifactProcessReady(t, command, ready, &output)
+	if err := command.Process.Kill(); err != nil {
+		t.Fatalf("kill artifact GC helper: %v", err)
+	}
+	if err := command.Wait(); err == nil {
+		t.Fatal("killed artifact GC helper exited successfully")
+	}
+
+	interrupted, err := store.Verify(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Verify() killed artifact GC state error = %v", err)
+	}
+	if !interrupted.MaintenanceRequired ||
+		len(interrupted.PendingGCOperations) != 1 ||
+		interrupted.PendingGCOperations[0] != plan.Digest {
+		t.Fatalf("killed artifact GC verification = %#v", interrupted)
+	}
+	resumed, err := store.ApplyGC(context.Background(), policy, nil, plan.Digest)
+	if err != nil {
+		t.Fatalf("ApplyGC() after killed process error = %v", err)
+	}
+	if !resumed.Resumed || resumed.AlreadyApplied || resumed.DeletedBlobs != 1 {
+		t.Fatalf("killed artifact GC recovery result = %#v", resumed)
+	}
+	clean, err := store.Verify(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Verify() recovered artifact GC state error = %v", err)
+	}
+	if clean.MaintenanceRequired || clean.Blobs != 0 {
+		t.Fatalf("recovered artifact GC verification = %#v", clean)
+	}
+}
+
+func TestArtifactGCKilledProcessHelper(t *testing.T) {
+	if os.Getenv("PGDRILL_GC_HELPER") != "1" {
+		t.Skip("subprocess helper")
+	}
+	before, err := time.Parse(time.RFC3339Nano, os.Getenv("PGDRILL_GC_BEFORE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := DirectoryStore{
+		Path: os.Getenv("PGDRILL_GC_STORE"),
+		gcHook: func(step string, index int) error {
+			if step != gcStepAfterBlobRename || index != 0 {
+				return nil
+			}
+			if err := os.WriteFile(
+				os.Getenv("PGDRILL_GC_READY"),
+				[]byte("ready\n"),
+				0o600,
+			); err != nil {
+				return err
+			}
+			select {}
+		},
+	}
+	_, err = store.ApplyGC(
+		context.Background(),
+		GCPolicy{Before: before},
+		nil,
+		os.Getenv("PGDRILL_GC_DIGEST"),
+	)
+	t.Fatalf("artifact GC helper returned unexpectedly: %v", err)
+}
+
 func TestDirectoryStoreGCCleansCompletedPendingOperation(t *testing.T) {
 	t.Parallel()
 
@@ -481,6 +591,30 @@ func TestDirectoryStoreVerificationRejectsSymlinkedClaimsAndMismatchedURIBase(t 
 		[]model.ArtifactRef{ref},
 	); err == nil || !strings.Contains(err.Error(), "non-symbolic-link") {
 		t.Fatalf("Verify(symlinked claim) error = %v", err)
+	}
+}
+
+func waitForArtifactProcessReady(
+	t *testing.T,
+	command *exec.Cmd,
+	path string,
+	output *bytes.Buffer,
+) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Lstat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect artifact GC helper readiness: %v", err)
+		}
+		if command.ProcessState != nil {
+			t.Fatalf("artifact GC helper exited before readiness:\n%s", output.String())
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("artifact GC helper did not reach fault boundary:\n%s", output.String())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
