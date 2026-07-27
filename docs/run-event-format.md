@@ -1,8 +1,8 @@
 # Run Event Format
 
-`pgdrill.run-event/v1alpha1` is the append-only lifecycle contract emitted by
+`pgdrill.run-event/v1` is the append-only lifecycle contract emitted by
 the engine when an `EventSink` is configured. It complements the terminal
-`pgdrill.report/v1alpha1` report; it does not replace that report.
+`pgdrill.report/v1` report; it does not replace that report.
 
 The standalone CLI does not persist an event journal by default. Passing
 `-history-dir` to `pgdrill run` or `pgdrill target verify` enables the local
@@ -71,8 +71,9 @@ layout and crash boundaries are defined in
 
 Consumers must reject unknown schema versions and unknown enum values. Current
 emitters populate `spec_digest` on every event; validators retain compatibility
-with early `v1alpha1` events where this additive field was absent. Additive
-optional fields may be introduced within `v1alpha1`; incompatible identity,
+with early `v1alpha1` events where this additive field was absent. Those
+events remain readable as the documented pre-GA generation. Additive optional
+fields may be introduced within `v1`; incompatible identity,
 ordering, or state-transition changes require a new schema version.
 
 Messages and attributes are diagnostic context, not machine-parsed protocol.

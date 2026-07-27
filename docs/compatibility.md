@@ -9,7 +9,8 @@ claim.
 
 The source of truth is
 [`compatibility/matrix.yaml`](../compatibility/matrix.yaml), using
-`pgdrill.compatibility-matrix/v1alpha1`. It distinguishes:
+`pgdrill.compatibility-matrix/v1`. The reader also accepts the pre-GA
+`v1alpha1` generation. The matrix distinguishes:
 
 - `fixture`: committed native output plus provider conformance; no native tool
   version is claimed

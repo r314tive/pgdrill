@@ -25,6 +25,7 @@ var ErrStoreNotFound = errors.New("history store not found")
 type DirectoryStore struct {
 	Path          string
 	retentionHook func(step string, index int) error
+	migrationHook func(step string, index int) error
 }
 
 // WriteEvent durably appends one lifecycle event. Exact retries are
@@ -32,6 +33,12 @@ type DirectoryStore struct {
 func (s DirectoryStore) WriteEvent(ctx context.Context, event model.RunEvent) error {
 	if err := event.Validate(); err != nil {
 		return fmt.Errorf("validate history event: %w", err)
+	}
+	if event.SchemaVersion != model.CurrentRunEventSchemaVersion {
+		return fmt.Errorf(
+			"history event writer requires schema_version %q",
+			model.CurrentRunEventSchemaVersion,
+		)
 	}
 	if !model.IsSHA256Digest(event.SpecDigest) {
 		return fmt.Errorf("history event spec_digest is required")
@@ -141,7 +148,7 @@ func (s DirectoryStore) SaveReport(ctx context.Context, result model.DrillResult
 	}
 
 	var reportBuffer bytes.Buffer
-	if err := report.WriteJSON(&reportBuffer, result); err != nil {
+	if err := report.WriteCompatibleJSON(&reportBuffer, result); err != nil {
 		return fmt.Errorf("encode history report: %w", err)
 	}
 	if reportBuffer.Len() > MaxReportBytes {
@@ -271,6 +278,23 @@ func (s DirectoryStore) root() (string, error) {
 
 func ensureMetadata(ctx context.Context, root string) error {
 	path := filepath.Join(root, "store.json")
+	stored, err := readJSONFile[StoreMetadata](path, MaxIdentityBytes)
+	if err == nil {
+		if err := stored.validate(); err != nil {
+			return err
+		}
+		if stored.SchemaVersion == LegacyStoreSchemaVersion {
+			return fmt.Errorf(
+				"history store schema_version %q is read-only; migrate it to %q before writing",
+				stored.SchemaVersion,
+				CurrentStoreSchemaVersion,
+			)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read history store metadata: %w", err)
+	}
 	metadata := StoreMetadata{
 		SchemaVersion: CurrentStoreSchemaVersion,
 		LayoutVersion: CurrentLayoutVersion,
@@ -282,7 +306,7 @@ func ensureMetadata(ctx context.Context, root string) error {
 	if err := writeImmutable(ctx, root, path, payload, MaxIdentityBytes); err != nil {
 		return fmt.Errorf("persist history store metadata: %w", err)
 	}
-	stored, err := readJSONFile[StoreMetadata](path, MaxIdentityBytes)
+	stored, err = readJSONFile[StoreMetadata](path, MaxIdentityBytes)
 	if err != nil {
 		return fmt.Errorf("read history store metadata: %w", err)
 	}

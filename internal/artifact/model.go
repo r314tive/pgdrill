@@ -11,11 +11,14 @@ import (
 )
 
 const (
-	CurrentStoreSchemaVersion        = "pgdrill.artifact-store/v1alpha1"
-	CurrentBlobClaimSchemaVersion    = "pgdrill.artifact-blob-claim/v1alpha1"
-	CurrentVerificationSchemaVersion = "pgdrill.artifact-verification/v1alpha1"
-	CurrentGCPlanSchemaVersion       = "pgdrill.artifact-gc-plan/v1alpha1"
-	CurrentGCResultSchemaVersion     = "pgdrill.artifact-gc-result/v1alpha1"
+	CurrentStoreSchemaVersion        = "pgdrill.artifact-store/v1"
+	CurrentBlobClaimSchemaVersion    = "pgdrill.artifact-blob-claim/v1"
+	CurrentVerificationSchemaVersion = "pgdrill.artifact-verification/v1"
+	CurrentGCPlanSchemaVersion       = "pgdrill.artifact-gc-plan/v1"
+	CurrentGCResultSchemaVersion     = "pgdrill.artifact-gc-result/v1"
+
+	LegacyStoreSchemaVersion     = "pgdrill.artifact-store/v1alpha1"
+	LegacyBlobClaimSchemaVersion = "pgdrill.artifact-blob-claim/v1alpha1"
 
 	CurrentLayoutVersion = 1
 	MaxGCReferences      = 1_000_000
@@ -44,11 +47,13 @@ type StoreMetadata struct {
 }
 
 func (m StoreMetadata) validate(expectedURIBase string) error {
-	if m.SchemaVersion != CurrentStoreSchemaVersion {
+	if m.SchemaVersion != CurrentStoreSchemaVersion &&
+		m.SchemaVersion != LegacyStoreSchemaVersion {
 		return fmt.Errorf(
-			"artifact store schema_version %q is unsupported; expected %q",
+			"artifact store schema_version %q is unsupported; expected %q or %q",
 			m.SchemaVersion,
 			CurrentStoreSchemaVersion,
+			LegacyStoreSchemaVersion,
 		)
 	}
 	if m.LayoutVersion != CurrentLayoutVersion {
@@ -92,10 +97,12 @@ func newBlobClaim(ref model.ArtifactRef) blobClaim {
 }
 
 func (c blobClaim) validate() error {
-	if c.SchemaVersion != CurrentBlobClaimSchemaVersion {
+	if c.SchemaVersion != CurrentBlobClaimSchemaVersion &&
+		c.SchemaVersion != LegacyBlobClaimSchemaVersion {
 		return fmt.Errorf(
-			"artifact blob claim schema_version must be %q",
+			"artifact blob claim schema_version must be %q or %q",
 			CurrentBlobClaimSchemaVersion,
+			LegacyBlobClaimSchemaVersion,
 		)
 	}
 	ref := model.ArtifactRef{

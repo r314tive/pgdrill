@@ -176,6 +176,19 @@ func TestJSONFileSinkEncodingFailurePreservesExistingReport(t *testing.T) {
 	}
 }
 
+func TestJSONFileSinkRejectsLegacyProducerSchema(t *testing.T) {
+	result := validTestResult()
+	result.SchemaVersion = model.LegacyReportSchemaVersion
+	path := filepath.Join(t.TempDir(), "report.json")
+	err := (JSONFileSink{Path: path}).Write(context.Background(), result)
+	if err == nil || !strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
+		t.Fatalf("JSONFileSink.Write() legacy producer error = %v", err)
+	}
+	if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("legacy producer created report: %v", statErr)
+	}
+}
+
 func TestJSONFileSinkReplacesFinalSymlinkWithoutFollowingIt(t *testing.T) {
 	root := t.TempDir()
 	outsidePath := filepath.Join(root, "outside.json")
@@ -263,6 +276,19 @@ func TestWriteJSONRejectsUnsupportedSchema(t *testing.T) {
 	err := WriteJSON(&output, model.DrillResult{SchemaVersion: "pgdrill.report/v99"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported report schema_version") {
 		t.Fatalf("expected unsupported schema error, got %v", err)
+	}
+}
+
+func TestWriteJSONRejectsLegacyProducerSchema(t *testing.T) {
+	var output bytes.Buffer
+	result := validTestResult()
+	result.SchemaVersion = model.LegacyReportSchemaVersion
+	err := WriteJSON(&output, result)
+	if err == nil || !strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
+		t.Fatalf("WriteJSON() legacy producer error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("WriteJSON() emitted legacy output: %q", output.String())
 	}
 }
 

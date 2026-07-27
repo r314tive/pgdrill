@@ -258,6 +258,7 @@ func writeArtifactVerificationText(
 		{"Schema", verification.SchemaVersion},
 		{"Store schema", valueOrDash(verification.StoreSchemaVersion)},
 		{"Layout", strconv.Itoa(verification.LayoutVersion)},
+		{"Migration required", strconv.FormatBool(verification.MigrationRequired)},
 		{"URI base", verification.URIBase},
 		{"Blobs", strconv.Itoa(verification.Blobs)},
 		{"Blob bytes", strconv.FormatInt(verification.BlobBytes, 10)},

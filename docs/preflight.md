@@ -87,7 +87,7 @@ and [kubectl](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_ver
 Text is the default operator view. JSON output uses the schema identifier:
 
 ```text
-pgdrill.doctor/v1alpha1
+pgdrill.doctor/v1
 ```
 
 The top-level object identifies the pgdrill build, cluster, effective provider,

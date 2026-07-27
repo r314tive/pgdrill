@@ -16,8 +16,9 @@ The first declared local-history compatibility floor is
   `dc44cbb9a86f2911f049ca09bb3ff505915a8e86780794a0b0fe4e6791084d5b`
 
 Current readers prove read compatibility with that exact real-drill store.
-There is no earlier history layout and no automatic migration. Other alpha
-schemas remain prerelease contracts until the GA migration is implemented.
+Legacy stores are read-only in the stable writer. The explicit copy migration
+described below promotes the store container to `pgdrill.history-store/v1`
+without rewriting immutable historical specs, events, or reports.
 
 ## Before Upgrade
 
@@ -29,8 +30,9 @@ schemas remain prerelease contracts until the GA migration is implemented.
    pgdrill history verify -store /var/lib/pgdrill/history
    ```
 
-4. If `maintenance_required` is true, resume the reported retention digest
-   with the same original policy before continuing.
+4. If `maintenance_required` is true, do not migrate. Resume the reported
+   retention digest with the exact alpha binary and original policy, or
+   restore a verified pre-operation backup, then verify again.
 5. Verify each local artifact store against its complete history scope:
 
    ```sh
@@ -41,8 +43,12 @@ schemas remain prerelease contracts until the GA migration is implemented.
 
    Resume a pending artifact GC digest before continuing. Legacy blobs without
    immutable claims are valid but remain protected from default GC.
-6. Archive the private history and sibling artifact stores on the same trust
-   boundary:
+6. Ensure the destination parent is not group- or world-writable and has
+   enough free space for a complete second history store plus a temporary
+   staging copy.
+7. Archive sibling artifact stores on the same trust boundary. The history
+   source itself remains the rollback copy, but an additional archive is still
+   appropriate for audit retention:
 
    ```sh
    umask 077
@@ -52,38 +58,89 @@ schemas remain prerelease contracts until the GA migration is implemented.
    sha256sum pgdrill-artifacts-before-upgrade.tar.gz
    ```
 
-7. Retain the current binary, its checksum, version output, and configuration.
+8. Retain the current binary, its checksum, version output, and configuration.
 
 The archive contains operational evidence and can contain infrastructure
 identifiers. Do not upload it to a public issue or release.
 
 ## Upgrade And Verification
 
-Replace only the pgdrill binary, then run:
+Replace only the pgdrill binary. First prove that the source is the declared
+legacy generation:
 
 ```sh
 pgdrill version
-pgdrill history verify -store /var/lib/pgdrill/history
-pgdrill history list -store /var/lib/pgdrill/history -limit 1000
+pgdrill history verify \
+  -store /var/lib/pgdrill/history-alpha \
+  -format json
+```
+
+The result must report:
+
+- `store_schema_version: pgdrill.history-store/v1alpha1`
+- `layout_version: 1`
+- `migration_required: true`
+- `maintenance_required: false`
+
+Create and retain the migration plan:
+
+```sh
+pgdrill history migrate \
+  -store /var/lib/pgdrill/history-alpha \
+  -destination /var/lib/pgdrill/history-stable \
+  -format json > pgdrill-history-migration-plan.json
+```
+
+Review the source and destination, source snapshot digest, counts, bytes, and
+plan digest. Apply only that exact digest with the same paths:
+
+```sh
+pgdrill history migrate \
+  -store /var/lib/pgdrill/history-alpha \
+  -destination /var/lib/pgdrill/history-stable \
+  -confirm sha256:<reviewed-plan-digest> \
+  -format json > pgdrill-history-migration-result.json
+```
+
+The command holds a shared source lock for the copy, preserves every file
+under `runs/` byte-for-byte, verifies the staged destination, and atomically
+publishes it. It never changes the source. A repeated exact apply returns
+`already_applied: true` after re-verifying provenance and historical payload.
+
+Verify the destination before changing any scheduler or service configuration:
+
+```sh
+pgdrill history verify -store /var/lib/pgdrill/history-stable
+pgdrill history list -store /var/lib/pgdrill/history-stable -limit 1000
 pgdrill artifact verify \
   -store /var/lib/pgdrill/report.json.artifacts \
-  -history-store /var/lib/pgdrill/history
+  -history-store /var/lib/pgdrill/history-stable
 ```
 
 Unknown schemas, unknown fields, broken identities, non-private permissions,
-and corrupt reports fail explicitly. The reader never rewrites an unknown
-store automatically.
+corrupt reports, source drift, and destination collisions fail explicitly.
+The destination must report `pgdrill.history-store/v1`,
+`migration_required: false`, the confirmed migration plan digest, and the
+expected run/attempt/report/event counts.
+
+Stop writers before switching them from `history-alpha` to `history-stable`.
+After the switch, run one bounded drill and verify the stable store again.
+Retain the alpha source until that operational acceptance is complete.
+Migrated alpha logical runs remain readable but closed to new attempts because
+their spec schema is part of the immutable digest. Schedule equivalent work as
+a new stable logical run.
 
 ## Rollback
 
-While both binaries use the same documented `v1alpha1` layout, rollback is a
-binary replacement followed by `history verify`. Do not write new history with
-an older binary after a newer release introduces a schema or layout it does
-not understand.
+Before switching writers, rollback requires no data operation: continue using
+the untouched alpha source and retained alpha binary.
 
-For the future stable-layout migration, rollback is permitted only through the
-documented backup restore or a separately tested reverse migration. The GA
-release must not rely on an in-place rewrite with no recoverable source copy.
+After new attempts have been written to the stable destination, do not point an
+older binary at it. A rollback to the alpha source discards those new stable
+attempts unless they are retained separately. Stop writers, preserve both
+stores, explicitly accept that boundary, then restore the old binary and old
+path. There is no reverse migration because the forward operation never
+destroys or rewrites its source.
 
 ## Retention And Removal
 

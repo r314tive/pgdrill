@@ -1,6 +1,6 @@
 # Drill Spec Format
 
-`pgdrill.drill-spec/v1alpha1` is the immutable, secret-free input snapshot for
+`pgdrill.drill-spec/v1` is the immutable, secret-free input snapshot for
 one recovery drill. Its JSON is embedded in terminal reports, daemon-free plan
 output, and local history, while its Go type remains internal and pre-GA.
 Stable cross-process types will move under `api/` only when an independent

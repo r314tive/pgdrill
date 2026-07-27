@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	CurrentArtifactReferenceSchemaVersion = "pgdrill.artifact-reference/v1alpha1"
+	CurrentArtifactReferenceSchemaVersion = "pgdrill.artifact-reference/v1"
+	LegacyArtifactReferenceSchemaVersion  = "pgdrill.artifact-reference/v1alpha1"
 	MaxArtifactBytes                      = int64(64 << 20)
 	maxArtifactURIBytes                   = 2048
 	maxArtifactMediaTypeBytes             = 255
@@ -115,8 +116,13 @@ func NewArtifactRef(id, uri string, sizeBytes int64, metadata ArtifactMetadata) 
 }
 
 func (r ArtifactRef) Validate() error {
-	if r.SchemaVersion != CurrentArtifactReferenceSchemaVersion {
-		return fmt.Errorf("schema_version must be %q", CurrentArtifactReferenceSchemaVersion)
+	if r.SchemaVersion != CurrentArtifactReferenceSchemaVersion &&
+		r.SchemaVersion != LegacyArtifactReferenceSchemaVersion {
+		return fmt.Errorf(
+			"schema_version must be %q or %q",
+			CurrentArtifactReferenceSchemaVersion,
+			LegacyArtifactReferenceSchemaVersion,
+		)
 	}
 	if !IsSHA256Digest(r.ID) || r.ID != strings.ToLower(r.ID) {
 		return fmt.Errorf("id must be a canonical lowercase sha256 digest")

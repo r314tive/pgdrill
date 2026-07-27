@@ -1,7 +1,8 @@
 # Compatibility Evidence Matrix
 
 `matrix.yaml` is the machine-readable source of truth for compatibility
-evidence. Its schema is `pgdrill.compatibility-matrix/v1alpha1`.
+evidence. Its current schema is `pgdrill.compatibility-matrix/v1`; the reader
+retains compatibility with the pre-GA `v1alpha1` generation.
 
 Evidence levels have intentionally narrow meanings:
 

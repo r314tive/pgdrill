@@ -26,7 +26,7 @@ produces `unknown`, and both `unknown` and `failed` block a passed drill.
 ## Evaluation Contract
 
 Every current producer writes
-`pgdrill.recovery-policy-evaluation/v1alpha1`. It contains one verdict in fixed
+`pgdrill.recovery-policy-evaluation/v1`. It contains one verdict in fixed
 order for each assertion:
 
 - `rto`

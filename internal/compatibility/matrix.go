@@ -19,7 +19,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const CurrentSchemaVersion = "pgdrill.compatibility-matrix/v1alpha1"
+const (
+	CurrentSchemaVersion = "pgdrill.compatibility-matrix/v1"
+	LegacySchemaVersion  = "pgdrill.compatibility-matrix/v1alpha1"
+)
 
 type Component string
 
@@ -111,8 +114,13 @@ func Parse(data []byte) (Matrix, error) {
 }
 
 func (m Matrix) Validate() error {
-	if m.SchemaVersion != CurrentSchemaVersion {
-		return fmt.Errorf("schema_version must be %q", CurrentSchemaVersion)
+	if m.SchemaVersion != CurrentSchemaVersion &&
+		m.SchemaVersion != LegacySchemaVersion {
+		return fmt.Errorf(
+			"schema_version must be %q or %q",
+			CurrentSchemaVersion,
+			LegacySchemaVersion,
+		)
 	}
 	updatedAt, err := parseDate("updated_at", m.UpdatedAt)
 	if err != nil {

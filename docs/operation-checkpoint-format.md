@@ -4,7 +4,7 @@
 independently from the terminal report. The internal checkpoint schema is:
 
 ```text
-pgdrill.operation-checkpoint/v1alpha1
+pgdrill.operation-checkpoint/v1
 ```
 
 It remains under `internal/` while the engine protocol evolves. The JSON files

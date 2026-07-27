@@ -5,10 +5,12 @@ larger immutable payloads separately. Each top-level artifact uses the internal
 schema:
 
 ```text
-pgdrill.artifact-reference/v1alpha1
+pgdrill.artifact-reference/v1
 ```
 
-The reference is additive within `pgdrill.report/v1alpha1`. Local history now
+The reference is additive within `pgdrill.report/v1`. Readers retain
+`v1alpha1` report and artifact-reference compatibility for the documented
+pre-GA history floor. Local history now
 retains and validates these references, but the Go type remains under
 `internal/` until an out-of-process consumer proves a stable public API.
 
@@ -77,7 +79,8 @@ Reads verify the expected store URI, regular-file type, exact size, and SHA-256
 digest. Existing blobs are verified before deduplication succeeds; corruption
 or a symbolic-link substitution is a hard error.
 
-`store.json` binds the alpha store schema, layout version, and URI base.
+`store.json` binds the stable `pgdrill.artifact-store/v1` schema, layout
+version, and URI base.
 Every successful `Put` writes an immutable classification claim and updates
 the blob's last-observed timestamp under the same exclusive store lock. Reuse
 of an old content digest therefore becomes recent before a producer can return
@@ -86,7 +89,9 @@ its reference. Claims accumulate rather than weaken: a blob ever observed as
 the same bytes as `history`.
 
 Stores written before this metadata layer remain readable. Blobs without
-claims are reported as legacy and are never selected by default.
+claims are reported as legacy and are never selected by default. The untagged
+`pgdrill.artifact-store/v1alpha1` generation is readable but read-only; it was
+never declared as a release compatibility floor.
 
 ## Verification
 

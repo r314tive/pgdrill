@@ -17,6 +17,7 @@ type VerificationResult struct {
 	SchemaVersion        string   `json:"schema_version"`
 	StoreSchemaVersion   string   `json:"store_schema_version,omitempty"`
 	LayoutVersion        int      `json:"layout_version,omitempty"`
+	MigrationRequired    bool     `json:"migration_required"`
 	URIBase              string   `json:"uri_base"`
 	Blobs                int      `json:"blobs"`
 	BlobBytes            int64    `json:"blob_bytes"`
@@ -90,8 +91,10 @@ func (s DirectoryStore) Verify(
 			}
 		}
 		if inventory.Managed {
-			result.StoreSchemaVersion = CurrentStoreSchemaVersion
-			result.LayoutVersion = CurrentLayoutVersion
+			result.StoreSchemaVersion = inventory.StoreMetadata.SchemaVersion
+			result.LayoutVersion = inventory.StoreMetadata.LayoutVersion
+			result.MigrationRequired =
+				inventory.StoreMetadata.SchemaVersion != CurrentStoreSchemaVersion
 		}
 		result.Blobs = len(inventory.Blobs)
 		for _, blob := range inventory.Blobs {
@@ -140,9 +143,13 @@ func (v VerificationResult) Validate() error {
 		if v.LayoutVersion != 0 {
 			return fmt.Errorf("legacy artifact verification must not declare a layout version")
 		}
-	} else if v.StoreSchemaVersion != CurrentStoreSchemaVersion ||
+	} else if (v.StoreSchemaVersion != CurrentStoreSchemaVersion &&
+		v.StoreSchemaVersion != LegacyStoreSchemaVersion) ||
 		v.LayoutVersion != CurrentLayoutVersion {
 		return fmt.Errorf("artifact verification store version is unsupported")
+	}
+	if v.MigrationRequired != (v.StoreSchemaVersion == LegacyStoreSchemaVersion) {
+		return fmt.Errorf("artifact verification migration state is inconsistent")
 	}
 	if v.Blobs < 0 || v.Blobs > MaxStoreBlobs || v.BlobBytes < 0 ||
 		v.ManagedBlobs < 0 || v.LegacyBlobs < 0 ||

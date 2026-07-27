@@ -392,6 +392,23 @@ func TestDirectoryStoreRejectsWriterEventBoundBeforeCreatingStore(t *testing.T) 
 	}
 }
 
+func TestDirectoryStoreRejectsLegacyEventBeforeCreatingStore(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "history")
+	store := DirectoryStore{Path: root}
+	result := validResult(t, "run-legacy-event", "attempt-1", model.DrillStatusPassed)
+	event := validEvents(result)[0]
+	event.SchemaVersion = model.LegacyRunEventSchemaVersion
+	if err := store.WriteEvent(context.Background(), event); err == nil ||
+		!strings.Contains(err.Error(), model.CurrentRunEventSchemaVersion) {
+		t.Fatalf("WriteEvent() legacy schema error = %v", err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy event created history store, stat error = %v", err)
+	}
+}
+
 func TestDirectoryStoreRejectsTerminalReportForIncompleteEventStream(t *testing.T) {
 	t.Parallel()
 

@@ -10,7 +10,10 @@ import (
 	"unicode/utf8"
 )
 
-const CurrentOperationCheckpointSchemaVersion = "pgdrill.operation-checkpoint/v1alpha1"
+const (
+	CurrentOperationCheckpointSchemaVersion = "pgdrill.operation-checkpoint/v1"
+	LegacyOperationCheckpointSchemaVersion  = "pgdrill.operation-checkpoint/v1alpha1"
+)
 
 const (
 	maxOperationNameBytes    = 256
@@ -230,8 +233,13 @@ type OperationCheckpoint struct {
 }
 
 func (c OperationCheckpoint) Validate() error {
-	if c.SchemaVersion != CurrentOperationCheckpointSchemaVersion {
-		return fmt.Errorf("schema_version must be %q", CurrentOperationCheckpointSchemaVersion)
+	if c.SchemaVersion != CurrentOperationCheckpointSchemaVersion &&
+		c.SchemaVersion != LegacyOperationCheckpointSchemaVersion {
+		return fmt.Errorf(
+			"schema_version must be %q or %q",
+			CurrentOperationCheckpointSchemaVersion,
+			LegacyOperationCheckpointSchemaVersion,
+		)
 	}
 	if err := c.Operation.Validate(); err != nil {
 		return fmt.Errorf("invalid operation: %w", err)

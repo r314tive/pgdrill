@@ -30,6 +30,8 @@ The CLI implements:
 - daemon-free typed fleet validation and deterministic bounded placement
 - optional private local history for immutable specs, ordered events, terminal
   reports, policy verdicts, and artifact references
+- stable schema identifiers plus digest-confirmed copy migration from the
+  frozen `v0.3.0-alpha.1` history compatibility floor
 - full local artifact hashing plus age-gated, history-reference-aware,
   digest-confirmed garbage collection
 - text report inspection and Prometheus export
@@ -55,8 +57,9 @@ published Linux arm64 archive passed local WAL-G latest recovery and timestamp
 PITR, proving both sides of an archived transaction boundary. These are
 release and controlled-demo gates, not broader compatibility claims.
 
-The typed planner and local history are implemented on the current `main`
-branch after `v0.2.0-rc.2`; they are not part of that published archive yet.
+The typed planner, stable schemas, local history, and copy migration are
+implemented on the current `main` branch after `v0.2.0-rc.2`; they are not
+part of that published archive yet.
 Fleet scheduling, leases, remote executors, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
 than become a second orchestration implementation.
@@ -198,7 +201,7 @@ For a clean release-candidate commit with Docker available, run the complete
 artifact, lint, native-provider, and disposable CNPG gate:
 
 ```sh
-make -s release-candidate-check VERSION=v0.3.0-alpha.1
+make -s release-candidate-check VERSION=v0.3.0-alpha.3
 ```
 
 ```sh
@@ -216,6 +219,8 @@ go run ./cmd/pgdrill plan show -f examples/fleet.yaml
 go run ./cmd/pgdrill history list -store path/to/history
 go run ./cmd/pgdrill history show -store path/to/history run-id
 go run ./cmd/pgdrill history verify -store path/to/history
+go run ./cmd/pgdrill history migrate -store path/to/history-alpha \
+  -destination path/to/history-stable
 go run ./cmd/pgdrill history prune -store path/to/history \
   -before 2026-08-01T00:00:00Z -keep-latest 2
 go run ./cmd/pgdrill artifact verify \

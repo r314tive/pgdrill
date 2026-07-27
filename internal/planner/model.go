@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	CurrentFleetSchemaVersion = "pgdrill.fleet/v1alpha1"
-	CurrentPlanSchemaVersion  = "pgdrill.plan/v1alpha1"
+	CurrentFleetSchemaVersion = "pgdrill.fleet/v1"
+	LegacyFleetSchemaVersion  = "pgdrill.fleet/v1alpha1"
+	CurrentPlanSchemaVersion  = "pgdrill.plan/v1"
+	LegacyPlanSchemaVersion   = "pgdrill.plan/v1alpha1"
 	DefaultMaxRuns            = 100
 	HardMaxRuns               = 10_000
 	MaxFleetBytes             = 1 << 20

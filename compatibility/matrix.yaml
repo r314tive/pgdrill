@@ -1,4 +1,4 @@
-schema_version: pgdrill.compatibility-matrix/v1alpha1
+schema_version: pgdrill.compatibility-matrix/v1
 updated_at: "2026-07-27"
 entries:
   - id: provider.barman.field

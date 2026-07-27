@@ -17,6 +17,10 @@ type VerificationResult struct {
 	CompatibilityFloor         string   `json:"compatibility_floor"`
 	StoreSchemaVersion         string   `json:"store_schema_version"`
 	LayoutVersion              int      `json:"layout_version"`
+	MigrationRequired          bool     `json:"migration_required"`
+	MigrationPlanDigest        string   `json:"migration_plan_digest,omitempty"`
+	MigratedFromSchemaVersion  string   `json:"migrated_from_schema_version,omitempty"`
+	SourceSnapshotDigest       string   `json:"source_snapshot_digest,omitempty"`
 	Runs                       int      `json:"runs"`
 	Attempts                   int      `json:"attempts"`
 	TerminalReports            int      `json:"terminal_reports"`
@@ -40,6 +44,34 @@ func (s DirectoryStore) Verify(ctx context.Context) (VerificationResult, error) 
 		PendingRetentionCleanup:    []string{},
 	}
 	err := s.withReadLock(ctx, func(root string) error {
+		metadata, err := readJSONFile[StoreMetadata](
+			filepath.Join(root, "store.json"),
+			MaxIdentityBytes,
+		)
+		if err != nil {
+			return fmt.Errorf("read history store metadata: %w", err)
+		}
+		result.StoreSchemaVersion = metadata.SchemaVersion
+		result.LayoutVersion = metadata.LayoutVersion
+		result.MigrationRequired = metadata.SchemaVersion != CurrentStoreSchemaVersion
+		migration, migrationErr := readJSONFile[migrationRecord](
+			filepath.Join(root, migrationRecordFileName),
+			MaxIdentityBytes,
+		)
+		if migrationErr == nil {
+			if metadata.SchemaVersion != CurrentStoreSchemaVersion {
+				return fmt.Errorf("legacy history store must not contain a stable migration record")
+			}
+			if err := migration.validateStandalone(); err != nil {
+				return err
+			}
+			result.MigrationPlanDigest = migration.PlanDigest
+			result.MigratedFromSchemaVersion = migration.SourceStoreSchemaVersion
+			result.SourceSnapshotDigest = migration.SourceSnapshotDigest
+		} else if !errors.Is(migrationErr, os.ErrNotExist) {
+			return fmt.Errorf("read history migration record: %w", migrationErr)
+		}
+
 		records, err := readAllRuns(root)
 		if err != nil {
 			return err
@@ -250,9 +282,26 @@ func validateRetentionOperationState(root, digest string, hasTrash bool) error {
 func (v VerificationResult) Validate() error {
 	if v.SchemaVersion != CurrentVerificationSchema ||
 		v.CompatibilityFloor != PreGACompatibilityFloor ||
-		v.StoreSchemaVersion != CurrentStoreSchemaVersion ||
 		v.LayoutVersion != CurrentLayoutVersion {
 		return fmt.Errorf("history verification version is unsupported")
+	}
+	if v.StoreSchemaVersion != CurrentStoreSchemaVersion &&
+		v.StoreSchemaVersion != LegacyStoreSchemaVersion {
+		return fmt.Errorf("history verification store schema is unsupported")
+	}
+	if v.MigrationRequired != (v.StoreSchemaVersion == LegacyStoreSchemaVersion) {
+		return fmt.Errorf("history verification migration state is inconsistent")
+	}
+	hasMigration := v.MigrationPlanDigest != "" ||
+		v.MigratedFromSchemaVersion != "" ||
+		v.SourceSnapshotDigest != ""
+	if hasMigration {
+		if v.StoreSchemaVersion != CurrentStoreSchemaVersion ||
+			v.MigratedFromSchemaVersion != LegacyStoreSchemaVersion ||
+			!model.IsSHA256Digest(v.MigrationPlanDigest) ||
+			!model.IsSHA256Digest(v.SourceSnapshotDigest) {
+			return fmt.Errorf("history verification migration provenance is inconsistent")
+		}
 	}
 	if v.Runs < 0 || v.Runs > MaxRuns ||
 		v.Attempts < 0 || v.Attempts > MaxTotalAttempts ||

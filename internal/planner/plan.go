@@ -13,8 +13,13 @@ import (
 )
 
 func (f Fleet) Validate() error {
-	if f.SchemaVersion != CurrentFleetSchemaVersion {
-		return fmt.Errorf("schema_version must be %q", CurrentFleetSchemaVersion)
+	if f.SchemaVersion != CurrentFleetSchemaVersion &&
+		f.SchemaVersion != LegacyFleetSchemaVersion {
+		return fmt.Errorf(
+			"schema_version must be %q or %q",
+			CurrentFleetSchemaVersion,
+			LegacyFleetSchemaVersion,
+		)
 	}
 	if f.MaxRuns < 1 || f.MaxRuns > HardMaxRuns {
 		return fmt.Errorf("max_runs must be between 1 and %d", HardMaxRuns)
@@ -328,8 +333,13 @@ func Build(fleet Fleet) (Plan, error) {
 }
 
 func (p Plan) Validate() error {
-	if p.SchemaVersion != CurrentPlanSchemaVersion {
-		return fmt.Errorf("schema_version must be %q", CurrentPlanSchemaVersion)
+	if p.SchemaVersion != CurrentPlanSchemaVersion &&
+		p.SchemaVersion != LegacyPlanSchemaVersion {
+		return fmt.Errorf(
+			"schema_version must be %q or %q",
+			CurrentPlanSchemaVersion,
+			LegacyPlanSchemaVersion,
+		)
 	}
 	if !model.IsSHA256Digest(p.InputDigest) {
 		return fmt.Errorf("input_digest must be a sha256 digest")

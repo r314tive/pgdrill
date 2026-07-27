@@ -25,8 +25,8 @@ const (
 	gcPlanFileName        = "plan.json"
 	gcCompleteFileName    = "complete.json"
 
-	gcProgressSchema = "pgdrill.artifact-gc-progress/v1alpha1"
-	gcCompleteSchema = "pgdrill.artifact-gc-completion/v1alpha1"
+	gcProgressSchema = "pgdrill.artifact-gc-progress/v1"
+	gcCompleteSchema = "pgdrill.artifact-gc-completion/v1"
 
 	gcStepAfterBlobRename     = "after_blob_rename"
 	gcStepAfterClaimRename    = "after_claim_rename"
@@ -142,6 +142,13 @@ func (s DirectoryStore) PlanGC(
 		if err != nil {
 			return err
 		}
+		if inventory.Managed &&
+			inventory.StoreMetadata.SchemaVersion != CurrentStoreSchemaVersion {
+			return fmt.Errorf(
+				"artifact GC requires store schema_version %q; legacy stores are read-only",
+				CurrentStoreSchemaVersion,
+			)
+		}
 		if err := requireCleanGCState(inventory); err != nil {
 			return err
 		}
@@ -186,6 +193,13 @@ func (s DirectoryStore) ApplyGC(
 		inventory, err := scanStore(ctx, settings, references)
 		if err != nil {
 			return err
+		}
+		if inventory.Managed &&
+			inventory.StoreMetadata.SchemaVersion != CurrentStoreSchemaVersion {
+			return fmt.Errorf(
+				"artifact GC requires store schema_version %q; legacy stores are read-only",
+				CurrentStoreSchemaVersion,
+			)
 		}
 		state := gcState{
 			operations: inventory.ActiveGCDigests,
@@ -313,8 +327,8 @@ func buildGCPlan(
 		TemporaryFiles:  []GCTemporaryFile{},
 	}
 	if inventory.Managed {
-		plan.StoreSchemaVersion = CurrentStoreSchemaVersion
-		plan.LayoutVersion = CurrentLayoutVersion
+		plan.StoreSchemaVersion = inventory.StoreMetadata.SchemaVersion
+		plan.LayoutVersion = inventory.StoreMetadata.LayoutVersion
 	}
 	plan.Summary.ReferencedOccurrences = inventory.ReferenceIndex.Occurrences
 	plan.Summary.ForeignReferences = inventory.ReferenceIndex.Foreign

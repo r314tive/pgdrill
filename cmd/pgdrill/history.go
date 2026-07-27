@@ -33,6 +33,9 @@ func persistHistory(ctx context.Context, path string, result model.DrillResult) 
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
+	if err := report.ValidateProduced(result); err != nil {
+		return fmt.Errorf("validate produced history report: %w", err)
+	}
 	persistCtx, cancel := finalize.Context(ctx, 0)
 	defer cancel()
 	return (history.DirectoryStore{Path: path}).SaveReport(persistCtx, result)
@@ -52,6 +55,8 @@ func runHistory(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return runHistoryImport(ctx, args[1:], stdout, stderr)
 	case "verify":
 		return runHistoryVerify(ctx, args[1:], stdout, stderr)
+	case "migrate":
+		return runHistoryMigrate(ctx, args[1:], stdout, stderr)
 	case "prune":
 		return runHistoryPrune(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -249,6 +254,79 @@ func runHistoryVerify(ctx context.Context, args []string, stdout, stderr io.Writ
 	}
 	if err := writeHistoryVerificationText(stdout, path, verification); err != nil {
 		fmt.Fprintf(stderr, "write history verification: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runHistoryMigrate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("history migrate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var storePath string
+	var destination string
+	var confirmation string
+	var format string
+	fs.StringVar(&storePath, "store", "", "legacy history store path")
+	fs.StringVar(&destination, "destination", "", "new stable history store path")
+	fs.StringVar(&confirmation, "confirm", "", "apply the exact sha256 plan digest")
+	fs.StringVar(&format, "format", "text", "output format: text or json")
+	if ok, code := parseFlags(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "history migrate does not accept positional arguments")
+		return 2
+	}
+	format, err := validateHistoryFormat(format)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if strings.TrimSpace(destination) == "" {
+		fmt.Fprintln(stderr, "history migrate requires -destination")
+		return 2
+	}
+	path, err := resolveHistoryPath(storePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve history store: %v\n", err)
+		return 1
+	}
+	store := history.DirectoryStore{Path: path}
+	confirmation = strings.TrimSpace(confirmation)
+	if confirmation == "" {
+		plan, err := store.PlanMigration(ctx, destination)
+		if err != nil {
+			fmt.Fprintf(stderr, "plan history migration: %v\n", err)
+			return 1
+		}
+		if format == "json" {
+			if err := writeIndentedJSON(stdout, plan); err != nil {
+				fmt.Fprintf(stderr, "write history migration plan: %v\n", err)
+				return 1
+			}
+			return 0
+		}
+		if err := writeHistoryMigrationPlanText(stdout, plan); err != nil {
+			fmt.Fprintf(stderr, "write history migration plan: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	result, err := store.ApplyMigration(ctx, destination, confirmation)
+	if err != nil {
+		fmt.Fprintf(stderr, "apply history migration: %v\n", err)
+		return 1
+	}
+	if format == "json" {
+		if err := writeIndentedJSON(stdout, result); err != nil {
+			fmt.Fprintf(stderr, "write history migration result: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if err := writeHistoryMigrationResultText(stdout, result); err != nil {
+		fmt.Fprintf(stderr, "write history migration result: %v\n", err)
 		return 1
 	}
 	return 0
@@ -519,6 +597,7 @@ func writeHistoryVerificationText(
 		{"Compatibility floor", verification.CompatibilityFloor},
 		{"Store schema", verification.StoreSchemaVersion},
 		{"Layout", strconv.Itoa(verification.LayoutVersion)},
+		{"Migration required", strconv.FormatBool(verification.MigrationRequired)},
 		{"Runs", strconv.Itoa(verification.Runs)},
 		{"Attempts", strconv.Itoa(verification.Attempts)},
 		{"Terminal reports", strconv.Itoa(verification.TerminalReports)},
@@ -539,6 +618,72 @@ func writeHistoryVerificationText(
 	}
 	for _, digest := range verification.PendingRetentionCleanup {
 		if _, err := fmt.Fprintf(table, "Pending cleanup:\t%s\n", digest); err != nil {
+			return err
+		}
+	}
+	if verification.MigrationPlanDigest != "" {
+		if _, err := fmt.Fprintf(
+			table,
+			"Migration plan:\t%s\nMigrated from:\t%s\nSource snapshot:\t%s\n",
+			verification.MigrationPlanDigest,
+			verification.MigratedFromSchemaVersion,
+			verification.SourceSnapshotDigest,
+		); err != nil {
+			return err
+		}
+	}
+	return table.Flush()
+}
+
+func writeHistoryMigrationPlanText(w io.Writer, plan history.MigrationPlan) error {
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	rows := [][2]string{
+		{"Mode", "plan only; source and destination unchanged"},
+		{"Schema", plan.SchemaVersion},
+		{"Compatibility floor", plan.CompatibilityFloor},
+		{"Source", plan.Source},
+		{"Destination", plan.Destination},
+		{"Source store schema", plan.SourceStoreSchemaVersion},
+		{"Target store schema", plan.TargetStoreSchemaVersion},
+		{"Layout", strconv.Itoa(plan.LayoutVersion)},
+		{"Source snapshot", plan.SourceSnapshotDigest},
+		{"Historical payload", plan.HistoricalPayloadDigest},
+		{"Plan digest", plan.Digest},
+		{"Files", strconv.Itoa(plan.Files)},
+		{"Bytes", strconv.FormatInt(plan.Bytes, 10)},
+		{"Runs", strconv.Itoa(plan.Runs)},
+		{"Attempts", strconv.Itoa(plan.Attempts)},
+		{"Terminal reports", strconv.Itoa(plan.TerminalReports)},
+		{"Incomplete attempts", strconv.Itoa(plan.IncompleteAttempts)},
+		{"Events", strconv.Itoa(plan.Events)},
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(table, "%s:\t%s\n", row[0], oneLine(row[1])); err != nil {
+			return err
+		}
+	}
+	return table.Flush()
+}
+
+func writeHistoryMigrationResultText(w io.Writer, result history.MigrationResult) error {
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	rows := [][2]string{
+		{"Schema", result.SchemaVersion},
+		{"Plan digest", result.PlanDigest},
+		{"Source retained", result.Source},
+		{"Stable destination", result.Destination},
+		{"Source snapshot", result.SourceSnapshotDigest},
+		{"Files", strconv.Itoa(result.Files)},
+		{"Bytes", strconv.FormatInt(result.Bytes, 10)},
+		{"Already applied", strconv.FormatBool(result.AlreadyApplied)},
+		{"Destination schema", result.Verification.StoreSchemaVersion},
+		{"Runs", strconv.Itoa(result.Verification.Runs)},
+		{"Attempts", strconv.Itoa(result.Verification.Attempts)},
+		{"Reports", strconv.Itoa(result.Verification.TerminalReports)},
+		{"Events", strconv.Itoa(result.Verification.Events)},
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(table, "%s:\t%s\n", row[0], oneLine(row[1])); err != nil {
 			return err
 		}
 	}
@@ -641,6 +786,7 @@ Commands:
   show             Inspect one logical run and its attempts.
   import           Import an existing terminal JSON report.
   verify           Fully validate every retained event and report.
+  migrate          Copy a verified pre-GA store to the stable schema.
   prune            Plan or confirm bounded terminal-history retention.
   help             Show this help.
 

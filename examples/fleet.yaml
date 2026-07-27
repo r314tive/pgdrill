@@ -1,4 +1,4 @@
-schema_version: pgdrill.fleet/v1alpha1
+schema_version: pgdrill.fleet/v1
 max_runs: 20
 
 sources:

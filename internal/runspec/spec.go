@@ -205,7 +205,8 @@ func normalizeDuration(value string) string {
 }
 
 func validateDocument(document model.DrillSpec) error {
-	if document.SchemaVersion != model.CurrentDrillSpecSchemaVersion {
+	if document.SchemaVersion != model.CurrentDrillSpecSchemaVersion &&
+		document.SchemaVersion != model.LegacyDrillSpecSchemaVersion {
 		return fmt.Errorf("unsupported drill spec schema_version %q", document.SchemaVersion)
 	}
 	if !document.Mode.IsKnown() {

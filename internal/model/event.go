@@ -8,7 +8,10 @@ import (
 	"unicode/utf8"
 )
 
-const CurrentRunEventSchemaVersion = "pgdrill.run-event/v1alpha1"
+const (
+	CurrentRunEventSchemaVersion = "pgdrill.run-event/v1"
+	LegacyRunEventSchemaVersion  = "pgdrill.run-event/v1alpha1"
+)
 
 const (
 	MaxRunEventMessageBytes   = 4 << 10
@@ -68,7 +71,8 @@ type RunEvent struct {
 }
 
 func (e RunEvent) Validate() error {
-	if e.SchemaVersion != CurrentRunEventSchemaVersion {
+	if e.SchemaVersion != CurrentRunEventSchemaVersion &&
+		e.SchemaVersion != LegacyRunEventSchemaVersion {
 		return fmt.Errorf("unsupported run event schema version %q", e.SchemaVersion)
 	}
 	if err := ValidateIdentity("run event run_id", e.RunID); err != nil {

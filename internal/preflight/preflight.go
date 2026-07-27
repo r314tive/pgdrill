@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = "pgdrill.doctor/v1alpha1"
+	CurrentSchemaVersion = "pgdrill.doctor/v1"
 	DefaultTimeout       = 15 * time.Second
 )
 

@@ -35,6 +35,15 @@ func TestDirectoryStoreReadsPreGACompatibilityFloor(t *testing.T) {
 	}
 	storePath := extractHistoryFixture(t, archivePath)
 	store := DirectoryStore{Path: storePath}
+	verification, err := store.Verify(context.Background())
+	if err != nil {
+		t.Fatalf("Verify() compatibility fixture error = %v", err)
+	}
+	if verification.StoreSchemaVersion != LegacyStoreSchemaVersion ||
+		!verification.MigrationRequired ||
+		verification.MaintenanceRequired {
+		t.Fatalf("Verify() compatibility fixture = %#v", verification)
+	}
 
 	summaries, err := store.List(context.Background())
 	if err != nil {

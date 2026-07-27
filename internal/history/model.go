@@ -8,15 +8,22 @@ import (
 )
 
 const (
-	PreGACompatibilityFloor     = "v0.3.0-alpha.1"
-	CurrentStoreSchemaVersion   = "pgdrill.history-store/v1alpha1"
-	CurrentRunSchemaVersion     = "pgdrill.history-run/v1alpha1"
-	CurrentAttemptSchemaVersion = "pgdrill.history-attempt/v1alpha1"
-	CurrentSummarySchemaVersion = "pgdrill.history-summary/v1alpha1"
-	CurrentViewSchemaVersion    = "pgdrill.history-view/v1alpha1"
-	CurrentRetentionPlanSchema  = "pgdrill.history-retention-plan/v1alpha1"
-	CurrentPruneResultSchema    = "pgdrill.history-prune-result/v1alpha1"
-	CurrentVerificationSchema   = "pgdrill.history-verification/v1alpha1"
+	PreGACompatibilityFloor      = "v0.3.0-alpha.1"
+	CurrentStoreSchemaVersion    = "pgdrill.history-store/v1"
+	CurrentRunSchemaVersion      = "pgdrill.history-run/v1"
+	CurrentAttemptSchemaVersion  = "pgdrill.history-attempt/v1"
+	CurrentSummarySchemaVersion  = "pgdrill.history-summary/v1"
+	CurrentViewSchemaVersion     = "pgdrill.history-view/v1"
+	CurrentRetentionPlanSchema   = "pgdrill.history-retention-plan/v1"
+	CurrentPruneResultSchema     = "pgdrill.history-prune-result/v1"
+	CurrentVerificationSchema    = "pgdrill.history-verification/v1"
+	CurrentMigrationPlanSchema   = "pgdrill.history-migration-plan/v1"
+	CurrentMigrationResultSchema = "pgdrill.history-migration-result/v1"
+
+	LegacyStoreSchemaVersion   = "pgdrill.history-store/v1alpha1"
+	LegacyRunSchemaVersion     = "pgdrill.history-run/v1alpha1"
+	LegacyAttemptSchemaVersion = "pgdrill.history-attempt/v1alpha1"
+	LegacySummarySchemaVersion = "pgdrill.history-summary/v1alpha1"
 
 	CurrentLayoutVersion = 1
 	MaxRuns              = 10_000
@@ -31,6 +38,7 @@ const (
 	MaxAttemptEventBytes = 64 << 20
 	MaxRunEventBytes     = 256 << 20
 	MaxRunReportBytes    = 256 << 20
+	MaxMigrationFiles    = 250_000
 )
 
 type StoreMetadata struct {
@@ -86,8 +94,14 @@ type attemptSummaryIndex struct {
 }
 
 func (m StoreMetadata) validate() error {
-	if m.SchemaVersion != CurrentStoreSchemaVersion {
-		return fmt.Errorf("history store schema_version %q is unsupported; expected %q", m.SchemaVersion, CurrentStoreSchemaVersion)
+	if m.SchemaVersion != CurrentStoreSchemaVersion &&
+		m.SchemaVersion != LegacyStoreSchemaVersion {
+		return fmt.Errorf(
+			"history store schema_version %q is unsupported; expected %q or %q",
+			m.SchemaVersion,
+			CurrentStoreSchemaVersion,
+			LegacyStoreSchemaVersion,
+		)
 	}
 	if m.LayoutVersion != CurrentLayoutVersion {
 		return fmt.Errorf("history store layout_version %d is unsupported; expected %d", m.LayoutVersion, CurrentLayoutVersion)
@@ -96,8 +110,13 @@ func (m StoreMetadata) validate() error {
 }
 
 func (i RunIdentity) validate() error {
-	if i.SchemaVersion != CurrentRunSchemaVersion {
-		return fmt.Errorf("run identity schema_version must be %q", CurrentRunSchemaVersion)
+	if i.SchemaVersion != CurrentRunSchemaVersion &&
+		i.SchemaVersion != LegacyRunSchemaVersion {
+		return fmt.Errorf(
+			"run identity schema_version must be %q or %q",
+			CurrentRunSchemaVersion,
+			LegacyRunSchemaVersion,
+		)
 	}
 	if err := validateIdentityText("run_id", i.RunID); err != nil {
 		return err
@@ -109,8 +128,13 @@ func (i RunIdentity) validate() error {
 }
 
 func (i AttemptIdentity) validate() error {
-	if i.SchemaVersion != CurrentAttemptSchemaVersion {
-		return fmt.Errorf("attempt identity schema_version must be %q", CurrentAttemptSchemaVersion)
+	if i.SchemaVersion != CurrentAttemptSchemaVersion &&
+		i.SchemaVersion != LegacyAttemptSchemaVersion {
+		return fmt.Errorf(
+			"attempt identity schema_version must be %q or %q",
+			CurrentAttemptSchemaVersion,
+			LegacyAttemptSchemaVersion,
+		)
 	}
 	if err := validateIdentityText("run_id", i.RunID); err != nil {
 		return err
@@ -125,8 +149,13 @@ func (i AttemptIdentity) validate() error {
 }
 
 func (i attemptSummaryIndex) validate(identity AttemptIdentity) error {
-	if i.SchemaVersion != CurrentSummarySchemaVersion {
-		return fmt.Errorf("attempt summary schema_version must be %q", CurrentSummarySchemaVersion)
+	if i.SchemaVersion != CurrentSummarySchemaVersion &&
+		i.SchemaVersion != LegacySummarySchemaVersion {
+		return fmt.Errorf(
+			"attempt summary schema_version must be %q or %q",
+			CurrentSummarySchemaVersion,
+			LegacySummarySchemaVersion,
+		)
 	}
 	summary := i.Summary
 	if summary.RunID != identity.RunID || summary.AttemptID != identity.AttemptID || summary.SpecDigest != identity.SpecDigest {

@@ -7,7 +7,10 @@ import (
 	"unicode/utf8"
 )
 
-const CurrentRecoveryPolicyEvaluationSchemaVersion = "pgdrill.recovery-policy-evaluation/v1alpha1"
+const (
+	CurrentRecoveryPolicyEvaluationSchemaVersion = "pgdrill.recovery-policy-evaluation/v1"
+	LegacyRecoveryPolicyEvaluationSchemaVersion  = "pgdrill.recovery-policy-evaluation/v1alpha1"
+)
 
 const maxPolicyVerdictMessageBytes = 4096
 
@@ -333,8 +336,13 @@ type RecoveryPolicyEvaluation struct {
 }
 
 func (e RecoveryPolicyEvaluation) Validate() error {
-	if e.SchemaVersion != CurrentRecoveryPolicyEvaluationSchemaVersion {
-		return fmt.Errorf("schema_version must be %q", CurrentRecoveryPolicyEvaluationSchemaVersion)
+	if e.SchemaVersion != CurrentRecoveryPolicyEvaluationSchemaVersion &&
+		e.SchemaVersion != LegacyRecoveryPolicyEvaluationSchemaVersion {
+		return fmt.Errorf(
+			"schema_version must be %q or %q",
+			CurrentRecoveryPolicyEvaluationSchemaVersion,
+			LegacyRecoveryPolicyEvaluationSchemaVersion,
+		)
 	}
 	if e.EvaluatedAt.IsZero() {
 		return fmt.Errorf("evaluated_at is required")

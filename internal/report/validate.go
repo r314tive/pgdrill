@@ -9,19 +9,61 @@ import (
 	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
-// Validate checks the durable report contract while retaining compatibility
-// with legacy failed reports that predate structured failure details.
+// Validate checks the durable reader contract while retaining compatibility
+// with documented legacy report generations.
 func Validate(result model.DrillResult) error {
 	return validateReport(result, false)
 }
 
-func validateProducedReport(result model.DrillResult) error {
+// ValidateProduced checks the current writer contract. Legacy schemas are
+// reader inputs only and must never be emitted by current producers.
+func ValidateProduced(result model.DrillResult) error {
 	return validateReport(result, true)
 }
 
 func validateReport(result model.DrillResult, produced bool) error {
-	if result.SchemaVersion != model.CurrentReportSchemaVersion {
+	if produced && result.SchemaVersion != model.CurrentReportSchemaVersion {
 		return fmt.Errorf("schema_version must be %q", model.CurrentReportSchemaVersion)
+	}
+	if !produced &&
+		result.SchemaVersion != model.CurrentReportSchemaVersion &&
+		result.SchemaVersion != model.LegacyReportSchemaVersion {
+		return fmt.Errorf(
+			"schema_version must be %q or %q",
+			model.CurrentReportSchemaVersion,
+			model.LegacyReportSchemaVersion,
+		)
+	}
+	if produced {
+		if result.Spec != nil &&
+			result.Spec.SchemaVersion != model.CurrentDrillSpecSchemaVersion {
+			return fmt.Errorf("produced report spec must use schema_version %q", model.CurrentDrillSpecSchemaVersion)
+		}
+		for index, checkpoint := range result.Operations {
+			if checkpoint.SchemaVersion != model.CurrentOperationCheckpointSchemaVersion {
+				return fmt.Errorf(
+					"produced report operation %d must use schema_version %q",
+					index,
+					model.CurrentOperationCheckpointSchemaVersion,
+				)
+			}
+		}
+		for index, artifact := range result.Artifacts {
+			if artifact.SchemaVersion != model.CurrentArtifactReferenceSchemaVersion {
+				return fmt.Errorf(
+					"produced report artifact %d must use schema_version %q",
+					index,
+					model.CurrentArtifactReferenceSchemaVersion,
+				)
+			}
+		}
+		if result.PolicyEvaluation != nil &&
+			result.PolicyEvaluation.SchemaVersion != model.CurrentRecoveryPolicyEvaluationSchemaVersion {
+			return fmt.Errorf(
+				"produced report policy_evaluation must use schema_version %q",
+				model.CurrentRecoveryPolicyEvaluationSchemaVersion,
+			)
+		}
 	}
 	if err := model.ValidateIdentity("id", result.ID); err != nil {
 		return err

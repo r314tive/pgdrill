@@ -5,13 +5,14 @@ logical runs and execution attempts. It consumes the same canonical drill
 specs, lifecycle events, reports, and artifact references as direct execution;
 it does not introduce another restore state machine.
 
-The on-disk contract is currently `pgdrill.history-store/v1alpha1` with layout
-version `1`. It is a pre-GA format. Unknown schema or layout versions fail
-explicitly and are never rewritten automatically.
+The current on-disk contract is `pgdrill.history-store/v1` with layout version
+`1`. Unknown schema or layout versions fail explicitly and are never rewritten
+automatically.
 
 The documented pre-GA read-compatibility floor is `v0.3.0-alpha.1`. A frozen
 store from that exact candidate is exercised by every current history-reader
-test run. This does not make the alpha schema a GA contract.
+test run. Its `pgdrill.history-store/v1alpha1` container is readable but
+read-only until explicitly migrated.
 
 ## Enabling History
 
@@ -36,6 +37,8 @@ pgdrill history show -store /var/lib/pgdrill/history \
   -attempt-id nightly-main-1 nightly-main
 pgdrill history import -store /var/lib/pgdrill/history report.json
 pgdrill history verify -store /var/lib/pgdrill/history
+pgdrill history migrate -store /var/lib/pgdrill/history-alpha \
+  -destination /var/lib/pgdrill/history-stable
 ```
 
 For inspection commands, the store path resolves in this order:
@@ -68,6 +71,7 @@ names, while strict identity documents retain the original values:
 history/
   .lock
   store.json
+  migration.json  # present only after copy-on-migrate
   runs/
     <sha256(run-id)>/
       identity.json
@@ -208,15 +212,24 @@ before irreversible removal.
 unknown version fails before records are read or modified. Empty directories
 are bootstrapped only by the first write.
 
-There is no earlier on-disk history version to migrate. The first supported
-pre-GA floor is `v0.3.0-alpha.1`; its exact WAL-G latest/PITR store archive has
-SHA-256
+The first supported pre-GA floor is `v0.3.0-alpha.1`; its exact WAL-G
+latest/PITR store archive has SHA-256
 `dc44cbb9a86f2911f049ca09bb3ff505915a8e86780794a0b0fe4e6791084d5b`
 and is read by the current test suite without regeneration.
 
-Before `v1.0.0`, the alpha identifiers still need promotion to stable schema
-identifiers and a backup-safe migration from this floor to that final layout.
-Changing identity, immutability, ordering, retention, or directory semantics
-requires a new store/layout version and migration tests. See
-[upgrade.md](upgrade.md) for the current backup, verification, and rollback
-procedure.
+`history migrate` implements the backup-safe transition. Planning fully reads
+and hashes the source. Apply requires the exact plan digest, copies historical
+files byte-for-byte to a private stage, writes stable store metadata and
+migration provenance, re-verifies the result, and atomically publishes a
+previously absent destination. The source is never modified and remains the
+rollback copy. A killed copy can leave only a hidden stage; the next exact
+apply restarts that stage before publication.
+
+Historical alpha specs, events, and reports intentionally retain their source
+bytes because the spec schema participates in canonical identity digests.
+Those migrated logical runs are closed to additional attempts; equivalent work
+must use a new stable logical run and digest. New writes in the migrated store
+use stable identifiers. Changing identity,
+immutability, ordering, retention, or directory semantics requires a new
+store/layout version and migration tests. See [upgrade.md](upgrade.md) and
+[ADR 0002](adr/0002-stable-schema-and-copy-migration.md).

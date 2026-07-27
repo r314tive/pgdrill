@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/history"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/report"
+	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
 func TestHistoryImportListAndShowCommands(t *testing.T) {
@@ -90,6 +92,93 @@ func TestHistoryImportListAndShowCommands(t *testing.T) {
 		if !strings.Contains(stdout.String(), wanted) {
 			t.Fatalf("history show output missing %q:\n%s", wanted, stdout.String())
 		}
+	}
+}
+
+func TestPersistHistoryRejectsLegacyProducerSchema(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.json")
+	storePath := filepath.Join(dir, "history")
+	writeDrillReport(t, reportPath, model.DrillResult{
+		ID:             "legacy-producer",
+		Cluster:        "production-main",
+		Provider:       model.ProviderWALG,
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/legacy-producer"},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		StartedAt:      mustTime(t, "2026-07-27T10:00:00Z"),
+		FinishedAt:     mustTime(t, "2026-07-27T10:01:00Z"),
+		Status:         model.DrillStatusPassed,
+	})
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.SchemaVersion = model.LegacyReportSchemaVersion
+	if err := persistHistory(context.Background(), storePath, result); err == nil ||
+		!strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
+		t.Fatalf("persistHistory() legacy producer error = %v", err)
+	}
+	if _, err := os.Lstat(storePath); !os.IsNotExist(err) {
+		t.Fatalf("legacy producer created history store: %v", err)
+	}
+}
+
+func TestHistoryImportAcceptsLegacyReaderSchemas(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.json")
+	storePath := filepath.Join(dir, "history")
+	writeDrillReport(t, reportPath, model.DrillResult{
+		ID:             "legacy-import",
+		Cluster:        "production-main",
+		Provider:       model.ProviderWALG,
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/legacy-import"},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		StartedAt:      mustTime(t, "2026-07-27T10:00:00Z"),
+		FinishedAt:     mustTime(t, "2026-07-27T10:01:00Z"),
+		Status:         model.DrillStatusPassed,
+	})
+	result, err := report.ReadJSONFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.SchemaVersion = model.LegacyReportSchemaVersion
+	result.Spec.SchemaVersion = model.LegacyDrillSpecSchemaVersion
+	legacySpec, err := runspec.New(*result.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.SpecDigest = legacySpec.Digest()
+	result.PolicyEvaluation.SchemaVersion =
+		model.LegacyRecoveryPolicyEvaluationSchemaVersion
+	var legacy bytes.Buffer
+	if err := report.WriteCompatibleJSON(&legacy, result); err != nil {
+		t.Fatalf("encode compatible legacy report: %v", err)
+	}
+	if err := os.WriteFile(reportPath, legacy.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := run(
+		[]string{"history", "import", "-store", storePath, reportPath},
+		&stdout,
+		&stderr,
+	); code != 0 {
+		t.Fatalf("history import legacy exit = %d, stderr = %q", code, stderr.String())
+	}
+	verification, err := (history.DirectoryStore{Path: storePath}).Verify(context.Background())
+	if err != nil {
+		t.Fatalf("Verify() legacy import error = %v", err)
+	}
+	if verification.StoreSchemaVersion != history.CurrentStoreSchemaVersion ||
+		verification.Runs != 1 ||
+		verification.TerminalReports != 1 {
+		t.Fatalf("legacy import verification = %#v", verification)
 	}
 }
 
@@ -244,6 +333,97 @@ func TestHistoryVerifyAndConfirmedPruneCommands(t *testing.T) {
 	}
 }
 
+func TestHistoryMigrationPlanAndApplyCommands(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "history-alpha")
+	destination := filepath.Join(dir, "history-stable")
+	reportPath := filepath.Join(dir, "report.json")
+	writeDrillReport(t, reportPath, model.DrillResult{
+		ID:             "migration-cli",
+		Cluster:        "production-main",
+		Provider:       model.ProviderWALG,
+		Target:         model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: "/tmp/migration-cli"},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		StartedAt:      mustTime(t, "2026-07-27T10:00:00Z"),
+		FinishedAt:     mustTime(t, "2026-07-27T10:01:00Z"),
+		Status:         model.DrillStatusPassed,
+	})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := run([]string{"history", "import", "-store", storePath, reportPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("history import exit = %d, stderr = %q", code, stderr.String())
+	}
+	metadata, err := json.Marshal(history.StoreMetadata{
+		SchemaVersion: history.LegacyStoreSchemaVersion,
+		LayoutVersion: history.CurrentLayoutVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata = append(metadata, '\n')
+	if err := os.WriteFile(filepath.Join(storePath, "store.json"), metadata, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	args := []string{
+		"history", "migrate",
+		"-store", storePath,
+		"-destination", destination,
+		"-format", "json",
+	}
+	if code := run(args, &stdout, &stderr); code != 0 {
+		t.Fatalf("history migrate plan exit = %d, stderr = %q", code, stderr.String())
+	}
+	var plan history.MigrationPlan
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatalf("decode migration plan: %v", err)
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("validate migration plan: %v", err)
+	}
+	if plan.Runs != 1 || plan.Attempts != 1 || plan.TerminalReports != 1 {
+		t.Fatalf("migration plan = %#v", plan)
+	}
+	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+		t.Fatalf("migration plan created destination: %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	apply := append(append([]string(nil), args...), "-confirm", plan.Digest)
+	if code := run(apply, &stdout, &stderr); code != 0 {
+		t.Fatalf("history migrate apply exit = %d, stderr = %q", code, stderr.String())
+	}
+	var result history.MigrationResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode migration result: %v", err)
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("validate migration result: %v", err)
+	}
+	if result.AlreadyApplied ||
+		result.Verification.StoreSchemaVersion != history.CurrentStoreSchemaVersion ||
+		result.Verification.MigrationPlanDigest != plan.Digest {
+		t.Fatalf("migration result = %#v", result)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(apply, &stdout, &stderr); code != 0 {
+		t.Fatalf("history migrate retry exit = %d, stderr = %q", code, stderr.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode migration retry: %v", err)
+	}
+	if !result.AlreadyApplied {
+		t.Fatalf("migration retry = %#v", result)
+	}
+}
+
 func TestHistoryCommandsRejectInvalidUsage(t *testing.T) {
 	t.Parallel()
 
@@ -253,6 +433,8 @@ func TestHistoryCommandsRejectInvalidUsage(t *testing.T) {
 		{"history", "show"},
 		{"history", "import"},
 		{"history", "verify", "unexpected"},
+		{"history", "migrate"},
+		{"history", "migrate", "-destination", "new", "unexpected"},
 		{"history", "prune"},
 		{"history", "prune", "-before", "not-a-time"},
 		{"history", "prune", "-before", "2026-07-28T00:00:00Z", "-keep-latest", "-1"},

@@ -168,7 +168,7 @@ The canonical model starts with `DrillSpec`, `BackupCatalog`, `Backup`,
 `RunEvent`, `OperationCheckpoint`, `ArtifactRef`, and `EvidenceRecord`.
 
 Every native or managed engine attempt receives an immutable internal
-`pgdrill.drill-spec/v1alpha1` snapshot. It records execution mode, safe
+`pgdrill.drill-spec/v1` snapshot. It records execution mode, safe
 source/target/profile references and revisions, canonical backup-selection
 intent, target and recovery semantics, and the ordered resolved probe profile.
 `internal/runspec` owns normalized canonical JSON and a `sha256:` digest without
@@ -256,7 +256,7 @@ the recovery proof timestamp, and fails closed on required `failed` or
 [recovery-policy.md](recovery-policy.md).
 
 When configured, the engine also emits ordered
-`pgdrill.run-event/v1alpha1` events around every applicable stage. Native local
+`pgdrill.run-event/v1` events around every applicable stage. Native local
 drills and operator-managed targets use the same lifecycle recorder, terminal
 status rules, cancellation handling, and report finalization. Event delivery
 is fail-closed before normal stage side effects; cleanup remains mandatory even
@@ -267,7 +267,7 @@ by default and enables `internal/history` only through explicit
 [history-format.md](history-format.md).
 
 `internal/planner` is a pure compiler above the single-attempt engine. It
-normalizes one `pgdrill.fleet/v1alpha1` inventory, expands exact selectors,
+normalizes one `pgdrill.fleet/v1` inventory, expands exact selectors,
 places sources onto explicitly compatible targets within capacity, and emits
 canonical engine specs under deterministic logical run IDs. It does not resolve
 execution credentials or call engine adapters. The resulting plan includes

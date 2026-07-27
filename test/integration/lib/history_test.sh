@@ -36,7 +36,7 @@ case "${command}/${subcommand}/${format}" in
   history/show/json)
     cat <<'JSON'
 {
-  "schema_version": "pgdrill.history-view/v1alpha1",
+  "schema_version": "pgdrill.history-view/v1",
   "run_id": "mock-run",
   "attempts": [
     {
@@ -61,7 +61,7 @@ JSON
   history/list/json)
     cat <<'JSON'
 {
-  "schema_version": "pgdrill.history-view/v1alpha1",
+  "schema_version": "pgdrill.history-view/v1",
   "attempts": [
     {
       "attempt_id": "attempt-1",
@@ -78,7 +78,7 @@ JSON
   history/verify/json)
     cat <<'JSON'
 {
-  "schema_version": "pgdrill.history-verification/v1alpha1",
+  "schema_version": "pgdrill.history-verification/v1",
   "attempts": 1,
   "maintenance_required": false
 }
@@ -90,7 +90,7 @@ JSON
   artifact/verify/json)
     cat <<'JSON'
 {
-  "schema_version": "pgdrill.artifact-verification/v1alpha1",
+  "schema_version": "pgdrill.artifact-verification/v1",
   "blobs": 1,
   "referenced_blobs": 1,
   "maintenance_required": false
@@ -103,7 +103,7 @@ JSON
   artifact/gc/json)
     cat <<'JSON'
 {
-  "schema_version": "pgdrill.artifact-gc-plan/v1alpha1",
+  "schema_version": "pgdrill.artifact-gc-plan/v1",
   "summary": {
     "candidate_blobs": 0
   }
@@ -118,7 +118,7 @@ esac
 EOF
 chmod 0755 "${mock_pgdrill}"
 mkdir -p "${store}" "${artifact_store}" "${output}"
-printf '{"schema_version":"pgdrill.history-store/v1alpha1","layout_version":1}\n' \
+printf '{"schema_version":"pgdrill.history-store/v1","layout_version":1}\n' \
   >"${store}/store.json"
 
 pgdrill_integration_verify_history_attempt \

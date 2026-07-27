@@ -165,9 +165,35 @@ func TestLoadRequiresExplicitSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload = bytes.Replace(payload, []byte("schema_version: pgdrill.fleet/v1alpha1\n"), nil, 1)
-	if _, err := Load(bytes.NewReader(payload), "yaml"); err == nil || !strings.Contains(err.Error(), `schema_version must be "pgdrill.fleet/v1alpha1"`) {
+	payload = bytes.Replace(payload, []byte("schema_version: pgdrill.fleet/v1\n"), nil, 1)
+	if _, err := Load(bytes.NewReader(payload), "yaml"); err == nil || !strings.Contains(err.Error(), `schema_version must be "pgdrill.fleet/v1"`) {
 		t.Fatalf("Load() error = %v, want explicit schema version", err)
+	}
+}
+
+func TestLoadAcceptsLegacyFleetAndEmitsStablePlan(t *testing.T) {
+	t.Parallel()
+
+	payload, err := os.ReadFile("testdata/fleet.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = bytes.Replace(
+		payload,
+		[]byte("schema_version: pgdrill.fleet/v1\n"),
+		[]byte("schema_version: pgdrill.fleet/v1alpha1\n"),
+		1,
+	)
+	fleet, err := Load(bytes.NewReader(payload), "yaml")
+	if err != nil {
+		t.Fatalf("Load() legacy fleet error = %v", err)
+	}
+	plan, err := Build(fleet)
+	if err != nil {
+		t.Fatalf("Compile() legacy fleet error = %v", err)
+	}
+	if plan.SchemaVersion != CurrentPlanSchemaVersion {
+		t.Fatalf("legacy fleet plan schema = %q", plan.SchemaVersion)
 	}
 }
 

@@ -9,15 +9,15 @@ consumers.
 Current schema:
 
 ```text
-pgdrill.report/v1alpha1
+pgdrill.report/v1
 ```
 
-Every new report includes `schema_version`. Readers accept an older report with
-the field absent and normalize it to the current schema so reports created
-before versioning remain usable. A non-empty unknown schema is rejected instead
-of being interpreted optimistically.
+Every new report includes `schema_version`. Readers accept the documented
+`pgdrill.report/v1alpha1` pre-GA generation and older reports with the field
+absent. New producers emit only `v1`. A non-empty unknown schema is rejected
+instead of being interpreted optimistically.
 
-Readers may ignore unknown fields within `v1alpha1`; producers may add optional
+Readers may ignore unknown fields within `v1`; producers may add optional
 fields without changing the schema identifier. Removing fields, changing field
 types or meanings, or changing required semantics requires a new schema
 version.
@@ -65,7 +65,7 @@ spec digest excludes logical run and attempt IDs, so another attempt of the same
 run retains the same digest. See [drill-spec-format.md](drill-spec-format.md).
 
 The optional `operations` array contains additive
-`pgdrill.operation-checkpoint/v1alpha1` records. Each operation key is a
+`pgdrill.operation-checkpoint/v1` records. Each operation key is a
 canonical SHA-256 digest over the logical run, attempt, spec digest, lifecycle
 stage, operation kind, name, and ordinal. New producers reject duplicate keys,
 cross-attempt identities, non-terminal operation states, and a `passed` report
@@ -74,13 +74,13 @@ records remain readable. See
 [operation-checkpoint-format.md](operation-checkpoint-format.md).
 
 The optional `artifacts` array contains additive
-`pgdrill.artifact-reference/v1alpha1` records. IDs are exact content digests;
+`pgdrill.artifact-reference/v1` records. IDs are exact content digests;
 payloads remain outside the report. Evidence links them through
 `artifact_ids`, and every artifact must have provenance. See
 [artifact-format.md](artifact-format.md).
 
 Current producers always include
-`pgdrill.recovery-policy-evaluation/v1alpha1`, even when every assertion is
+`pgdrill.recovery-policy-evaluation/v1`, even when every assertion is
 disabled. Disabled assertions are `not_configured`, never synthetic passes.
 Reports with a configured spec policy require a matching evaluation, and a
 passed report cannot contain required `failed` or `unknown` verdicts. See
@@ -201,7 +201,7 @@ should come from stable configuration.
 - Use normalized `status`, checks, and structured command exit status rather
   than parsing human-readable messages.
 - Treat omitted optional fields and additional unknown fields as compatible
-  within `v1alpha1`.
+  within `v1`.
 - Preserve the source report when deriving metrics or presentation views.
 
 `pgdrill report show` and `pgdrill report metrics` use the same reader and

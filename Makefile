@@ -139,6 +139,7 @@ smoke: build
 	$(BINDIR)/$(BINARY) plan help >/dev/null
 	$(BINDIR)/$(BINARY) plan validate -f examples/fleet.yaml >/dev/null
 	$(BINDIR)/$(BINARY) history help >/dev/null
+	$(BINDIR)/$(BINARY) history migrate -h >/dev/null
 	$(BINDIR)/$(BINARY) history verify -h >/dev/null
 	$(BINDIR)/$(BINARY) history prune -h >/dev/null
 	$(BINDIR)/$(BINARY) artifact help >/dev/null
@@ -194,6 +195,7 @@ release-snapshot: toolchain-check check
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) plan help >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) plan validate -f examples/fleet.yaml >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history help >/dev/null
+	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history migrate -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history verify -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) history prune -h >/dev/null
 	$(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)/$(BINARY) artifact help >/dev/null

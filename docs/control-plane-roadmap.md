@@ -123,7 +123,7 @@ The accepted pre-GA inventory shape is documented in
 [`examples/fleet.yaml`](../examples/fleet.yaml):
 
 ```yaml
-schema_version: pgdrill.fleet/v1alpha1
+schema_version: pgdrill.fleet/v1
 max_runs: 20
 drill_sets:
   - id: production-weekly
@@ -161,7 +161,7 @@ The minimum durable records are:
 - immutable run spec and digest
 - attempt identity, lease, executor, and heartbeat
 - append-only run events
-- terminal `pgdrill.report/v1alpha1`
+- terminal `pgdrill.report/v1`
 - content-addressed or immutable artifact references with size, digest, media
   type, retention class, and redaction state
 
@@ -300,10 +300,15 @@ drill now enables that store, reads the complete attempt back through the CLI,
 requires a matching passed report and terminal event, and retains both bounded
 views and the raw private store archive.
 
+Completed prerequisite: current producers emit stable `v1` schema identifiers.
+The frozen floor remains readable, and digest-confirmed copy migration
+preserves its historical files byte-for-byte while publishing a separately
+verified stable store. Interrupted and killed migration processes are covered;
+killed real-drill history/retention/artifact-GC evidence remains.
+
 1. Complete real-repository and live-target compatibility gates.
-2. Promote planner/history schemas to stable identifiers, migrate from the
-   proven `v0.3.0-alpha.1` floor, and repeat history/retention/artifact-GC
-   process-loss behavior in killed real drills.
+2. Repeat history/retention/artifact-GC process-loss behavior in killed real
+   drills.
 3. Run one executor/controller on a single host with process-loss recovery.
 4. Add remote executors and leases only after single-host reconciliation works.
 5. Add TUI, then multi-user controller capabilities, then web UI if validated

@@ -477,7 +477,10 @@ func (s DrillStatus) IsTerminal() bool {
 	}
 }
 
-const CurrentReportSchemaVersion = "pgdrill.report/v1alpha1"
+const (
+	CurrentReportSchemaVersion = "pgdrill.report/v1"
+	LegacyReportSchemaVersion  = "pgdrill.report/v1alpha1"
+)
 
 type DrillStage string
 

@@ -27,8 +27,8 @@ const (
 	retentionProgressDirectory   = "progress"
 	retentionCompleteFileName    = "complete.json"
 
-	retentionProgressSchema = "pgdrill.history-retention-progress/v1alpha1"
-	retentionCompleteSchema = "pgdrill.history-retention-complete/v1alpha1"
+	retentionProgressSchema = "pgdrill.history-retention-progress/v1"
+	retentionCompleteSchema = "pgdrill.history-retention-complete/v1"
 
 	retentionStepAfterAttemptRename = "after_attempt_rename"
 	retentionStepAfterAttemptMarker = "after_attempt_marker"
@@ -135,6 +135,19 @@ func (s DirectoryStore) PlanRetention(ctx context.Context, policy RetentionPolic
 	}
 	var plan RetentionPlan
 	err = s.withReadLock(ctx, func(root string) error {
+		metadata, err := readJSONFile[StoreMetadata](
+			filepath.Join(root, "store.json"),
+			MaxIdentityBytes,
+		)
+		if err != nil {
+			return fmt.Errorf("read history store metadata: %w", err)
+		}
+		if metadata.SchemaVersion != CurrentStoreSchemaVersion {
+			return fmt.Errorf(
+				"history retention requires store schema_version %q; migrate the store first",
+				CurrentStoreSchemaVersion,
+			)
+		}
 		state, err := inspectRetentionState(root)
 		if err != nil {
 			return err

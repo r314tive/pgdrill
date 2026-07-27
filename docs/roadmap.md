@@ -251,9 +251,10 @@ Remaining external engine gate:
 1. Broaden every provider beyond its first local latest-recovery point across
    storage backends, versions, platforms, backup modes, and PITR targets.
 
-`pgdrill.report/v1alpha1` remains the durable terminal contract during this
-migration. The CLI remains journal-free by default and can persist ordered
-events plus terminal snapshots through explicit `-history-dir`.
+`pgdrill.report/v1` is now the durable terminal contract. Readers preserve the
+documented `v1alpha1` compatibility floor. The CLI remains journal-free by
+default and can persist ordered events plus terminal snapshots through
+explicit `-history-dir`.
 
 ## Demo And Pilot Readiness
 
@@ -294,9 +295,9 @@ Remaining gates, in order:
 
 ## Phase 6: Fleet Control Plane
 
-Status: daemon-free typed planning and local durable history implemented on the
-post-`rc.2` main branch. Do not implement a daemon before the remaining
-real-repository, schema-stability, migration, and process-loss gates are
+Status: daemon-free typed planning, local durable history, stable schema
+identifiers, and copy-on-migrate history implemented on main. Do not implement
+a daemon before the remaining real-repository and killed-process gates are
 complete. Distributed controller/executor operation is not part of the
 `v1.0.0` boundary.
 
@@ -313,14 +314,15 @@ engine runs:
 
 Implemented foundation:
 
-1. Strict `pgdrill.fleet/v1alpha1` resources and deterministic
-   `pgdrill.plan/v1alpha1` output.
+1. Strict `pgdrill.fleet/v1` resources and deterministic
+   `pgdrill.plan/v1` output, with read compatibility for the pre-GA fleet
+   generation.
 2. Exact ID/label selectors, execution-pool/driver/mode compatibility,
    capacity-aware concrete placement, global/per-set expansion bounds,
    immutable revisions and digests, mutation count, and typed rejections.
 3. Read-only `plan validate/show` CLI commands with no secret resolution or
    infrastructure access.
-4. Private `pgdrill.history-store/v1alpha1` persistence for immutable specs,
+4. Private `pgdrill.history-store/v1` persistence for immutable specs,
    multiple attempts, ordered idempotent events, terminal reports, and bounded
    artifact references.
 5. `history list/show/import/verify/prune` plus opt-in local persistence for
@@ -336,17 +338,20 @@ Implemented foundation:
    support full verification plus age-gated, history-reference-aware,
    digest-confirmed, crash-resumable garbage collection. Live, audit, legacy,
    and temporary-file protection is explicit and tested.
+9. Stable `v1` report, event, drill-spec, operation, policy, artifact, fleet,
+   plan, compatibility-matrix, and history identifiers are emitted by current
+   producers. A digest-confirmed `history migrate` copies the frozen
+   `v0.3.0-alpha.1` floor to a stable store, preserves historical files
+   byte-for-byte, survives interrupted copy, and retains the source for
+   rollback.
 
 Next implementation order:
 
-1. Promote the pre-GA fleet, plan, history, event, report, and spec schemas to
-   stable identifiers with a backup-safe migration from the documented
-   `v0.3.0-alpha.1` floor.
-2. Exercise interrupted history, retention, and artifact-GC recovery in killed
+1. Exercise interrupted history, retention, and artifact-GC recovery in killed
    real drills; deterministic unit fault injection is implemented.
-3. Controller and executor binaries with leases, heartbeats, idempotency, and
+2. Controller and executor binaries with leases, heartbeats, idempotency, and
    executor-local secret resolution.
-4. Schedules, concurrency controls, RBAC, audit, and notifications.
+3. Schedules, concurrency controls, RBAC, audit, and notifications.
 
 Keep these binaries in this repository and Go module while contracts evolve
 together. Split a module or repository only when versioning, ownership,

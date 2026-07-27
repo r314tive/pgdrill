@@ -1932,7 +1932,7 @@ func TestReportMetricsCommandPrometheus(t *testing.T) {
 
 	output := stdout.String()
 	for _, expected := range []string{
-		`pgdrill_report_info{cluster="production-main",schema_version="pgdrill.report/v1alpha1"} 1`,
+		`pgdrill_report_info{cluster="production-main",schema_version="pgdrill.report/v1"} 1`,
 		"# TYPE pgdrill_drill_status gauge",
 		`pgdrill_drill_status{cluster="production-main",provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 1`,
 		`pgdrill_drill_duration_seconds{cluster="production-main",provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 120`,

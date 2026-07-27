@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-const CurrentDrillSpecSchemaVersion = "pgdrill.drill-spec/v1alpha1"
+const (
+	CurrentDrillSpecSchemaVersion = "pgdrill.drill-spec/v1"
+	LegacyDrillSpecSchemaVersion  = "pgdrill.drill-spec/v1alpha1"
+)
 
 type DrillMode string
 

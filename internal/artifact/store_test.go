@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -146,6 +147,58 @@ func TestDirectoryStoreConcurrentPutPublishesOneImmutableBlob(t *testing.T) {
 		if refs[index] != refs[0] {
 			t.Fatalf("Put(%d) ref = %#v, want %#v", index, refs[index], refs[0])
 		}
+	}
+}
+
+func TestDirectoryStoreReadsLegacyMetadataButRejectsNewWrites(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "artifacts")
+	store := DirectoryStore{Path: root}
+	ref, err := store.Put(
+		context.Background(),
+		testMetadata(t),
+		strings.NewReader("legacy artifact payload"),
+	)
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	settings, err := store.settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := StoreMetadata{
+		SchemaVersion: LegacyStoreSchemaVersion,
+		LayoutVersion: CurrentLayoutVersion,
+		URIBase:       settings.uriBase,
+	}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = append(payload, '\n')
+	if err := os.WriteFile(filepath.Join(root, storeMetadataFileName), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.Read(context.Background(), ref)
+	if err != nil || string(loaded) != "legacy artifact payload" {
+		t.Fatalf("Read() legacy store = %q, %v", loaded, err)
+	}
+	verification, err := store.Verify(context.Background(), []model.ArtifactRef{ref})
+	if err != nil {
+		t.Fatalf("Verify() legacy store error = %v", err)
+	}
+	if verification.StoreSchemaVersion != LegacyStoreSchemaVersion ||
+		!verification.MigrationRequired {
+		t.Fatalf("legacy verification = %#v", verification)
+	}
+	if _, err := store.Put(
+		context.Background(),
+		testMetadata(t),
+		strings.NewReader("new payload"),
+	); err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("Put() legacy store error = %v", err)
 	}
 }
 

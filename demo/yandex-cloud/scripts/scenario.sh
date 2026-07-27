@@ -131,7 +131,7 @@ terraform -chdir="${terraform_dir}" output -json demo_inventory \
 backup_name="$(jq -er '.backup_name' "${local_source_state}")"
 jq -e \
   --arg backup_name "${backup_name}" '
-  .schema_version == "pgdrill.report/v1alpha1" and
+  .schema_version == "pgdrill.report/v1" and
   .status == "passed" and
   .backup.provider == "wal-g" and
   .backup.provider_id == $backup_name and

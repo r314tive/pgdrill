@@ -28,7 +28,7 @@ func (s JSONFileSink) Write(ctx context.Context, result model.DrillResult) error
 	if err := normalizeSchemaVersion(&result); err != nil {
 		return err
 	}
-	if err := validateProducedReport(result); err != nil {
+	if err := ValidateProduced(result); err != nil {
 		return fmt.Errorf("validate report: %w", err)
 	}
 
@@ -142,14 +142,38 @@ func WriteJSON(writer io.Writer, result model.DrillResult) error {
 	return writeJSON(writer, result, MaxJSONBytes)
 }
 
+// WriteCompatibleJSON re-encodes a report already accepted by the reader
+// contract. It exists for history import; current report producers use
+// WriteJSON and cannot emit legacy schemas.
+func WriteCompatibleJSON(writer io.Writer, result model.DrillResult) error {
+	return writeCompatibleJSON(writer, result, MaxJSONBytes)
+}
+
 func writeJSON(writer io.Writer, result model.DrillResult, maxBytes int64) error {
+	return writeJSONMode(writer, result, maxBytes, true)
+}
+
+func writeCompatibleJSON(writer io.Writer, result model.DrillResult, maxBytes int64) error {
+	return writeJSONMode(writer, result, maxBytes, false)
+}
+
+func writeJSONMode(
+	writer io.Writer,
+	result model.DrillResult,
+	maxBytes int64,
+	produced bool,
+) error {
 	if writer == nil {
 		return fmt.Errorf("report JSON output is required")
 	}
 	if err := normalizeSchemaVersion(&result); err != nil {
 		return err
 	}
-	if err := Validate(result); err != nil {
+	validate := Validate
+	if produced {
+		validate = ValidateProduced
+	}
+	if err := validate(result); err != nil {
 		return fmt.Errorf("validate report: %w", err)
 	}
 	payload, err := json.MarshalIndent(result, "", "  ")
@@ -175,7 +199,7 @@ func normalizeSchemaVersion(result *model.DrillResult) error {
 	case "":
 		result.SchemaVersion = model.CurrentReportSchemaVersion
 		return nil
-	case model.CurrentReportSchemaVersion:
+	case model.CurrentReportSchemaVersion, model.LegacyReportSchemaVersion:
 		return nil
 	default:
 		return fmt.Errorf("unsupported report schema_version %q", result.SchemaVersion)

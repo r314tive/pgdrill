@@ -64,12 +64,28 @@ func withStoreLock(
 }
 
 func ensureStoreMetadata(ctx context.Context, settings directorySettings) error {
+	path := filepath.Join(settings.root, storeMetadataFileName)
+	stored, err := readJSONFile[StoreMetadata](path, maxStoreJSONBytes)
+	if err == nil {
+		if err := stored.validate(settings.uriBase); err != nil {
+			return err
+		}
+		if stored.SchemaVersion == LegacyStoreSchemaVersion {
+			return fmt.Errorf(
+				"artifact store schema_version %q is read-only; copy retained blobs into a stable store before writing",
+				stored.SchemaVersion,
+			)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read artifact store metadata: %w", err)
+	}
 	metadata := StoreMetadata{
 		SchemaVersion: CurrentStoreSchemaVersion,
 		LayoutVersion: CurrentLayoutVersion,
 		URIBase:       settings.uriBase,
 	}
-	path := filepath.Join(settings.root, storeMetadataFileName)
 	payload, err := marshalBoundedJSON(metadata, maxStoreJSONBytes)
 	if err != nil {
 		return err
@@ -77,7 +93,7 @@ func ensureStoreMetadata(ctx context.Context, settings directorySettings) error 
 	if err := writeImmutableFile(ctx, settings.root, path, payload, maxStoreJSONBytes); err != nil {
 		return fmt.Errorf("persist artifact store metadata: %w", err)
 	}
-	stored, err := readJSONFile[StoreMetadata](path, maxStoreJSONBytes)
+	stored, err = readJSONFile[StoreMetadata](path, maxStoreJSONBytes)
 	if err != nil {
 		return fmt.Errorf("read artifact store metadata: %w", err)
 	}

@@ -10,10 +10,23 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Stable `v1` schema identifiers for newly produced reports, drill specs, run
+  events, operation checkpoints, policy evaluations, artifact references and
+  local stores, fleet/plan documents, compatibility matrices, doctor output,
+  and local history envelopes.
+- `pgdrill history migrate` with deterministic dry-run planning, exact digest
+  confirmation, strict source-tree hashing, a previously absent destination,
+  private staging, byte-preserved historical records, stable migration
+  provenance, complete destination verification, atomic publication, and
+  idempotent retry.
+- Frozen-floor migration tests proving that the exact `v0.3.0-alpha.1` source
+  remains unchanged, every retained file under `runs/` is copied byte-for-byte,
+  interrupted copies can restart, stale plans fail, and the stable destination
+  accepts new stable logical runs and attempts.
 - Retained exact `v0.2.0-rc.2` field evidence for WAL-G 3.0.8 timestamp PITR
   with PostgreSQL 18.3 on Linux arm64, including a proven before/after
   transaction boundary and published-archive identity.
-- A strict daemon-free `pgdrill.fleet/v1alpha1` planner with typed sources,
+- A strict daemon-free `pgdrill.fleet/v1` planner with typed sources,
   target pools, probe profiles, recovery policies, and drill sets; exact
   ID/label selectors; deterministic capacity-aware placement; bounded
   expansion; immutable revisions and digests; mutation counts; and structured
@@ -21,7 +34,7 @@ called out explicitly even while the major version is `0`.
 - `pgdrill plan validate` and `pgdrill plan show` text/JSON surfaces that
   compile plans without secret resolution, repository access, or
   infrastructure mutation, plus a runnable fleet example.
-- A private `pgdrill.history-store/v1alpha1` local directory store with
+- A private `pgdrill.history-store/v1` local directory store with
   versioned metadata, immutable run/spec/attempt identity, append-only
   idempotent events, terminal report snapshots, strict integrity reads,
   bounded immutable list indexes, atomic publication, and cross-process
@@ -63,6 +76,18 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- Current producers emit only stable schema identifiers. Readers retain the
+  documented `v1alpha1` report/spec/event/operation/policy/artifact-reference
+  and `v0.3.0-alpha.1` history compatibility needed for immutable pre-GA
+  evidence.
+- A legacy `pgdrill.history-store/v1alpha1` store is read-only in the stable
+  writer. Migration is deliberately copy-on-migrate rather than an in-place
+  rewrite because the drill-spec schema participates in canonical identity
+  digests; the untouched source is the rollback copy. Migrated alpha logical
+  runs are immutable and closed to new attempts.
+- New artifact stores and claims use stable identifiers. The untagged
+  `v1alpha1` artifact-store generation remains readable but is not a declared
+  write-compatibility floor.
 - The local history remains optional so direct single-run execution has no new
   availability dependency; when configured, event delivery is fail-closed and
   terminal history persistence survives a canceled operation through the
@@ -111,6 +136,16 @@ called out explicitly even while the major version is `0`.
 - Development builds now default to `v0.3.0-dev`; the new planner/history
   surface will start a `v0.3.0` prerelease train instead of changing the
   published Engine v0.2 release candidate in place.
+
+### Breaking Changes
+
+- Machine consumers that matched `v1alpha1` as the current output identifier
+  must accept `v1`. The alpha identifiers remain reader inputs only for the
+  documented compatibility generation.
+- The stable writer will not append to a
+  `pgdrill.history-store/v1alpha1` directory. Operators must plan and confirm
+  `history migrate` to a separate destination, verify it, and then switch the
+  configured path. The source is intentionally retained for rollback.
 
 ## [0.2.0-rc.2] - 2026-07-27
 

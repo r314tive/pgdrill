@@ -1,8 +1,8 @@
 # Fleet And Plan Formats
 
 The daemon-free planner compiles a strict, secret-free
-`pgdrill.fleet/v1alpha1` inventory into a deterministic
-`pgdrill.plan/v1alpha1` document. It does not contact a backup repository,
+`pgdrill.fleet/v1` inventory into a deterministic
+`pgdrill.plan/v1` document. It does not contact a backup repository,
 resolve credentials, start an executor, or mutate a restore target.
 
 These are pre-GA contracts. Unknown fields and unknown schema versions are
@@ -121,7 +121,7 @@ Every planned run contains:
 - deterministic logical `run_id`
 - drill-set, source, target-pool, target, policy, and probe references with
   immutable revisions
-- concrete canonical `pgdrill.drill-spec/v1alpha1`
+- concrete canonical `pgdrill.drill-spec/v1`
 - independently validated `spec_digest`
 
 The plan has its own canonical SHA-256 digest. Recompiling equivalent normalized
