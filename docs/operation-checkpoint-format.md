@@ -7,8 +7,9 @@ independently from the terminal report. The internal checkpoint schema is:
 pgdrill.operation-checkpoint/v1
 ```
 
-It remains under `internal/` while the engine protocol evolves. The JSON files
-are durable local recovery state, not a stable remote API yet.
+Current producers emit the stable identifier. The Go type remains under
+`internal/`, and the JSON files are local executor recovery state rather than a
+distributed wire API.
 
 ## Identity
 
@@ -74,9 +75,18 @@ not applied; another name is a conflict. Reconciliation never calls `create`.
 Cleanup observation uses the same selector.
 
 `core.ReconcileAttempt` classifies orphaned `intent` and `unknown` records
-without replaying mutation commands. It does not resume lifecycle event
-sequence numbers, acquire a lease, or make a policy decision. A future
-controller must use the result to choose bounded cleanup or a new attempt.
+without replaying mutation commands. `pgdrill attempt recover` exposes the
+guarded local-target flow: it validates the immutable history/config identity,
+produces a digest-bound plan, requires explicit stopped-executor confirmation,
+reconciles source operations by observation, and runs a deterministic cleanup
+operation with exact ownership and post-cleanup proof. The incomplete history
+attempt remains immutable, and subsequent execution must use a new attempt ID.
+See [attempt-recovery.md](attempt-recovery.md).
+
+This local flow does not resume lifecycle event sequence numbers, acquire a
+lease, fence a live executor, or make a drill policy decision. A future
+controller must add lease and heartbeat semantics around the same engine
+protocol rather than replaying commands.
 
 ## Local Persistence
 
@@ -88,11 +98,13 @@ CLI mutation checkpoints are stored below:
 
 Directories are owner-only. Each file is bounded to 64 KiB, validated strictly,
 written through a private temporary file, synced, atomically renamed, and
-protected by an attempt-scoped advisory lock. Final-path symlinks are rejected
-on reads. Checkpoint messages are bounded protocol diagnostics and do not copy
-raw command errors or command payloads.
+protected by an attempt-scoped advisory lock. Read-only `Load` and `List` do
+not create missing attempt state. Store roots, attempt directories, lock files,
+and checkpoint final paths reject symlinks or non-real objects before use.
+Checkpoint messages are bounded protocol diagnostics and do not copy raw
+command errors or command payloads.
 
 The terminal report contains the final bounded operation records. Checkpoint
 directories remain separate so an executor crash before report persistence
-still leaves reconciliation state. Retention and indexing belong to the future
-local history/control-plane layer.
+still leaves reconciliation state. Optional local history retains the lifecycle
+record separately; incomplete attempts are protected by default retention.

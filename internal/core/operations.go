@@ -265,14 +265,42 @@ func reconciliationError(operation model.Operation, reconciliation model.Operati
 	}
 }
 
-// ReconcileAttempt observes unfinished checkpoints without replaying mutation
-// commands. A controller can use the resulting terminal classifications to
-// decide whether to clean up the abandoned attempt or create a new attempt.
-func ReconcileAttempt(ctx context.Context, store CheckpointStore, target interface {
+type attemptReconciliationTarget interface {
 	BindAttempt(model.AttemptContext) error
 	BeginOperation(model.Operation) error
 	Reconcile(context.Context, model.OperationCheckpoint) (model.OperationReconciliation, error)
-}, attempt model.AttemptContext, clock func() time.Time) ([]model.OperationCheckpoint, []model.EvidenceRecord, []model.ArtifactRef, error) {
+}
+
+// ReconcileAttempt observes unfinished checkpoints without replaying mutation
+// commands. A controller can use the resulting terminal classifications to
+// decide whether to clean up the abandoned attempt or create a new attempt.
+func ReconcileAttempt(
+	ctx context.Context,
+	store CheckpointStore,
+	target attemptReconciliationTarget,
+	attempt model.AttemptContext,
+	clock func() time.Time,
+) ([]model.OperationCheckpoint, []model.EvidenceRecord, []model.ArtifactRef, error) {
+	return reconcileAttempt(
+		ctx,
+		store,
+		target,
+		attempt,
+		clock,
+		func(model.Operation) bool { return true },
+		true,
+	)
+}
+
+func reconcileAttempt(
+	ctx context.Context,
+	store CheckpointStore,
+	target attemptReconciliationTarget,
+	attempt model.AttemptContext,
+	clock func() time.Time,
+	include func(model.Operation) bool,
+	unresolvedIsError bool,
+) ([]model.OperationCheckpoint, []model.EvidenceRecord, []model.ArtifactRef, error) {
 	if store == nil {
 		return nil, nil, nil, fmt.Errorf("checkpoint store is required")
 	}
@@ -297,6 +325,9 @@ func ReconcileAttempt(ctx context.Context, store CheckpointStore, target interfa
 	var joined error
 	for index := range checkpoints {
 		checkpoint := &checkpoints[index]
+		if include != nil && !include(checkpoint.Operation) {
+			continue
+		}
 		if checkpoint.State == model.OperationStateSucceeded || checkpoint.State == model.OperationStateFailed {
 			continue
 		}
@@ -339,7 +370,12 @@ func ReconcileAttempt(ctx context.Context, store CheckpointStore, target interfa
 				checkpoint.State = model.OperationStateFailed
 			case model.ReconciliationUnknown, model.ReconciliationConflict:
 				checkpoint.State = model.OperationStateUnknown
-				joined = errors.Join(joined, reconciliationError(checkpoint.Operation, reconciliation))
+				if unresolvedIsError {
+					joined = errors.Join(
+						joined,
+						reconciliationError(checkpoint.Operation, reconciliation),
+					)
+				}
 			}
 		}
 		if saveErr := store.Save(ctx, *checkpoint); saveErr != nil {

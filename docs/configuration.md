@@ -171,6 +171,18 @@ intent cannot be persisted. The directory is intentionally separate from the
 terminal report so executor loss still leaves reconciliation state. See
 [operation-checkpoint-format.md](operation-checkpoint-format.md).
 
+For an interrupted local attempt, the original config remains part of the
+recovery authorization boundary. `pgdrill attempt recover` recomputes its
+immutable spec digest and requires an exact match with the addressed incomplete
+history attempt. Relative history, checkpoint, and work-directory paths are
+rendered as absolute paths in the plan so apply scope cannot drift with the
+working directory. The configured report path is also bound to the plan;
+an exact terminal report published before a history-snapshot crash must be
+repaired/imported rather than treated as an abandoned attempt. Recovery does
+not replay a provider command; it requires a reviewed digest and explicit
+confirmation that the original executor process group is stopped. See
+[attempt-recovery.md](attempt-recovery.md).
+
 CNPG target verification also derives `<report.path>.artifacts`. It stores the
 exact generated manifest before `kubectl create` and links the content digest
 from report evidence. Keep that sibling directory with the report when moving

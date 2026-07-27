@@ -76,6 +76,8 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return runHistory(ctx, args[1:], stdout, stderr)
 	case "artifact":
 		return runArtifact(ctx, args[1:], stdout, stderr)
+	case "attempt":
+		return runAttempt(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -765,6 +767,7 @@ Commands:
   plan             Validate and inspect daemon-free fleet plans.
   history          Inspect local durable run history.
   artifact         Verify and garbage-collect local evidence blobs.
+  attempt          Reconcile and clean up interrupted attempts.
   report           Inspect drill reports.
   help             Show this help.
 

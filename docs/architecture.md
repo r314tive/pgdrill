@@ -59,6 +59,8 @@ probes, and evidence, not in terms of one provider's command output.
   optional append-only lifecycle stream.
 - `docs/operation-checkpoint-format.md`: pre-mutation intent, idempotency,
   ownership, and unknown-outcome reconciliation contract.
+- `docs/attempt-recovery.md`: digest-confirmed interrupted-attempt
+  reconciliation, exact owned cleanup, immutable history, and retry boundary.
 - `docs/artifact-format.md`: immutable artifact references, classification,
   local persistence, and evidence-link integrity.
 - `docs/fleet-plan-format.md`: daemon-free inventory, compatibility, bounds,
@@ -166,6 +168,8 @@ boundary.
 The canonical model starts with `DrillSpec`, `BackupCatalog`, `Backup`,
 `WALRange`, `RecoveryTarget`, `RestorePlan`, `CheckReport`, `DrillResult`,
 `RunEvent`, `OperationCheckpoint`, `ArtifactRef`, and `EvidenceRecord`.
+The core recovery application adds stable `AttemptRecoveryPlan` and
+`AttemptRecoveryResult` control records around those canonical types.
 
 Every native or managed engine attempt receives an immutable internal
 `pgdrill.drill-spec/v1` snapshot. It records execution mode, safe
@@ -266,6 +270,16 @@ by default and enables `internal/history` only through explicit
 [run-event-format.md](run-event-format.md), and local persistence is defined in
 [history-format.md](history-format.md).
 
+Interrupted local attempts use a separate recovery application path, not a
+second drill lifecycle. The CLI verifies the recorded incomplete history
+identity against the current immutable spec, then `core.PlanAttemptRecovery`
+binds the exact operation set and cleanup scope to a canonical digest.
+`core.RecoverAttempt` requires that digest plus an explicit stopped-executor
+assertion, observes source operations without replay, and proves exact owned
+cleanup through another durable operation checkpoint. It never synthesizes a
+terminal drill report. The protocol is defined in
+[attempt-recovery.md](attempt-recovery.md).
+
 `internal/planner` is a pure compiler above the single-attempt engine. It
 normalizes one `pgdrill.fleet/v1` inventory, expands exact selectors,
 places sources onto explicitly compatible targets within capacity, and emits
@@ -334,6 +348,10 @@ confirmation guard so another presentation layer cannot bypass it accidentally.
   exists. Every ordinary mutation requires a durable intent checkpoint first,
   uses a deterministic attempt-scoped idempotency key and ownership identity,
   and is reconciled before any retry decision.
+- Manual recovery of an abandoned local attempt requires an exact immutable
+  plan, a separately stopped executor process group, observation-only source
+  reconciliation, and post-cleanup ownership proof. It never converts
+  incomplete history into a terminal result or reuses the attempt ID.
 - Cleanup remains executable through a bounded finalization context even when
   its intent journal is unavailable, but the attempt cannot be reported as
   passed when that durability invariant was lost.

@@ -124,6 +124,15 @@ recompute the same terminal event/report relationship when the immutable
 summary index is absent. The compatibility suite separately proves event-only,
 report-only, and report-plus-events-without-summary states.
 
+An event-only local drill attempt with durable operation checkpoints can be
+addressed through `pgdrill attempt recover`. Planning requires the original
+config plus explicit run, attempt, and history identity; apply requires the
+exact plan digest and confirmation that the original executor process group is
+stopped. Recovery observes unfinished mutations, proves exact owned-target
+cleanup, and leaves the incomplete history untouched. It never appends a
+synthetic `run_finished` event or report. A clean retry uses a new attempt ID.
+See [attempt-recovery.md](attempt-recovery.md).
+
 Retention uses another bounded crash protocol under the same exclusive lock.
 The confirmed plan is fsynced before data moves. Each selected attempt is
 atomically renamed to private same-filesystem trash, followed by an immutable

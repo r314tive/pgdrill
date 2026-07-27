@@ -1,8 +1,8 @@
 # Control Plane And Interface Roadmap
 
-Status: daemon-free planner and local history implemented on the post-`rc.2`
-main branch; distributed control-plane sections remain a design draft and are
-not a supported wire API.
+Status: daemon-free planner, local history, and manual interrupted-attempt
+recovery are implemented on the post-`rc.2` main branch; distributed
+control-plane sections remain a design draft and are not a supported wire API.
 
 This document describes how `pgdrill` can grow from a single-run CLI engine
 into a fleet product without moving restore correctness into a scheduler or UI.
@@ -192,6 +192,9 @@ pgdrill plan validate -f fleet.yaml
 pgdrill plan show -f fleet.yaml
 pgdrill history list
 pgdrill history show <run-id>
+pgdrill attempt recover -f pgdrill.yaml \
+  -run-id <run-id> -attempt-id <attempt-id> \
+  -history-store <path>
 ```
 
 `plan show` must display concrete expansion, placement, policy revisions, and
@@ -199,6 +202,9 @@ mutation count without resolving secret values or creating resources.
 `history list/show` validates the on-disk store while exposing attempts, failed
 stages, policy verdicts, evidence counts, artifact references, and lifecycle
 events. Direct runs use history only when `-history-dir` is explicit.
+`attempt recover` consumes the same immutable identity and local operation
+journal, but remains a manual digest-confirmed cleanup path rather than a
+scheduler or automatic retry loop.
 
 ### TUI
 
@@ -304,16 +310,21 @@ Completed prerequisite: current producers emit stable `v1` schema identifiers.
 The frozen floor remains readable, and digest-confirmed copy migration
 preserves its historical files byte-for-byte while publishing a separately
 verified stable store. Actual child-process kills now cover migration, history
-retention, and artifact GC publication boundaries. A killed disposable
-provider drill with target reconciliation remains an integrated release gate.
+retention, and artifact GC publication boundaries.
 
-1. Complete real-repository and live-target compatibility gates.
-2. Kill a disposable provider drill at a deterministic mutation boundary,
-   preserve its incomplete history, and prove target reconciliation plus a
-   clean retry.
-3. Run one executor/controller on a single host with process-loss recovery.
-4. Add remote executors and leases only after single-host reconciliation works.
-5. Add TUI, then multi-user controller capabilities, then web UI if validated
+Completed prerequisite: a disposable WAL-G drill is now killed at a
+deterministic provider-mutation boundary after durable intent. The CLI
+preserves incomplete history, requires exact digest and stopped-executor
+confirmation, reconciles without replay, proves owned cleanup, and passes a new
+attempt. This proves the single-host recovery primitive, not lease fencing.
+
+1. Complete real-repository and live-target compatibility gates required by
+   the CLI-first `v1.0.0` contract.
+2. Run one executor/controller on a single host with leases and automatic
+   process-loss recovery as post-GA control-plane work.
+3. Add remote executors only after single-host lease and heartbeat recovery is
+   proven.
+4. Add TUI, then multi-user controller capabilities, then web UI if validated
    workflows require it.
 
 No gate is satisfied by UI mockups or fixture-only provider tests.

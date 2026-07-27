@@ -125,13 +125,15 @@ tagging; fixture evidence is never promoted to native-version claims.
 5. add a TUI for history before considering a web UI
 
 Implementation status: steps 1 and 2 are complete on the post-`v0.2.0-rc.2`
-main branch as strict `pgdrill.fleet/v1alpha1`,
-`pgdrill.plan/v1alpha1`, and `pgdrill.history-store/v1alpha1` local
-contracts. They remain daemon-free and internal to this module. Steps 3
-through 5 are deferred until stable-schema migration and killed-process
-real-drill gates are proven. Local history retention and reference-aware
-directory-artifact GC are implemented; neither is the future fleet artifact
-lifecycle.
+main branch as strict stable `pgdrill.fleet/v1`, `pgdrill.plan/v1`, and
+`pgdrill.history-store/v1` local contracts with a tested copy migration from
+the frozen alpha floor. They remain daemon-free and internal to this module.
+Digest-confirmed local recovery is also proven by killing a real WAL-G drill
+after durable restore intent, cleaning exact owned state, and passing a new
+attempt without rewriting incomplete history. Steps 3 through 5 remain
+post-GA work until broader field evidence and the standalone release contract
+are satisfied. Local history retention and reference-aware directory-artifact
+GC are implemented; neither is the future fleet artifact lifecycle.
 
 ## Consequences
 

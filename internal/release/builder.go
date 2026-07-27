@@ -141,6 +141,12 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read history document: %w", err)
 	}
+	attemptRecoveryDocument, err := os.ReadFile(
+		filepath.Join(opts.SourceDir, "docs", "attempt-recovery.md"),
+	)
+	if err != nil {
+		return Result{}, fmt.Errorf("read attempt recovery document: %w", err)
+	}
 	upgradeDocument, err := os.ReadFile(filepath.Join(opts.SourceDir, "docs", "upgrade.md"))
 	if err != nil {
 		return Result{}, fmt.Errorf("read upgrade document: %w", err)
@@ -194,6 +200,7 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 		archivePath := filepath.Join(workDir, archiveName)
 		entries := []archiveEntry{
 			{Name: filepath.ToSlash(filepath.Join(rootName, ".go-version")), Mode: 0o644, Body: goVersion},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "ATTEMPT_RECOVERY.md")), Mode: 0o644, Body: attemptRecoveryDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "COMPATIBILITY.md")), Mode: 0o644, Body: compatibilityDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "FLEET_PLAN.md")), Mode: 0o644, Body: fleetPlanDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "HISTORY.md")), Mode: 0o644, Body: historyDocument},

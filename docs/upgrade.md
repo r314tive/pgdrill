@@ -24,16 +24,21 @@ without rewriting immutable historical specs, events, or reports.
 
 1. Stop schedulers that can start new pgdrill attempts.
 2. Let active attempts finish or retain their event-only state deliberately.
-3. Verify the complete store:
+3. For an abandoned local attempt, stop its complete executor process group
+   and use the current binary's digest-confirmed `attempt recover` flow before
+   changing binaries. If recovery is deliberately deferred, preserve the exact
+   config and sibling checkpoint directory with the incomplete history. See
+   [attempt-recovery.md](attempt-recovery.md).
+4. Verify the complete store:
 
    ```sh
    pgdrill history verify -store /var/lib/pgdrill/history
    ```
 
-4. If `maintenance_required` is true, do not migrate. Resume the reported
+5. If `maintenance_required` is true, do not migrate. Resume the reported
    retention digest with the exact alpha binary and original policy, or
    restore a verified pre-operation backup, then verify again.
-5. Verify each local artifact store against its complete history scope:
+6. Verify each local artifact store against its complete history scope:
 
    ```sh
    pgdrill artifact verify \
@@ -43,10 +48,11 @@ without rewriting immutable historical specs, events, or reports.
 
    Resume a pending artifact GC digest before continuing. Legacy blobs without
    immutable claims are valid but remain protected from default GC.
-6. Ensure the destination parent is not group- or world-writable and has
+7. Ensure the destination parent is not group- or world-writable and has
    enough free space for a complete second history store plus a temporary
    staging copy.
-7. Archive sibling artifact stores on the same trust boundary. The history
+8. Archive sibling artifact and checkpoint stores on the same trust boundary.
+   The history
    source itself remains the rollback copy, but an additional archive is still
    appropriate for audit retention:
 
@@ -54,11 +60,13 @@ without rewriting immutable historical specs, events, or reports.
    umask 077
    tar -C /var/lib/pgdrill -czf pgdrill-history-before-upgrade.tar.gz history
    tar -C /var/lib/pgdrill -czf pgdrill-artifacts-before-upgrade.tar.gz report.json.artifacts
+   tar -C /var/lib/pgdrill -czf pgdrill-checkpoints-before-upgrade.tar.gz report.json.checkpoints
    sha256sum pgdrill-history-before-upgrade.tar.gz
    sha256sum pgdrill-artifacts-before-upgrade.tar.gz
+   sha256sum pgdrill-checkpoints-before-upgrade.tar.gz
    ```
 
-8. Retain the current binary, its checksum, version output, and configuration.
+9. Retain the current binary, its checksum, version output, and configuration.
 
 The archive contains operational evidence and can contain infrastructure
 identifiers. Do not upload it to a public issue or release.

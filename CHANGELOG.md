@@ -13,7 +13,18 @@ called out explicitly even while the major version is `0`.
 - Stable `v1` schema identifiers for newly produced reports, drill specs, run
   events, operation checkpoints, policy evaluations, artifact references and
   local stores, fleet/plan documents, compatibility matrices, doctor output,
-  and local history envelopes.
+  local history envelopes, and interrupted-attempt recovery plans/results.
+- `pgdrill attempt recover` with read-only planning, absolute path scope,
+  immutable history/config identity checks, deterministic cleanup operations,
+  exact digest confirmation, an explicit stopped-executor assertion,
+  terminal-report collision checks, observation-only source reconciliation,
+  ownership-guarded local cleanup, post-cleanup proof, structured unresolved
+  outcomes, and idempotent retry.
+- A real WAL-G process-loss gate that blocks after durable `backup-fetch`
+  intent, sends `SIGKILL` to the complete drill process group, retains the
+  incomplete attempt, applies digest-confirmed owned-target recovery, and
+  requires a fully passed new attempt without rewriting the interrupted
+  history.
 - `pgdrill history migrate` with deterministic dry-run planning, exact digest
   confirmation, strict source-tree hashing, a previously absent destination,
   private staging, byte-preserved historical records, stable migration
@@ -120,6 +131,9 @@ called out explicitly even while the major version is `0`.
 - Advisory checkpoint/history locking and local-target process control now use
   explicit platform implementations, and the normal check gate cross-compiles
   Windows amd64 so the documented build portability boundary remains enforced.
+- Checkpoint `Load` and `List` are now read-only for absent attempts. Existing
+  checkpoint roots, attempt directories, and advisory-lock files reject
+  symlinks or non-real filesystem objects before recovery state is trusted.
 - Canonical run and attempt identities now share a 512-byte, valid-UTF-8,
   control-character-free validation rule across operations, events, reports,
   and local history; explicit values are never silently normalized, and long

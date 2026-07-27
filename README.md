@@ -34,13 +34,19 @@ The CLI implements:
   frozen `v0.3.0-alpha.1` history compatibility floor
 - full local artifact hashing plus age-gated, history-reference-aware,
   digest-confirmed garbage collection
+- digest-confirmed recovery of interrupted local attempts with observation-only
+  operation reconciliation, exact ownership cleanup, immutable incomplete
+  history, and a mandatory stopped-executor assertion
 - text report inspection and Prometheus export
 
 Native and CNPG paths share one lifecycle, cancellation, reconciliation, and
 reporting contract. Shared conformance suites cover every adapter and
 executable target. Reproducible integration harnesses exercise all four native
 providers plus a disposable KinD/CNPG environment through real base backups,
-post-backup WAL replay, probes, policy, and cleanup.
+post-backup WAL replay, probes, policy, and cleanup. The WAL-G gate also kills
+the complete drill process group after durable restore intent, reconciles and
+cleans the interrupted attempt, then requires a passed retry under a new
+attempt ID.
 
 The compatibility matrix records narrow fixture, controlled, and exact-version
 field evidence. One clean `v0.1.0-alpha.10` commit has passed WAL-G 3.0.8,
@@ -57,9 +63,10 @@ published Linux arm64 archive passed local WAL-G latest recovery and timestamp
 PITR, proving both sides of an archived transaction boundary. These are
 release and controlled-demo gates, not broader compatibility claims.
 
-The typed planner, stable schemas, local history, and copy migration are
-implemented on the current `main` branch after `v0.2.0-rc.2`; they are not
-part of that published archive yet.
+The typed planner, stable schemas, local history, copy migration, resumable
+retention/GC, and interrupted-attempt recovery are implemented on the current
+`main` branch after `v0.2.0-rc.2`; they are not part of that published archive
+yet.
 Fleet scheduling, leases, remote executors, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
 than become a second orchestration implementation.
@@ -201,7 +208,7 @@ For a clean release-candidate commit with Docker available, run the complete
 artifact, lint, native-provider, and disposable CNPG gate:
 
 ```sh
-make -s release-candidate-check VERSION=v0.3.0-alpha.3
+make -s release-candidate-check VERSION=v0.3.0-alpha.5
 ```
 
 ```sh
@@ -228,6 +235,9 @@ go run ./cmd/pgdrill artifact verify \
 go run ./cmd/pgdrill artifact gc \
   -store path/to/report.json.artifacts -history-store path/to/history \
   -before 2026-08-01T00:00:00Z
+go run ./cmd/pgdrill attempt recover -f examples/pgdrill.yaml \
+  -run-id interrupted-run -attempt-id attempt-1 \
+  -history-store path/to/history
 go run ./cmd/pgdrill report show path/to/report.json
 go run ./cmd/pgdrill report metrics path/to/report.json
 ```
@@ -235,7 +245,8 @@ go run ./cmd/pgdrill report metrics path/to/report.json
 Automation may provide stable correlation identities with the `-run-id` or
 `-drill-id` flag and the `-attempt-id` flag. Reusing an attempt that already has
 mutation checkpoints is rejected until its orphaned state has been reconciled;
-it is not permission to replay commands.
+it is not permission to replay commands. The guarded local recovery flow is
+documented in [docs/attempt-recovery.md](docs/attempt-recovery.md).
 
 Local history is opt-in for execution, so cron and CI jobs do not acquire a
 new availability dependency:
@@ -269,6 +280,11 @@ Long-running commands handle `SIGINT` and `SIGTERM`. The active provider,
 target, or probe command is canceled first; pgdrill then uses a bounded
 finalization context for owned-target cleanup and atomic report persistence.
 Interrupted drills are reported as `aborted` and return exit code `130`.
+Uncatchable process loss can leave only history events and operation
+checkpoints. After the complete executor process group is independently
+stopped, `pgdrill attempt recover` can plan and confirm fail-closed local
+cleanup without replaying the provider command or fabricating a terminal
+report.
 
 `pgdrill run` and `pgdrill target verify` execute target-aware native-tool
 preflight automatically. Local dependencies fail before repository access or
@@ -303,6 +319,8 @@ the versioned JSON report contract is documented in
 documented in [docs/run-event-format.md](docs/run-event-format.md), and the
 internal immutable run input is documented in
 [docs/drill-spec-format.md](docs/drill-spec-format.md). The
+interrupted local-attempt protocol is documented in
+[docs/attempt-recovery.md](docs/attempt-recovery.md). The
 daemon-free fleet and plan contracts are documented in
 [docs/fleet-plan-format.md](docs/fleet-plan-format.md), and local persistence
 is documented in [docs/history-format.md](docs/history-format.md). The local

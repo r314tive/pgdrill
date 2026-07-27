@@ -2,6 +2,9 @@ package checkpoint
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +46,124 @@ func TestDirectoryStorePersistsAndTransitionsCheckpoint(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Operation.Key != operation.Key {
 		t.Fatalf("List() = %#v", listed)
+	}
+}
+
+func TestDirectoryStoreListDoesNotCreateMissingAttemptState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "checkpoints")
+	store := DirectoryStore{Path: root}
+	identity := model.AttemptIdentity{
+		RunID:      "missing-run",
+		AttemptID:  "missing-attempt",
+		SpecDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+
+	checkpoints, err := store.List(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("List() checkpoints = %#v, want empty", checkpoints)
+	}
+	operation, err := model.NewOperation(
+		identity,
+		model.DrillStageRestoreExecution,
+		model.OperationRestoreStep,
+		"restore",
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.Load(context.Background(), operation); err != nil || found {
+		t.Fatalf("Load() = (_, %t, %v), want missing checkpoint", found, err)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only List()/Load() created checkpoint state, stat error = %v", err)
+	}
+}
+
+func TestDirectoryStoreRejectsSymlinkAttemptLock(t *testing.T) {
+	root := t.TempDir()
+	store := DirectoryStore{Path: root}
+	operation := testOperation(t, "attempt-symlink-lock", 0)
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	if err := store.Save(context.Background(), model.OperationCheckpoint{
+		SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+		Operation:     operation,
+		State:         model.OperationStateIntent,
+		StartedAt:     now,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, attemptDirectoryName(operation.Identity), ".lock")
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside-lock")
+	if err := os.WriteFile(outside, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, lockPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.List(context.Background(), operation.Identity); err == nil ||
+		!strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("List() error = %v, want symlink refusal", err)
+	}
+	if _, _, err := store.Load(context.Background(), operation); err == nil ||
+		!strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("Load() error = %v, want symlink refusal", err)
+	}
+}
+
+func TestDirectoryStoreRejectsSymlinkAttemptDirectory(t *testing.T) {
+	root := t.TempDir()
+	operation := testOperation(t, "attempt-symlink-dir", 0)
+	attemptPath := filepath.Join(root, attemptDirectoryName(operation.Identity))
+	if err := os.Symlink(t.TempDir(), attemptPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	err := (DirectoryStore{Path: root}).Save(
+		context.Background(),
+		model.OperationCheckpoint{
+			SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+			Operation:     operation,
+			State:         model.OperationStateIntent,
+			StartedAt:     now,
+			UpdatedAt:     now,
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("Save() error = %v, want symlink directory refusal", err)
+	}
+}
+
+func TestDirectoryStoreRejectsSymlinkRoot(t *testing.T) {
+	realRoot := t.TempDir()
+	root := filepath.Join(t.TempDir(), "checkpoint-link")
+	if err := os.Symlink(realRoot, root); err != nil {
+		t.Fatal(err)
+	}
+	store := DirectoryStore{Path: root}
+	operation := testOperation(t, "attempt-symlink-root", 0)
+	if _, err := store.List(context.Background(), operation.Identity); err == nil ||
+		!strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("List() error = %v, want symlink root refusal", err)
+	}
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	err := store.Save(context.Background(), model.OperationCheckpoint{
+		SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+		Operation:     operation,
+		State:         model.OperationStateIntent,
+		StartedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("Save() error = %v, want symlink root refusal", err)
 	}
 }
 

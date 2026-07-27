@@ -245,6 +245,11 @@ Completed foundation:
 - A clean-tree `release-candidate-check` that runs the deterministic release
   gate, ShellCheck, all four native-provider drills, and the disposable CNPG
   drill with one version and full Git commit.
+- A deterministic real WAL-G executor-loss gate that sends `SIGKILL` to the
+  complete drill process group after durable restore intent, preserves
+  incomplete history, applies digest-confirmed observation-only recovery,
+  proves exact owned cleanup, and requires a passed retry under a new attempt
+  ID.
 
 Remaining external engine gate:
 
@@ -296,10 +301,10 @@ Remaining gates, in order:
 ## Phase 6: Fleet Control Plane
 
 Status: daemon-free typed planning, local durable history, stable schema
-identifiers, and copy-on-migrate history implemented on main. Do not implement
-a daemon before the remaining real-repository and killed-process gates are
-complete. Distributed controller/executor operation is not part of the
-`v1.0.0` boundary.
+identifiers, copy-on-migrate history, and manual killed-attempt recovery are
+implemented on main. The disposable provider process-loss gate is complete;
+broader real-repository evidence remains external work. Distributed
+controller/executor operation is not part of the `v1.0.0` boundary.
 
 The control plane will compile typed fleet resources into independent immutable
 engine runs:
@@ -344,16 +349,21 @@ Implemented foundation:
    `v0.3.0-alpha.1` floor to a stable store, preserves historical files
    byte-for-byte, survives interrupted copy, and retains the source for
    rollback.
+10. `pgdrill attempt recover` now turns an incomplete local attempt into a
+    digest-confirmed reconciliation/cleanup decision without replaying provider
+    mutation or rewriting history. A real WAL-G process-group kill proves the
+    unresolved-operation, owned-cleanup, and clean-retry path.
 
 Next implementation order:
 
-1. Kill a disposable provider drill at a deterministic mutation boundary,
-   retain its incomplete history, and prove target reconciliation plus a clean
-   retry. Actual child-process kills already cover history migration,
-   retention, and artifact-GC publication boundaries.
-2. Controller and executor binaries with leases, heartbeats, idempotency, and
-   executor-local secret resolution.
-3. Schedules, concurrency controls, RBAC, audit, and notifications.
+1. Keep the `v1.0.0` path focused on exact published-candidate provider
+   evidence, signed distribution/provenance, reproducible demo operation, and
+   an external pilot; none requires a daemon.
+2. After the single-host engine and recovery schemas settle, add controller and
+   executor binaries with leases, heartbeats, idempotency, and executor-local
+   secret resolution as a separately gated `v1.x` capability.
+3. Add schedules and concurrency controls before RBAC, audit, notifications,
+   TUI, or web UI.
 
 Keep these binaries in this repository and Go module while contracts evolve
 together. Split a module or repository only when versioning, ownership,
@@ -391,6 +401,7 @@ requires:
 - field-backed latest and timestamp PITR support cells for the advertised
   providers, versions, platforms, and repository topologies;
 - local and CNPG target evidence with strict ownership and cleanup;
+- digest-confirmed recovery and immutable evidence for killed local attempts;
 - daemon-free typed planning and local durable run history;
 - signed archives and OCI images with checksums, SBOM, and provenance;
 - independently verified exact-candidate runs, a reproducible demo, and at

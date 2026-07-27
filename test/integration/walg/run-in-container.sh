@@ -13,6 +13,10 @@ readonly CONFIG="/opt/pgdrill/test/pgdrill.yaml"
 readonly PITR_CONFIG_TEMPLATE="/opt/pgdrill/test/pgdrill-pitr.yaml.tmpl"
 readonly ROOT="/validation"
 readonly PITR_CONFIG="${ROOT}/pgdrill-pitr.yaml"
+readonly KILL_CONFIG="${ROOT}/pgdrill-kill.yaml"
+readonly WALG_KILL_WRAPPER="${ROOT}/wal-g-kill-wrapper"
+readonly WALG_KILL_READY="${ROOT}/wal-g-kill.ready"
+readonly WALG_KILL_BYPASS="${ROOT}/wal-g-kill.bypass"
 readonly SOURCE_DATA="${ROOT}/source-data"
 readonly SOURCE_SOCKET="${ROOT}/source-socket"
 readonly SOURCE_LOG="${ROOT}/source.log"
@@ -57,10 +61,14 @@ wait_for_archived_wal() {
 }
 
 source_running=false
+killed_drill_pid=""
 cleanup() {
   status="$?"
   trap - EXIT
   set +e
+  if [[ -n "${killed_drill_pid}" ]] && kill -0 "${killed_drill_pid}" >/dev/null 2>&1; then
+    kill -KILL -- "-${killed_drill_pid}" >/dev/null 2>&1
+  fi
   if [[ "${source_running}" == "true" ]]; then
     "${PGBIN}/pg_ctl" -D "${SOURCE_DATA}" -m fast -w -t 30 stop >/dev/null 2>&1
   fi
@@ -74,6 +82,7 @@ trap cleanup EXIT
 [[ "$(id -u)" == "999" ]] || die "container must run as the postgres UID 999"
 [[ -x "${PGDRILL}" ]] || die "pgdrill binary is not executable"
 [[ -x "${WALG}" ]] || die "WAL-G binary is not executable"
+command -v setsid >/dev/null 2>&1 || die "setsid is required for process-loss testing"
 [[ -r "${CONFIG}" ]] || die "pgdrill config is not readable"
 [[ -r "${PITR_CONFIG_TEMPLATE}" ]] || die "pgdrill PITR config template is not readable"
 
@@ -257,7 +266,130 @@ pgdrill_integration_verify_history_attempt \
   "${pitr_run_id}" \
   attempt-1 \
   /output/pitr-history
-pgdrill_integration_capture_history_store "${PGDRILL}" "${HISTORY}" /output 2
+
+log "preparing a deterministic WAL-G process-loss boundary"
+cat >"${WALG_KILL_WRAPPER}" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "\${1:-}" == "backup-fetch" && ! -e "${WALG_KILL_BYPASS}" ]]; then
+  : >"${WALG_KILL_READY}"
+  while [[ ! -e "${WALG_KILL_BYPASS}" ]]; do
+    sleep 1
+  done
+fi
+exec "${WALG}" "\$@"
+EOF
+chmod 0755 "${WALG_KILL_WRAPPER}"
+sed \
+  -e "s|binary: ${WALG}|binary: ${WALG_KILL_WRAPPER}|" \
+  -e 's|path: /output/report.json|path: /output/killed-report.json|' \
+  -e 's/count(\*) = 101/count(*) = 102/' \
+  "${CONFIG}" >"${KILL_CONFIG}"
+grep -F "binary: ${WALG_KILL_WRAPPER}" "${KILL_CONFIG}" >/dev/null ||
+  die "killed-drill provider wrapper was not configured"
+grep -F 'path: /output/killed-report.json' "${KILL_CONFIG}" >/dev/null ||
+  die "killed-drill report path was not isolated"
+grep -F 'count(*) = 102' "${KILL_CONFIG}" >/dev/null ||
+  die "killed-drill latest-recovery probe was not updated to the 102-row boundary"
+cp "${KILL_CONFIG}" /output/killed-config.yaml
+
+killed_run_id="integration-walg-killed-$(date -u +%Y%m%dT%H%M%SZ)"
+log "starting interrupted attempt ${killed_run_id}/attempt-1"
+setsid "${PGDRILL}" run \
+  -f "${KILL_CONFIG}" \
+  -run-id "${killed_run_id}" \
+  -attempt-id attempt-1 \
+  -history-dir "${HISTORY}" >/output/killed-run.log 2>&1 &
+killed_drill_pid="$!"
+for _ in $(seq 1 300); do
+  if [[ -e "${WALG_KILL_READY}" ]]; then
+    break
+  fi
+  if ! kill -0 "${killed_drill_pid}" >/dev/null 2>&1; then
+    wait "${killed_drill_pid}" || true
+    die "interrupted attempt exited before the WAL-G mutation boundary"
+  fi
+  sleep 0.1
+done
+[[ -e "${WALG_KILL_READY}" ]] ||
+  die "interrupted attempt did not reach the WAL-G mutation boundary"
+
+kill -KILL -- "-${killed_drill_pid}"
+set +e
+wait "${killed_drill_pid}"
+killed_status="$?"
+set -e
+killed_drill_pid=""
+[[ "${killed_status}" == "137" ]] ||
+  die "interrupted attempt exited with ${killed_status}, expected SIGKILL status 137"
+touch "${WALG_KILL_BYPASS}"
+[[ -d "${WORK_DIR}" ]] || die "interrupted attempt did not retain its owned target"
+[[ ! -e /output/killed-report.json ]] ||
+  die "interrupted attempt unexpectedly published a terminal report"
+
+"${PGDRILL}" history show \
+  -store "${HISTORY}" \
+  -attempt-id attempt-1 \
+  -format json \
+  "${killed_run_id}" >/output/killed-history.json
+grep -F '"type": "run_started"' /output/killed-history.json >/dev/null ||
+  die "interrupted attempt has no durable start event"
+if grep -F '"type": "run_finished"' /output/killed-history.json >/dev/null; then
+  die "interrupted attempt history is unexpectedly terminal"
+fi
+if grep -F '"report":' /output/killed-history.json >/dev/null; then
+  die "interrupted attempt history unexpectedly contains a report"
+fi
+
+log "planning and confirming interrupted-attempt reconciliation"
+"${PGDRILL}" attempt recover \
+  -f "${KILL_CONFIG}" \
+  -run-id "${killed_run_id}" \
+  -attempt-id attempt-1 \
+  -history-store "${HISTORY}" \
+  -format json >/output/recovery-plan.json
+recovery_digest="$(
+  sed -n 's/^[[:space:]]*"digest": "\(sha256:[0-9a-f]\{64\}\)"[[:space:]]*$/\1/p' \
+    /output/recovery-plan.json
+)"
+[[ -n "${recovery_digest}" ]] || die "recovery plan has no canonical digest"
+"${PGDRILL}" attempt recover \
+  -f "${KILL_CONFIG}" \
+  -run-id "${killed_run_id}" \
+  -attempt-id attempt-1 \
+  -history-store "${HISTORY}" \
+  -confirm "${recovery_digest}" \
+  -confirm-executor-stopped \
+  -format json >/output/recovery-result.json
+grep -F '"target_ready_for_retry": true' /output/recovery-result.json >/dev/null ||
+  die "recovery did not prove the target ready for retry"
+grep -F '"history_preserved": true' /output/recovery-result.json >/dev/null ||
+  die "recovery did not preserve incomplete history"
+grep -F '"source_reconciliation_complete": false' /output/recovery-result.json >/dev/null ||
+  die "unproven killed provider mutation was not retained as unresolved"
+[[ ! -e "${WORK_DIR}" ]] || die "recovery left the owned restore work directory"
+
+log "running clean retry ${killed_run_id}/attempt-2 after recovery"
+"${PGDRILL}" run \
+  -f "${KILL_CONFIG}" \
+  -run-id "${killed_run_id}" \
+  -attempt-id attempt-2 \
+  -history-dir "${HISTORY}" 2>&1 | tee /output/retry-run.log
+"${PGDRILL}" report show /output/killed-report.json | tee /output/retry-report.txt
+grep -Eq '^Status[[:space:]]+passed$' /output/retry-report.txt ||
+  die "clean retry report status is not passed"
+grep -Eq '^Attempt[[:space:]]+attempt-2$' /output/retry-report.txt ||
+  die "clean retry report has the wrong attempt identity"
+grep -Eq '^cleanup[[:space:]]+true[[:space:]]+passed' /output/retry-report.txt ||
+  die "clean retry cleanup policy did not pass"
+[[ ! -e "${WORK_DIR}" ]] || die "clean retry left the restore work directory"
+pgdrill_integration_verify_history_attempt \
+  "${PGDRILL}" \
+  "${HISTORY}" \
+  "${killed_run_id}" \
+  attempt-2 \
+  /output/retry-history
+pgdrill_integration_capture_history_store "${PGDRILL}" "${HISTORY}" /output 4 1
 
 {
   printf 'pgdrill=%s\n' "${pgdrill_version}"
@@ -273,4 +405,4 @@ pgdrill_integration_capture_history_store "${PGDRILL}" "${HISTORY}" /output 2
   "${WALG}" backup-list --detail --json
 } >/output/source-state.txt
 
-log "PASS: latest recovery and timestamp PITR boundaries, probes, policy, and cleanup completed"
+log "PASS: latest recovery, timestamp PITR, killed-attempt reconciliation, clean retry, probes, policy, and cleanup completed"

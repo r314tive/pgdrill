@@ -64,6 +64,7 @@ pgdrill_integration_capture_history_store() {
   local _history_store="$2"
   local _history_output_dir="$3"
   local _history_expected_attempts="$4"
+  local _history_expected_incomplete="${5:-0}"
   local _history_list_json="${_history_output_dir}/history-list.json"
   local _history_list_text="${_history_output_dir}/history-list.txt"
   local _history_verify_json="${_history_output_dir}/history-verify.json"
@@ -71,6 +72,7 @@ pgdrill_integration_capture_history_store() {
   local _history_archive="${_history_output_dir}/history-store.tar.gz"
   local _history_archive_index="${_history_output_dir}/history-store-contents.txt"
   local _history_observed_attempts
+  local _history_observed_incomplete
   local _history_store_parent
   local _history_store_name
 
@@ -78,6 +80,13 @@ pgdrill_integration_capture_history_store() {
     '' | *[!0-9]*)
       pgdrill_integration_history_error \
         "expected attempt count must be a non-negative integer" ||
+        return 1
+      ;;
+  esac
+  case "${_history_expected_incomplete}" in
+    '' | *[!0-9]*)
+      pgdrill_integration_history_error \
+        "expected incomplete attempt count must be a non-negative integer" ||
         return 1
       ;;
   esac
@@ -105,8 +114,17 @@ pgdrill_integration_capture_history_store() {
       "history contains ${_history_observed_attempts} attempts, expected ${_history_expected_attempts}" ||
       return 1
   fi
-  if grep -F '"report_available": false' "${_history_list_json}" >/dev/null; then
-    pgdrill_integration_history_error "history contains an attempt without a terminal report" ||
+  _history_observed_incomplete="$(
+    grep -c '"report_available": false' "${_history_list_json}" || true
+  )"
+  if [[ "${_history_observed_incomplete}" != "${_history_expected_incomplete}" ]]; then
+    pgdrill_integration_history_error \
+      "history contains ${_history_observed_incomplete} incomplete attempts, expected ${_history_expected_incomplete}" ||
+      return 1
+  fi
+  if (( _history_expected_incomplete > _history_expected_attempts )); then
+    pgdrill_integration_history_error \
+      "incomplete attempt count exceeds total attempt count" ||
       return 1
   fi
   if ! "${_history_binary}" history verify \

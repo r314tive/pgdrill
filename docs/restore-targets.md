@@ -270,6 +270,14 @@ exact value is verified before recursive cleanup. When retained artifacts are
 required, use a fresh path for the next drill. Recurring automation should
 normally set `remove_work_dir: true`.
 
+After uncatchable executor loss, `pgdrill attempt recover` reconstructs a fresh
+local target from immutable attempt identity. It never adopts a merely
+matching path: preparation, operation receipts, any recovered PostgreSQL
+process, and cleanup must agree with the exact ownership marker. Apply requires
+the reviewed recovery-plan digest and a separately stopped executor process
+group; conflicts preserve the path and fail. See
+[attempt-recovery.md](attempt-recovery.md).
+
 File-writing restore steps are lexically limited to `work_dir` and reject
 existing symlink path components before and after parent-directory creation.
 The PostgreSQL runtime data directory must be a real directory inside the same
