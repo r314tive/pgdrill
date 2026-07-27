@@ -34,7 +34,7 @@ make test-integration-cnpg
 
 Set `PGDRILL_INTEGRATION_VERSION` to bind a clean run to a candidate version.
 Set `PGDRILL_INTEGRATION_REQUIRE_CLEAN=true` to reject a dirty source tree.
-`make release-candidate-check VERSION=v0.2.0-rc.1` applies both settings and
+`make release-candidate-check VERSION=v0.2.0-rc.2` applies both settings and
 runs this scenario after the release and native-provider gates.
 
 The script never uses the host's active Kubernetes context for mutations.

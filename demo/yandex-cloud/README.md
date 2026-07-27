@@ -164,7 +164,7 @@ Use the exact published Linux amd64 archive that will be demonstrated. From the
 repository root:
 
 ```sh
-VERSION=v0.2.0-rc.1
+VERSION=v0.2.0-rc.2
 RELEASE_DIR="$PWD/demo/yandex-cloud/.state/release/$VERSION"
 mkdir -p "$RELEASE_DIR"
 gh release download "$VERSION" \

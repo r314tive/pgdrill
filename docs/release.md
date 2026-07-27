@@ -7,7 +7,7 @@ compatibility evidence claimed by that release.
 ## Versioning
 
 - Use Semantic Versioning tags with a leading `v`, for example
-  `v0.1.0-alpha.6`, `v0.2.0-rc.1`, or `v0.2.0`.
+  `v0.1.0-alpha.6`, `v0.2.0-rc.2`, or `v0.2.0`.
 - Before `v1.0.0`, incompatible CLI, configuration, report JSON, or canonical
   model changes require at least a minor version bump and an explicit changelog
   note.
@@ -79,7 +79,7 @@ must run them explicitly for affected native paths. A pass from a dirty tree is
 marked dirty and is never release evidence.
 
 ```sh
-make -s release-check VERSION=v0.2.0-rc.1
+make -s release-check VERSION=v0.2.0-rc.2
 ```
 
 The aggregate Engine v0.2 candidate gate requires a clean worktree and runs
@@ -87,7 +87,7 @@ the release gate, ShellCheck, all four native-provider drills, and the
 disposable KinD/CNPG drill:
 
 ```sh
-make -s release-candidate-check VERSION=v0.2.0-rc.1
+make -s release-candidate-check VERSION=v0.2.0-rc.2
 ```
 
 Every integration process receives the same version and full Git commit.
@@ -124,14 +124,14 @@ pgdrill_<version>_checksums.txt
 Build only the artifacts with:
 
 ```sh
-make -s release-artifacts VERSION=v0.2.0-rc.1
+make -s release-artifacts VERSION=v0.2.0-rc.2
 ```
 
 Verify them on Linux or macOS respectively:
 
 ```sh
-(cd dist && sha256sum -c pgdrill_0.2.0-rc.1_checksums.txt)
-(cd dist && shasum -a 256 -c pgdrill_0.2.0-rc.1_checksums.txt)
+(cd dist && sha256sum -c pgdrill_0.2.0-rc.2_checksums.txt)
+(cd dist && shasum -a 256 -c pgdrill_0.2.0-rc.2_checksums.txt)
 ```
 
 `release-snapshot` remains available as a quick host-only build and smoke
@@ -146,7 +146,7 @@ check. It is not a substitute for `release-check`.
 4. Run the exact-candidate gate and extract release notes:
 
 ```sh
-VERSION=v0.2.0-rc.1
+VERSION=v0.2.0-rc.2
 make -s release-candidate-check VERSION="$VERSION"
 make -s release-notes VERSION="$VERSION"
 ```

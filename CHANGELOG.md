@@ -8,6 +8,8 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.2.0-rc.2] - 2026-07-27
+
 ### Added
 
 - A local demo rehearsal that runs a supplied, checksum-verified published

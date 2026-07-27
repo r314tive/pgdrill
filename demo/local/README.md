@@ -34,14 +34,29 @@ are absent; the restore drill itself runs in a network-isolated container.
 
 Download the release archive for the architecture used by the local Docker
 daemon and obtain its SHA-256 digest from the matching release checksum file.
-Then run from the repository root:
+For example, with an authenticated GitHub CLI and an arm64 Docker daemon:
 
 ```sh
+VERSION=v0.2.0-rc.2
+ARCH=arm64
+RELEASE_DIR="$PWD/.cache/demo/releases/$VERSION"
+mkdir -p "$RELEASE_DIR"
+gh release download "$VERSION" \
+  --repo r314tive/pgdrill \
+  --dir "$RELEASE_DIR" \
+  --pattern "pgdrill_${VERSION#v}_linux_${ARCH}.tar.gz" \
+  --pattern "pgdrill_${VERSION#v}_checksums.txt"
+ARCHIVE="$RELEASE_DIR/pgdrill_${VERSION#v}_linux_${ARCH}.tar.gz"
+ARCHIVE_SHA256="$(
+  awk -v archive="${ARCHIVE##*/}" '$2 == archive { print $1 }' \
+    "$RELEASE_DIR/pgdrill_${VERSION#v}_checksums.txt"
+)"
+COMMIT="$(git rev-parse "$VERSION^{commit}")"
 make -s demo-rehearsal \
-  VERSION=v0.2.0-rc.1 \
-  DEMO_RELEASE_COMMIT=e9cb257c8312020166b5dff9c91f9bd9cde4ca25 \
-  DEMO_RELEASE_ARCHIVE=/path/to/pgdrill_0.2.0-rc.1_linux_arm64.tar.gz \
-  DEMO_RELEASE_SHA256=a0ae4d18e88794f24e5c97bab44c9b8e43fd9a9be06482fb6d47e318d304589c
+  VERSION="$VERSION" \
+  DEMO_RELEASE_COMMIT="$COMMIT" \
+  DEMO_RELEASE_ARCHIVE="$ARCHIVE" \
+  DEMO_RELEASE_SHA256="$ARCHIVE_SHA256"
 ```
 
 Use the `linux_amd64` archive on an amd64 Docker daemon. The command rejects a
@@ -51,6 +66,6 @@ the complete latest and timestamp-PITR runs under
 paths.
 
 The current published prerelease is
-[`v0.2.0-rc.1`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.1).
+[`v0.2.0-rc.2`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.2).
 Always take the digest from that release instead of copying the example when
 rehearsing another version.

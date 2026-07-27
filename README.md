@@ -11,8 +11,8 @@ operational question:
 
 ## Status
 
-Engine v0.2 has a published
-[`v0.2.0-rc.1`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.1)
+Engine v0.2 has a
+[`v0.2.0-rc.2`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.2)
 release candidate. It is suitable for controlled technical evaluation but not
 a blanket production-support claim.
 
@@ -46,7 +46,9 @@ The exact `v0.2.0-rc.1` commit
 `e9cb257c8312020166b5dff9c91f9bd9cde4ca25` passed the clean aggregate
 release-candidate gate across all four native providers and disposable CNPG
 before publication. Published checksums were then verified independently, and
-the published Linux arm64 archive passed the local WAL-G rehearsal. These are
+the published Linux arm64 archive passed the local WAL-G latest-recovery
+rehearsal. `v0.2.0-rc.2` corrects PostgreSQL timestamp formatting and extends
+that rehearsal with a real before/after PITR transaction boundary. These are
 release and controlled-demo gates, not broader compatibility claims.
 
 Fleet scheduling, durable multi-run history, a controller/agent protocol, TUI,
@@ -189,7 +191,7 @@ For a clean release-candidate commit with Docker available, run the complete
 artifact, lint, native-provider, and disposable CNPG gate:
 
 ```sh
-make -s release-candidate-check VERSION=v0.2.0-rc.1
+make -s release-candidate-check VERSION=v0.2.0-rc.2
 ```
 
 ```sh
