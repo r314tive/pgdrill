@@ -1,0 +1,13 @@
+host_context_before=iiunusov-p021-aga-k8s-nlam0
+kind=kind v0.31.0 go1.25.5 darwin/arm64
+kubectl=v1.34.2
+pgdrill=pgdrill v0.1.0-alpha.10 (a7b92a2aecaf82217bb2bfd9ffe9f52da055954c, 2026-07-22T12:10:27Z)
+release_archive_sha256=1e7a15855762813d087fdfe5a48ccd6b90bf5b6ec470d0c160d24b9306b7bb2b
+kind_binary_sha256=88bf554fe9da6311c9f8c2d082613c002911a476f6b5090e9420b35d84e70c5c
+cnpg_upstream_manifest_sha256=e465d8c3474a3fa6533938082c041322a208a66746f23d42083ed375a9339a6a
+cnpg_pinned_manifest_sha256=6f0c9946f8b9e070276e5da259bc0b06b8df48de29bcd3deee3d28dc91c08629
+tags=["kindest/node@sha256:5fc52d52a7b9574015299724bd68f183702956aa4a2116ae75a63cb574b35af8"] id=sha256:5fc52d52a7b9574015299724bd68f183702956aa4a2116ae75a63cb574b35af8 digests=["kindest/node@sha256:5fc52d52a7b9574015299724bd68f183702956aa4a2116ae75a63cb574b35af8"] architecture=arm64
+tags=["ghcr.io/cloudnative-pg/cloudnative-pg:1.26.3"] id=sha256:8cf62c3d55a5db0ca934d118132b4b825b9d684ca0dce2b0235c2279adf14dad digests=["ghcr.io/cloudnative-pg/cloudnative-pg@sha256:8cf62c3d55a5db0ca934d118132b4b825b9d684ca0dce2b0235c2279adf14dad"] architecture=arm64
+tags=["ghcr.io/cloudnative-pg/postgresql@sha256:ce92730c48402c2377ea438d978dd3d76702800a2d215fcbdd53ab83d4833524"] id=sha256:ce92730c48402c2377ea438d978dd3d76702800a2d215fcbdd53ab83d4833524 digests=["ghcr.io/cloudnative-pg/postgresql@sha256:ce92730c48402c2377ea438d978dd3d76702800a2d215fcbdd53ab83d4833524"] architecture=arm64
+tags=["quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"] id=sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e digests=["quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"] architecture=arm64
+tags=["quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z"] id=sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3 digests=["quay.io/minio/mc@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3"] architecture=arm64

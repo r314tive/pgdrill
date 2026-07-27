@@ -242,6 +242,12 @@ func runPostRestoreChecks(ctx context.Context, cfg config.Config, spec cnpg.Veri
 	if err != nil {
 		return model.CheckReport{}, fmt.Errorf("build restored target probe preflight: %w", err)
 	}
+	requirements = append([]preflight.Requirement{{
+		Tool:       model.ToolPostgres,
+		Components: []string{"target.kubernetes.postgres"},
+		Binary:     "postgres",
+		Args:       []string{"--version"},
+	}}, requirements...)
 	for i := range requirements {
 		requirements[i].RedactValues = append(requirements[i].RedactValues, cfg.Target.RedactValues...)
 	}

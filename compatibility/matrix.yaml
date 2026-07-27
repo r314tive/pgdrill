@@ -1,5 +1,5 @@
 schema_version: pgdrill.compatibility-matrix/v1alpha1
-updated_at: "2026-07-21"
+updated_at: "2026-07-22"
 entries:
   - id: provider.barman.field
     component: provider
@@ -36,6 +36,41 @@ entries:
       - One same-host local-rsync repository does not establish SSH, streaming-backup, or cloud-storage compatibility.
       - Only latest recovery from one full backup with one post-backup WAL segment was exercised.
       - The tested pgdrill binary was a development build at an exact commit, not a published release artifact.
+  - id: provider.barman.field.v0-1-0-alpha-10
+    component: provider
+    implementation: barman
+    evidence_level: field
+    capabilities:
+      - backup_manifest_generation
+      - backup_manifest_verification
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "3.19.1"
+    pgdrill_versions:
+      - v0.1.0-alpha.10
+    pgdrill_commits:
+      - a7b92a2aecaf82217bb2bfd9ffe9f52da055954c
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-22"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/report.json
+      - kind: field_note
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/README.md#validated-scope
+    limitations:
+      - One same-host local-rsync repository does not establish SSH, streaming-backup, or cloud-storage compatibility.
+      - Only latest recovery from one full backup with one post-backup WAL segment was exercised.
+      - The observation is a controlled local release-artifact drill, not a production RTO or support-range claim.
   - id: provider.barman.fixture
     component: provider
     implementation: barman
@@ -97,6 +132,40 @@ entries:
       - One same-host local filesystem catalog does not establish remote SSH compatibility.
       - Only latest recovery from one compressed full STREAM backup with post-backup WAL replay was exercised.
       - The tested pgdrill binary was a development build at an exact commit, not a published release artifact.
+  - id: provider.pg-probackup.field.v0-1-0-alpha-10
+    component: provider
+    implementation: pg_probackup
+    evidence_level: field
+    capabilities:
+      - backup_validation
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "2.5.16"
+    pgdrill_versions:
+      - v0.1.0-alpha.10
+    pgdrill_commits:
+      - a7b92a2aecaf82217bb2bfd9ffe9f52da055954c
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-22"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/report.json
+      - kind: field_note
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/README.md#validated-scope
+    limitations:
+      - One same-host local filesystem catalog does not establish remote SSH compatibility.
+      - Only latest recovery from one compressed full STREAM backup with post-backup WAL replay was exercised.
+      - The observation is a controlled local release-artifact drill, not a production RTO or support-range claim.
   - id: provider.pg-probackup.fixture
     component: provider
     implementation: pg_probackup
@@ -155,6 +224,41 @@ entries:
       - One same-host local filesystem repository does not establish remote or object-storage compatibility.
       - Only latest recovery from one full backup with post-backup WAL replay was exercised.
       - The tested pgdrill binary was a development build at an exact commit, not a published release artifact.
+  - id: provider.pgbackrest.field.v0-1-0-alpha-10
+    component: provider
+    implementation: pgbackrest
+    evidence_level: field
+    capabilities:
+      - archive_configuration_validation
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - repository_verification
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "2.58.0"
+    pgdrill_versions:
+      - v0.1.0-alpha.10
+    pgdrill_commits:
+      - a7b92a2aecaf82217bb2bfd9ffe9f52da055954c
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-22"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/report.json
+      - kind: field_note
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/README.md#validated-scope
+    limitations:
+      - One same-host local filesystem repository does not establish remote or object-storage compatibility.
+      - Only latest recovery from one full backup with post-backup WAL replay was exercised.
+      - The observation is a controlled local release-artifact drill, not a production RTO or support-range claim.
   - id: provider.pgbackrest.fixture
     component: provider
     implementation: pgbackrest
@@ -211,6 +315,39 @@ entries:
       - One disposable local file repository does not establish remote object-storage compatibility.
       - Only latest recovery from one full backup with one post-backup WAL segment was exercised.
       - The tested pgdrill binary was a development build at an exact commit, not a published release artifact.
+  - id: provider.wal-g.field.v0-1-0-alpha-10
+    component: provider
+    implementation: wal-g
+    evidence_level: field
+    capabilities:
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "3.0.8"
+    pgdrill_versions:
+      - v0.1.0-alpha.10
+    pgdrill_commits:
+      - a7b92a2aecaf82217bb2bfd9ffe9f52da055954c
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-22"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/report.json
+      - kind: field_note
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-linux-arm64-pgdrill-v0.1.0-alpha.10/README.md#validated-scope
+    limitations:
+      - One disposable local file repository does not establish remote object-storage compatibility.
+      - Only latest recovery from one full backup with one post-backup WAL segment was exercised.
+      - The observation is a controlled local release-artifact drill, not a production RTO or support-range claim.
   - id: provider.wal-g.fixture
     component: provider
     implementation: wal-g
@@ -277,6 +414,39 @@ entries:
     limitations:
       - This is one disposable-environment observation, not a production support claim or RTO guarantee.
       - Timestamp PITR, other PostgreSQL and CNPG versions, storage classes, and failure modes remain unvalidated.
+      - The CNPG barmanObjectStore bootstrap does not validate the native Barman CLI adapter.
+  - id: target.cnpg.field.v0-1-0-alpha-10
+    component: target
+    implementation: cnpg
+    evidence_level: field
+    capabilities:
+      - end_to_end_restore
+      - immutable_manifest_evidence
+      - owned_cleanup
+      - post_backup_wal_replay
+      - post_restore_probes
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "1.26.3"
+    pgdrill_versions:
+      - v0.1.0-alpha.10
+    pgdrill_commits:
+      - a7b92a2aecaf82217bb2bfd9ffe9f52da055954c
+    postgresql_versions:
+      - "15.17"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-22"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/cnpg-v1.26.3-postgresql-15.17-kind-arm64-pgdrill-v0.1.0-alpha.10/report.json
+      - kind: field_note
+        ref: compatibility/evidence/cnpg-v1.26.3-postgresql-15.17-kind-arm64-pgdrill-v0.1.0-alpha.10/README.md#validated-scope
+    limitations:
+      - This is one disposable KinD and MinIO observation, not a production Kubernetes support claim or RTO guarantee.
+      - Only latest recovery from one barmanObjectStore backup with post-backup WAL replay was exercised.
+      - Other PostgreSQL and CNPG versions, storage classes, object stores, PITR, and failure modes remain unvalidated.
       - The CNPG barmanObjectStore bootstrap does not validate the native Barman CLI adapter.
   - id: target.local.controlled
     component: target

@@ -29,3 +29,4 @@ Current scenarios:
 - [Barman to a local PostgreSQL target](barman/README.md)
 - [pgBackRest to a local PostgreSQL target](pgbackrest/README.md)
 - [pg_probackup to a local PostgreSQL target](pgprobackup/README.md)
+- [CloudNativePG to a disposable KinD target](cnpg/README.md)

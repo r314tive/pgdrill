@@ -11,43 +11,38 @@ operational question:
 
 ## Status
 
-Pre-alpha. The repository has the first canonical model, core interfaces,
-command runner, strict configuration loading, read-only native-tool preflight,
-initial catalog discovery adapters for WAL-G, Barman, pgBackRest, and
-pg_probackup, provider-side checks for Barman
-and optional WAL-G `wal-verify`, Barman `show-backup` evidence, optional Barman
-`generate-manifest` and `verify-backup`, optional pgBackRest `check` and
-`verify`, optional pg_probackup `validate`, pgBackRest and pg_probackup local
-restore planning, JSON drill report persistence, local PostgreSQL startup for
-restore targets, optional `pg_verifybackup`
-restore checks, `pg_isready`, SQL, `pg_amcheck`, and `pg_dump` probes, built-in
-probe presets, strict
-`pg_verifybackup` profile support, Prometheus metrics export from JSON reports,
-first useful CLI surfaces for catalog, report, and drill execution, and initial
-CNPG verify-cluster manifest, discovery, lifecycle, and guarded target
-verification surfaces for the Kubernetes restore target. Native and CNPG
-execution now share one core lifecycle recorder; an injectable versioned run
-event contract is available for future durable history and control-plane work.
-Mutations use deterministic attempt-scoped operation and ownership identities,
-durable pre-mutation checkpoints, and explicit target reconciliation instead
-of blind command replay.
-Large immutable evidence can be persisted through bounded content-addressed
-artifact references; CNPG verify runs store the exact create manifest before
-target mutation.
-Immutable recovery policy now produces explicit fail-closed verdicts for RTO,
-RPO, backup age, recovery-target satisfaction, and configured cleanup.
-All four provider adapters and both executable target paths run shared
-conformance suites. Compatibility evidence is recorded separately as fixture,
-controlled, or exact-version field observations instead of a blanket support
-claim. Current field points include one CNPG restore plus native WAL-G v3.0.8,
-Barman v3.19.1, pgBackRest v2.58.0, and pg_probackup v2.5.16 restores with
-PostgreSQL 18.3 on Linux arm64; each remains limited to its exact recorded
-scope.
-Reproducible Docker integration tests now recreate the WAL-G, Barman,
-pgBackRest, and pg_probackup field shapes from source backup through
-post-backup WAL replay, probes, policy, and cleanup. They are developer
-evidence only and remain separate from retained compatibility claims and the
-multi-host technical demo.
+Engine v0.2 is at release-candidate preparation, suitable for controlled
+technical evaluation but not a blanket production-support claim.
+
+The CLI implements:
+
+- strict configuration, read-only dependency preflight, and stable exit codes
+- WAL-G, Barman, pgBackRest, and pg_probackup discovery, validation, and local
+  restore planning
+- owned local PostgreSQL restore/start/probe/cleanup drills
+- guarded CloudNativePG backup discovery and disposable verify-cluster drills
+- bounded redacted command evidence, immutable run specs, operation
+  checkpoints, artifact references, and versioned JSON reports
+- fail-closed recovery-policy verdicts for RTO, RPO, backup age, recovery
+  target, and cleanup
+- text report inspection and Prometheus export
+
+Native and CNPG paths share one lifecycle, cancellation, reconciliation, and
+reporting contract. Shared conformance suites cover every adapter and
+executable target. Reproducible integration harnesses exercise all four native
+providers plus a disposable KinD/CNPG environment through real base backups,
+post-backup WAL replay, probes, policy, and cleanup.
+
+The compatibility matrix records narrow fixture, controlled, and exact-version
+field evidence. One clean `v0.1.0-alpha.10` commit has passed WAL-G 3.0.8,
+Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 restores with
+PostgreSQL 18.3 on Linux arm64, plus CNPG 1.26.3 / PostgreSQL 15.17 in a
+disposable KinD environment. Other versions, storage backends, platforms, and
+PITR modes remain unclaimed until separately exercised.
+
+Fleet scheduling, durable multi-run history, a controller/agent protocol, TUI,
+and web UI remain roadmap work. They will consume the engine contracts rather
+than become a second orchestration implementation.
 
 ## Goals
 
@@ -107,7 +102,7 @@ path. `pgdrill explain -format json` exposes this distinction explicitly.
 
 ## Installation
 
-The pre-alpha release pipeline targets Linux and macOS on amd64 and arm64.
+The prerelease pipeline targets Linux and macOS on amd64 and arm64.
 Published archives and SHA256 checksums are available under
 [GitHub Releases](https://github.com/r314tive/pgdrill/releases). Building from
 source remains supported.
@@ -167,12 +162,20 @@ make test-integration-barman
 make test-integration-pgbackrest
 make test-integration-pgprobackup
 make test-integration-native
+make test-integration-cnpg
 ```
 
 `make test-local` combines the normal checks, race detector, CLI smoke, and all
 network-isolated disposable native drills. Their artifacts remain under ignored
 `.cache`; they are not compatibility evidence by themselves. See
 [test/integration](test/integration/README.md) for the evidence boundary.
+
+For a clean release-candidate commit with Docker available, run the complete
+artifact, lint, native-provider, and disposable CNPG gate:
+
+```sh
+make -s release-candidate-check VERSION=v0.2.0-rc.1
+```
 
 ```sh
 go run ./cmd/pgdrill version

@@ -22,8 +22,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 11 {
-		t.Fatalf("matrix entry count = %d, want 11", len(matrix.Entries))
+	if len(matrix.Entries) != 16 {
+		t.Fatalf("matrix entry count = %d, want 16", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -55,6 +55,17 @@ func TestCommittedMatrix(t *testing.T) {
 	if levels["provider.pgbackrest.field"] != EvidenceLevelField {
 		t.Fatalf("pgBackRest field level = %q, want field", levels["provider.pgbackrest.field"])
 	}
+	for _, id := range []string{
+		"provider.barman.field.v0-1-0-alpha-10",
+		"provider.pg-probackup.field.v0-1-0-alpha-10",
+		"provider.pgbackrest.field.v0-1-0-alpha-10",
+		"provider.wal-g.field.v0-1-0-alpha-10",
+		"target.cnpg.field.v0-1-0-alpha-10",
+	} {
+		if levels[id] != EvidenceLevelField {
+			t.Fatalf("%s level = %q, want field", id, levels[id])
+		}
+	}
 
 	fixtureProviders := make(map[model.ProviderType]Entry)
 	for _, entry := range matrix.Entries {
@@ -81,6 +92,99 @@ func TestCommittedMatrix(t *testing.T) {
 				t.Fatalf("provider %q fixture entry does not cover recovery target %q", provider, target)
 			}
 		}
+	}
+}
+
+func TestValidateTargetDrillReportRequiresMatchingTargetAndReadiness(t *testing.T) {
+	entry := Entry{
+		Implementation:         "cnpg",
+		ImplementationVersions: []string{"1.26.3"},
+	}
+	result := model.DrillResult{
+		Target: model.TargetSpec{Type: model.RestoreTargetKubernetes},
+		Checks: []model.Check{{
+			Name:   "cnpg-instance-ready",
+			Status: model.CheckStatusPassed,
+			Attributes: map[string]string{
+				"operator_version": "1.26.3",
+			},
+		}},
+	}
+	if err := validateTargetDrillReport(entry, result); err != nil {
+		t.Fatalf("valid CNPG target report rejected: %v", err)
+	}
+
+	result.Checks[0].Attributes["operator_version"] = "1.26.2"
+	if err := validateTargetDrillReport(entry, result); err == nil || !strings.Contains(err.Error(), "operator version") {
+		t.Fatalf("wrong-operator-version error = %v", err)
+	}
+	result.Checks[0].Attributes["operator_version"] = "1.26.3"
+
+	result.Target.Type = model.RestoreTargetLocal
+	if err := validateTargetDrillReport(entry, result); err == nil || !strings.Contains(err.Error(), "does not match CNPG") {
+		t.Fatalf("wrong-target error = %v", err)
+	}
+
+	result.Target.Type = model.RestoreTargetKubernetes
+	result.Checks = nil
+	if err := validateTargetDrillReport(entry, result); err == nil || !strings.Contains(err.Error(), "readiness") {
+		t.Fatalf("missing-readiness error = %v", err)
+	}
+}
+
+func TestCNPGVersionEvidenceRequiresStructuredSuccessfulEvidence(t *testing.T) {
+	result := model.DrillResult{
+		Evidence: []model.EvidenceRecord{{
+			Source: "kubernetes",
+			Command: &model.CommandEvidence{
+				ExitStatus: model.ExitStatus{Success: true},
+				Stdout:     `{"metadata":{"annotations":{"cnpg.io/operatorVersion":"1.26.3"}}}`,
+			},
+		}},
+	}
+	if !hasCNPGVersionEvidence(result, "1.26.3") {
+		t.Fatal("matching CNPG operator annotation was rejected")
+	}
+	result.Evidence[0].Command.StdoutTruncated = true
+	if hasCNPGVersionEvidence(result, "1.26.3") {
+		t.Fatal("truncated CNPG operator evidence was accepted")
+	}
+	result.Checks = []model.Check{{
+		Name:   "cnpg-instance-ready",
+		Status: model.CheckStatusPassed,
+		Attributes: map[string]string{
+			"operator_version": "1.26.3",
+		},
+	}}
+	if !hasCNPGVersionEvidence(result, "1.26.3") {
+		t.Fatal("structured readiness version evidence was rejected")
+	}
+}
+
+func TestPostgreSQLClientVersionFallbackRequiresTwoDistinctTools(t *testing.T) {
+	check := func(name string) model.Check {
+		return model.Check{Name: name, Status: model.CheckStatusPassed, Message: "PostgreSQL 15.17"}
+	}
+	checks := []model.Check{check("tool.psql"), check("tool.pg_isready")}
+	cnpg := Entry{Component: ComponentTarget, Implementation: "cnpg"}
+	if !hasPostgreSQLVersionEvidence(cnpg, checks, "15.17") {
+		t.Fatal("two matching CNPG client checks were rejected")
+	}
+	for _, entry := range []Entry{
+		{Component: ComponentTarget, Implementation: "local"},
+		{Component: ComponentProvider, Implementation: "wal-g"},
+	} {
+		if hasPostgreSQLVersionEvidence(entry, checks, "15.17") {
+			t.Fatalf("client-only version evidence accepted for %#v", entry)
+		}
+	}
+	checks[1].Status = model.CheckStatusFailed
+	if hasPostgreSQLVersionEvidence(cnpg, checks, "15.17") {
+		t.Fatal("single matching CNPG client check was accepted")
+	}
+	checks = append(checks, check("tool.postgres"))
+	if !hasPostgreSQLVersionEvidence(Entry{Component: ComponentProvider}, checks, "15.17") {
+		t.Fatal("server version check was rejected")
 	}
 }
 

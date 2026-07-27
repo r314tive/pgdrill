@@ -100,7 +100,7 @@ func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClu
 			return Instance{}, pollEvidence.Records(), fmt.Errorf("CNPG full-recovery failed before instance pod became Ready: %s", reason)
 		}
 
-		ready, podEvidence, err := c.instancePodReady(ctx, spec)
+		ready, operatorVersion, podEvidence, err := c.instancePodReady(ctx, spec)
 		pollEvidence.Add(podEvidence...)
 		if err != nil {
 			return Instance{}, pollEvidence.Records(), err
@@ -108,11 +108,12 @@ func (c *KubectlClient) WaitForInstanceReady(ctx context.Context, spec VerifyClu
 		if ready {
 			host := serviceHost(spec)
 			return Instance{
-				PodName:    spec.InstancePodName,
-				Host:       host,
-				Port:       DefaultPostgresPort,
-				Database:   "postgres",
-				ConnString: DefaultPodConnString,
+				PodName:         spec.InstancePodName,
+				Host:            host,
+				Port:            DefaultPostgresPort,
+				Database:        "postgres",
+				ConnString:      DefaultPodConnString,
+				OperatorVersion: operatorVersion,
 			}, pollEvidence.Records(), nil
 		}
 
@@ -146,20 +147,20 @@ func (c *KubectlClient) fullRecoveryFailed(ctx context.Context, spec VerifyClust
 	return failed, reason, evidence, nil
 }
 
-func (c *KubectlClient) instancePodReady(ctx context.Context, spec VerifyClusterSpec) (bool, []model.EvidenceRecord, error) {
+func (c *KubectlClient) instancePodReady(ctx context.Context, spec VerifyClusterSpec) (bool, string, []model.EvidenceRecord, error) {
 	args := c.args(spec, "get", "pod", spec.InstancePodName, "-o", "json")
 	evidence, result, err := c.run(ctx, "kubectl-check-instance-ready", args, nil, c.cfg.Timeout)
 	if err != nil {
-		return false, evidence, err
+		return false, "", evidence, err
 	}
 	if !result.Evidence.ExitStatus.Success {
-		return false, evidence, nil
+		return false, "", evidence, nil
 	}
-	ready, err := podReady(result.Raw.Stdout)
+	ready, operatorVersion, err := podReady(result.Raw.Stdout)
 	if err != nil {
-		return false, evidence, err
+		return false, "", evidence, err
 	}
-	return ready, evidence, nil
+	return ready, operatorVersion, evidence, nil
 }
 
 func (c *KubectlClient) CaptureEvidence(ctx context.Context, spec VerifyClusterSpec, instance Instance, opts CaptureOptions) ([]model.EvidenceRecord, error) {
@@ -453,8 +454,11 @@ func fullRecoveryFailed(data []byte) (bool, string, error) {
 	return false, "", nil
 }
 
-func podReady(data []byte) (bool, error) {
+func podReady(data []byte) (bool, string, error) {
 	var pod struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
 		Status struct {
 			Conditions []struct {
 				Type   string `json:"type"`
@@ -463,12 +467,13 @@ func podReady(data []byte) (bool, error) {
 		} `json:"status"`
 	}
 	if err := json.Unmarshal(data, &pod); err != nil {
-		return false, fmt.Errorf("parse CNPG instance pod: %w", err)
+		return false, "", fmt.Errorf("parse CNPG instance pod: %w", err)
 	}
+	operatorVersion := strings.TrimSpace(pod.Metadata.Annotations["cnpg.io/operatorVersion"])
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == "Ready" && condition.Status == "True" {
-			return true, nil
+			return true, operatorVersion, nil
 		}
 	}
-	return false, nil
+	return false, operatorVersion, nil
 }

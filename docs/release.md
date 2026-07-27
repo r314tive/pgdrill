@@ -1,7 +1,8 @@
 # Release Process
 
-`pgdrill` is pre-alpha, but every published build should be traceable to one
-immutable source commit and one changelog entry.
+`pgdrill` is pre-1.0. Every published build must be traceable to one immutable
+source commit, one changelog entry, deterministic artifacts, and the
+compatibility evidence claimed by that release.
 
 ## Versioning
 
@@ -64,6 +65,7 @@ make test-integration-barman
 make test-integration-pgbackrest
 make test-integration-pgprobackup
 make test-integration-native
+make test-integration-cnpg
 ```
 
 `integration-check` requires ShellCheck. The executable tests prepare pinned
@@ -74,8 +76,23 @@ must run them explicitly for affected native paths. A pass from a dirty tree is
 marked dirty and is never release evidence.
 
 ```sh
-make -s release-check VERSION=v0.1.0-alpha.9
+make -s release-check VERSION=v0.2.0-rc.1
 ```
+
+The aggregate Engine v0.2 candidate gate requires a clean worktree and runs
+the release gate, ShellCheck, all four native-provider drills, and the
+disposable KinD/CNPG drill:
+
+```sh
+make -s release-candidate-check VERSION=v0.2.0-rc.1
+```
+
+Every integration process receives the same version and full Git commit.
+Native drills execute the corresponding deterministic Linux archive; the CNPG
+driver executes the deterministic host archive while restoring into a pinned
+Linux KinD target. Checksummed run artifacts remain under `.cache/integration`.
+They are reviewed release evidence, not automatic additions to the committed
+compatibility matrix.
 
 ## Release Artifacts
 
@@ -104,14 +121,14 @@ pgdrill_<version>_checksums.txt
 Build only the artifacts with:
 
 ```sh
-make -s release-artifacts VERSION=v0.1.0-alpha.9
+make -s release-artifacts VERSION=v0.2.0-rc.1
 ```
 
 Verify them on Linux or macOS respectively:
 
 ```sh
-(cd dist && sha256sum -c pgdrill_0.1.0-alpha.9_checksums.txt)
-(cd dist && shasum -a 256 -c pgdrill_0.1.0-alpha.9_checksums.txt)
+(cd dist && sha256sum -c pgdrill_0.2.0-rc.1_checksums.txt)
+(cd dist && shasum -a 256 -c pgdrill_0.2.0-rc.1_checksums.txt)
 ```
 
 `release-snapshot` remains available as a quick host-only build and smoke
@@ -119,23 +136,25 @@ check. It is not a substitute for `release-check`.
 
 ## Release Checklist
 
-1. Start from a clean worktree on the intended release commit.
-2. Move the release changes from `Unreleased` into a dated version section and
-   leave an empty `Unreleased` section.
-3. Run the release gate and extract release notes:
+1. Prepare the release changes and move them from `Unreleased` into a dated
+   version section, leaving an empty `Unreleased` section.
+2. Run `make check`, review the diff, and commit the release preparation.
+3. Confirm that the resulting intended release commit has a clean worktree.
+4. Run the exact-candidate gate and extract release notes:
 
 ```sh
-VERSION=v0.1.0-alpha.9
-make -s release-check VERSION="$VERSION"
+VERSION=v0.2.0-rc.1
+make -s release-candidate-check VERSION="$VERSION"
 make -s release-notes VERSION="$VERSION"
 ```
 
-4. Inspect `dist/RELEASE_NOTES.md`, archive contents, checksums, CLI help, and
-   `pgdrill version` from the native archive.
-5. Commit the release preparation.
-6. Rerun step 3 after the commit because commit metadata is part of every
-   binary.
-7. Create an annotated tag on that exact commit:
+5. Inspect `dist/RELEASE_NOTES.md`, archive contents, checksums, CLI help,
+   `pgdrill version` from the native archive, and the five latest integration
+   artifact directories.
+6. If any source or release metadata changes after the gate, create a new
+   commit and repeat steps 3 through 5 because commit metadata is part of every
+   binary and report.
+7. Create an annotated tag on the exact clean, tested commit:
 
 ```sh
 git tag -a "$VERSION" -m "pgdrill $VERSION"
@@ -170,4 +189,6 @@ prerelease identifier. Do not silently retarget the failed tag.
 A green artifact release does not prove provider or Kubernetes compatibility.
 For provider-facing releases, record at least one real `catalog list` or drill
 run for the changed adapter. CNPG changes require a disposable live-cluster
-drill before the feature can be described as production-ready.
+drill. `release-candidate-check` supplies the controlled local baseline; a
+production support claim still requires separately scoped customer or field
+evidence.

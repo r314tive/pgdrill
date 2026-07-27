@@ -2,8 +2,8 @@
 
 ## Supported Versions
 
-`pgdrill` is pre-alpha. Security fixes are applied to the latest released
-prerelease and the default branch; older alpha builds are not maintained.
+`pgdrill` is pre-1.0. Security fixes are applied to the latest released
+prerelease and the default branch; older prerelease builds are not maintained.
 
 ## Reporting A Vulnerability
 

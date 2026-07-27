@@ -1,0 +1,41 @@
+pgdrill=pgdrill v0.1.0-alpha.10 (a7b92a2aecaf82217bb2bfd9ffe9f52da055954c, 2026-07-22T12:10:27Z)
+pg_probackup=pg_probackup 2.5.16 (PostgreSQL 18.3)
+postgresql=postgres (PostgreSQL) 18.3
+source_rows=101
+backup_id=TIKSIA
+sentinel_wal=000000010000000000000003
+[
+    {
+        "instance": "integration",
+        "backups": [
+            {
+                "id": "TIKSIA",
+                "backup-mode": "FULL",
+                "wal": "STREAM",
+                "compress-alg": "zlib",
+                "compress-level": 1,
+                "from-replica": "false",
+                "block-size": 8192,
+                "xlog-block-size": 8192,
+                "checksum-version": 1,
+                "program-version": "2.5.16",
+                "server-version": "18",
+                "current-tli": 1,
+                "parent-tli": 0,
+                "start-lsn": "0/2000028",
+                "stop-lsn": "0/2000188",
+                "start-time": "2026-07-22 12:10:58+00",
+                "end-time": "2026-07-22 12:11:08+00",
+                "recovery-xid": 755,
+                "recovery-time": "2026-07-22 12:10:59+00",
+                "data-bytes": 7837514,
+                "wal-bytes": 16777216,
+                "uncompressed-bytes": 23071555,
+                "pgdata-bytes": 23071279,
+                "primary_conninfo": "user=postgres channel_binding=disable host=/validation/source-socket port=55431 sslmode=disable sslnegotiation=postgres sslcompression=0 sslcertmode=disable sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=disable krbsrvname=postgres gssdelegation=0 target_session_attrs=any load_balance_hosts=disable",
+                "status": "OK",
+                "content-crc": 3397039199
+            }
+        ]
+    }
+]

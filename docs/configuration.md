@@ -32,10 +32,13 @@ evidence.
 The Kubernetes target-only path deliberately does not validate unused provider
 settings because CNPG performs the restore and no provider adapter is invoked.
 Its configured probe semantics are still validated before local `kubectl`
-preflight. Probe binary version checks run later inside the restored PostgreSQL
-pod, before database probes. `pgdrill target verify` requires at least one
-post-restore probe and rejects an empty set before preflight or Kubernetes
-mutation; the read-only `target manifest` command does not require probes.
+preflight. The PostgreSQL server executable and configured probe clients are
+version-checked later inside the restored PostgreSQL pod, before database
+probes. The passed `cnpg-instance-ready` check records the operator version
+from the instance-pod annotation when CloudNativePG supplies it.
+`pgdrill target verify` requires at least one post-restore probe and rejects an
+empty set before preflight or Kubernetes mutation; the read-only
+`target manifest` command does not require probes.
 
 `pgdrill run` currently accepts only `target.type: local`. Kubernetes uses the
 separate guarded `pgdrill target verify` lifecycle, and `container` is reserved

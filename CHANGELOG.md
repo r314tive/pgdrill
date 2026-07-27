@@ -8,6 +8,39 @@ called out explicitly even while the major version is `0`.
 
 ## [Unreleased]
 
+## [0.2.0-rc.1] - 2026-07-27
+
+### Added
+
+- A checksum-pinned disposable KinD 0.31.0 / Kubernetes 1.32.11 /
+  CloudNativePG 1.26.3 integration drill with PostgreSQL 15.17, MinIO,
+  post-backup WAL replay, in-pod probes, policy assertions, isolated
+  kubeconfig handling, owned cleanup, and checksummed local artifacts.
+- A clean-tree `release-candidate-check` that binds the deterministic release
+  gate, ShellCheck, all four native-provider drills, and the disposable CNPG
+  drill to one version and full Git commit.
+- Retained `v0.1.0-alpha.10` field evidence showing that one clean commit and
+  Linux arm64 release archive passed WAL-G 3.0.8, Barman 3.19.1, pgBackRest
+  2.58.0, and pg_probackup 2.5.16 restores with PostgreSQL 18.3, plus a
+  corresponding CNPG 1.26.3 / PostgreSQL 15.17 disposable drill.
+
+### Changed
+
+- CNPG post-ready preflight now version-checks the PostgreSQL server executable
+  inside the restored `postgres` container in addition to configured probe
+  clients, making PostgreSQL version claims directly available in new reports.
+- CNPG readiness checks now retain the operator version reported by the
+  instance-pod annotation.
+- Compatibility report validation now verifies managed-target identity,
+  readiness, and claimed CNPG operator version. Older CNPG reports without
+  `tool.postgres` require at least two distinct matching PostgreSQL client-tool
+  checks instead of accepting an unproven version claim.
+- Integration release-artifact preparation now supports both Linux container
+  targets and the native host target used by kubectl-driven CNPG drills.
+- Project status, release, roadmap, compatibility, contribution, and security
+  documentation now describe the Engine v0.2 candidate boundary and its exact
+  release gate instead of the earlier pre-alpha state.
+
 ## [0.1.0-alpha.10] - 2026-07-22
 
 ### Added

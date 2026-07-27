@@ -1,0 +1,12 @@
+container_image=postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db
+container_image_id=sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db
+docker_arch=aarch64
+go=go version go1.26.5 darwin/arm64
+build_source=release_archive
+version=v0.1.0-alpha.10
+commit=a7b92a2aecaf82217bb2bfd9ffe9f52da055954c
+build_date=2026-07-22T17:10:27+05:00
+pgdrill_sha256=8ec5b7041160f6dc26515a5c829f1020c6662823becb235c69974305d28b599b
+release_archive=pgdrill_0.1.0-alpha.10_linux_arm64.tar.gz
+release_archive_sha256=fe7f2f2f4e4b7aa614822b9477f24b3b096710d68b616b26d10b6bbc34d68791
+wal_g_sha256=a822caafa9ee61c2f96add3e768c06971677d8b7a6781e585253b8735a3bc4f7

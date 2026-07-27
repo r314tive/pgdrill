@@ -13,12 +13,13 @@ Evidence levels have intentionally narrow meanings:
 An entry records demonstrated capabilities, not a blanket support promise. A
 field entry represents one exact implementation, pgdrill commit, PostgreSQL,
 platform, and recovery-target point; add another entry for another point.
-Every entry must include limitations. Repository tests
-strictly decode the matrix and resolve every file, Go test function, and
-Markdown heading reference. Native-provider field entries must retain a passed
-drill report; repository validation parses that report and cross-checks its
-provider, recovery target, date, tool versions, pgdrill version, and full
-commit. Release packaging repeats the same validation.
+Every entry must include limitations. Repository tests strictly decode the
+matrix and resolve every file, Go test function, and Markdown heading
+reference. Native-provider field entries must retain a passed drill report;
+referenced reports are parsed and cross-checked against provider or target
+identity, recovery target, date, PostgreSQL/tool versions, CNPG operator
+version when applicable, pgdrill version, and full commit. Release packaging
+repeats the same validation.
 
 Add a native version only after retaining a completed real drill report. Add a
 new field entry rather than widening an older observation to untested versions.

@@ -77,7 +77,7 @@ func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 	runner := &fakeCommandRunner{
 		stdoutByArgContains: map[string]string{
 			"cnpg.io/jobRole=full-recovery": `{"items":[]}`,
-			"get pod":                       `{"status":{"conditions":[{"type":"Ready","status":"True"}]}}`,
+			"get pod":                       `{"metadata":{"annotations":{"cnpg.io/operatorVersion":"1.26.3"}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}`,
 		},
 	}
 	client := NewKubectlClient(KubectlConfig{}, runner)
@@ -105,6 +105,9 @@ func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 	}
 	if instance.ConnString != DefaultPodConnString {
 		t.Fatalf("unexpected conn string %q", instance.ConnString)
+	}
+	if instance.OperatorVersion != "1.26.3" {
+		t.Fatalf("unexpected operator version %q", instance.OperatorVersion)
 	}
 	if !hasOperation(evidence, "kubectl-check-full-recovery") || !hasOperation(evidence, "kubectl-check-instance-ready") {
 		t.Fatalf("missing wait evidence %#v", evidence)

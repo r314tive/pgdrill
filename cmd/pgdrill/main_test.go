@@ -662,8 +662,11 @@ JSON
     ;;
   *" get pod verify-altbox-test-1 -o json"*)
     cat <<'JSON'
-{"status":{"conditions":[{"type":"Ready","status":"True"}]}}
+{"metadata":{"annotations":{"cnpg.io/operatorVersion":"1.26.3"}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}
 JSON
+    ;;
+  *" exec verify-altbox-test-1 -c postgres -- postgres --version"*)
+    echo "postgres (PostgreSQL) 16.4"
     ;;
   *" exec verify-altbox-test-1 -c postgres -- /usr/local/bin/psql --version"*)
     echo "psql (PostgreSQL) 16.4"
@@ -779,7 +782,7 @@ report:
 	if !hasCheck(result.Checks, model.ProbeSQL, model.CheckStatusPassed) {
 		t.Fatalf("expected sql probe check, got %#v", result.Checks)
 	}
-	for _, name := range []string{"tool.kubectl", "tool.psql"} {
+	for _, name := range []string{"tool.kubectl", "tool.postgres", "tool.psql"} {
 		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
 			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
 		}

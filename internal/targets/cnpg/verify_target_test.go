@@ -66,10 +66,11 @@ func TestTargetConformance(t *testing.T) {
 func TestVerifyTargetReportsReadyAndDestroysOwnedTarget(t *testing.T) {
 	spec := testVerifyClusterSpec(t)
 	client := &fakeLifecycleClient{instance: Instance{
-		PodName:    spec.InstancePodName,
-		Host:       spec.Name + "-rw.namespace.svc",
-		Port:       5432,
-		ConnString: "host=/controller/run dbname=postgres user=postgres",
+		PodName:         spec.InstancePodName,
+		Host:            spec.Name + "-rw.namespace.svc",
+		Port:            5432,
+		ConnString:      "host=/controller/run dbname=postgres user=postgres",
+		OperatorVersion: "1.26.3",
 	}}
 	target, _, cleanup := boundVerifyTarget(t, spec, client, LifecycleOptions{CleanupPVC: true})
 
@@ -88,6 +89,9 @@ func TestVerifyTargetReportsReadyAndDestroysOwnedTarget(t *testing.T) {
 	}
 	if got := report.Checks[0].Attributes["verify_cluster"]; got != spec.Name {
 		t.Fatalf("verify_cluster attribute = %q, want %q", got, spec.Name)
+	}
+	if got := report.Checks[0].Attributes["operator_version"]; got != client.instance.OperatorVersion {
+		t.Fatalf("operator_version attribute = %q, want %q", got, client.instance.OperatorVersion)
 	}
 	if err := target.BeginOperation(cleanup); err != nil {
 		t.Fatalf("BeginOperation(cleanup) error = %v", err)

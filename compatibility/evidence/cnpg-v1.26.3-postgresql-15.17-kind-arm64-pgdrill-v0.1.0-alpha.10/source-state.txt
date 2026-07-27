@@ -1,0 +1,5 @@
+source_rows=101
+sentinel_wal=000000010000000000000005
+backup_phase=completed
+source_image_id=ghcr.io/cloudnative-pg/postgresql@sha256:ce92730c48402c2377ea438d978dd3d76702800a2d215fcbdd53ab83d4833524
+operator_image_id=ghcr.io/cloudnative-pg/cloudnative-pg@sha256:8cf62c3d55a5db0ca934d118132b4b825b9d684ca0dce2b0235c2279adf14dad

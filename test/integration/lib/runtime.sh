@@ -58,14 +58,67 @@ pgdrill_integration_docker_arch() {
   esac
 }
 
+pgdrill_integration_host_os() {
+  case "$(uname -s)" in
+    Darwin)
+      printf 'darwin\n'
+      ;;
+    Linux)
+      printf 'linux\n'
+      ;;
+    *)
+      pgdrill_integration_die "unsupported integration host OS: $(uname -s)"
+      ;;
+  esac
+}
+
+pgdrill_integration_host_arch() {
+  case "$(uname -m)" in
+    amd64 | x86_64)
+      printf 'amd64\n'
+      ;;
+    arm64 | aarch64)
+      printf 'arm64\n'
+      ;;
+    *)
+      pgdrill_integration_die "unsupported integration host architecture: $(uname -m)"
+      ;;
+  esac
+}
+
 pgdrill_integration_prepare_pgdrill() {
   local root="$1"
   local cache_root="$2"
   local target_arch="$3"
   local version_base="$4"
+
+  pgdrill_integration_prepare_pgdrill_for_target "${root}" "${cache_root}" linux "${target_arch}" "${version_base}"
+}
+
+pgdrill_integration_prepare_host_pgdrill() {
+  local root="$1"
+  local cache_root="$2"
+  local version_base="$3"
+
+  pgdrill_integration_prepare_pgdrill_for_target \
+    "${root}" \
+    "${cache_root}" \
+    "$(pgdrill_integration_host_os)" \
+    "$(pgdrill_integration_host_arch)" \
+    "${version_base}"
+}
+
+pgdrill_integration_prepare_pgdrill_for_target() {
+  local root="$1"
+  local cache_root="$2"
+  local target_os="$3"
+  local target_arch="$4"
+  local version_base="$5"
   local head_commit
 
-  PGDRILL_INT_RUNTIME_DIR="${cache_root}/runtime/${target_arch}"
+  PGDRILL_INT_TARGET_OS="${target_os}"
+  PGDRILL_INT_TARGET_ARCH="${target_arch}"
+  PGDRILL_INT_RUNTIME_DIR="${cache_root}/runtime/${target_os}/${target_arch}"
   PGDRILL_INT_BINARY="${PGDRILL_INT_RUNTIME_DIR}/pgdrill"
   mkdir -p "${PGDRILL_INT_RUNTIME_DIR}" "${cache_root}/runs"
 
@@ -76,6 +129,9 @@ pgdrill_integration_prepare_pgdrill() {
   PGDRILL_INT_DIRTY_TREE=false
   if [[ -n "$(git -C "${root}" status --porcelain --untracked-files=normal)" ]]; then
     PGDRILL_INT_DIRTY_TREE=true
+    if [[ "${PGDRILL_INTEGRATION_REQUIRE_CLEAN:-false}" == "true" ]]; then
+      pgdrill_integration_die "release-candidate integration requires a clean Git worktree"
+    fi
     PGDRILL_INT_COMMIT="${head_commit}-dirty"
     PGDRILL_INT_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if [[ "${PGDRILL_INT_VERSION}" == *-* ]]; then
@@ -89,18 +145,19 @@ pgdrill_integration_prepare_pgdrill() {
   PGDRILL_INT_RELEASE_ARCHIVE_SHA256=""
   PGDRILL_INT_BUILD_SOURCE="dirty_source"
   if [[ "${PGDRILL_INT_DIRTY_TREE}" == "true" ]]; then
-    pgdrill_integration_build_dirty_binary "${root}" "${target_arch}"
+    pgdrill_integration_build_dirty_binary "${root}" "${target_os}" "${target_arch}"
   else
-    pgdrill_integration_build_release_binary "${root}" "${cache_root}" "${target_arch}"
+    pgdrill_integration_build_release_binary "${root}" "${cache_root}" "${target_os}" "${target_arch}"
   fi
 }
 
 pgdrill_integration_build_dirty_binary() {
   local root="$1"
-  local target_arch="$2"
+  local target_os="$2"
+  local target_arch="$3"
   local tmp_binary
 
-  pgdrill_integration_log "building dirty ${PGDRILL_INT_VERSION} developer binary for linux/${target_arch} from ${PGDRILL_INT_COMMIT}"
+  pgdrill_integration_log "building dirty ${PGDRILL_INT_VERSION} developer binary for ${target_os}/${target_arch} from ${PGDRILL_INT_COMMIT}"
   tmp_binary="$(mktemp "${PGDRILL_INT_RUNTIME_DIR}/pgdrill.build.XXXXXX")"
   if ! (
     cd "${root}"
@@ -112,7 +169,7 @@ pgdrill_integration_build_dirty_binary() {
       GOENV=off \
       GOEXPERIMENT= \
       GOFLAGS= \
-      GOOS=linux \
+      GOOS="${target_os}" \
       GOTOOLCHAIN="go$(sed -n '1p' .go-version)" \
       GOWORK=off \
       go build \
@@ -133,14 +190,15 @@ pgdrill_integration_build_dirty_binary() {
 pgdrill_integration_build_release_binary() {
   local root="$1"
   local cache_root="$2"
-  local target_arch="$3"
+  local target_os="$3"
+  local target_arch="$4"
   local release_dir archive_root extract_dir
 
   PGDRILL_INT_BUILD_SOURCE="release_archive"
   release_dir="${cache_root}/release/${PGDRILL_INT_VERSION}/${PGDRILL_INT_COMMIT}"
-  archive_root="pgdrill_${PGDRILL_INT_VERSION#v}_linux_${target_arch}"
+  archive_root="pgdrill_${PGDRILL_INT_VERSION#v}_${target_os}_${target_arch}"
   PGDRILL_INT_RELEASE_ARCHIVE="${release_dir}/${archive_root}.tar.gz"
-  pgdrill_integration_log "building deterministic ${PGDRILL_INT_VERSION} release archive for linux/${target_arch} from ${PGDRILL_INT_COMMIT}"
+  pgdrill_integration_log "building deterministic ${PGDRILL_INT_VERSION} release archive for ${target_os}/${target_arch} from ${PGDRILL_INT_COMMIT}"
   if ! (
     cd "${root}"
     GOTOOLCHAIN="go$(sed -n '1p' .go-version)" \
@@ -150,7 +208,7 @@ pgdrill_integration_build_release_binary() {
         -commit "${PGDRILL_INT_COMMIT}" \
         -date "${PGDRILL_INT_BUILD_DATE}" \
         -output "${release_dir}" \
-        -targets "linux/${target_arch}"
+        -targets "${target_os}/${target_arch}"
   ); then
     pgdrill_integration_die "release archive build failed"
   fi
@@ -172,6 +230,7 @@ pgdrill_integration_print_runtime_inventory() {
   local runtime_docker_arch="$1"
 
   printf 'docker_arch=%s\n' "${runtime_docker_arch}"
+  printf 'build_target=%s/%s\n' "${PGDRILL_INT_TARGET_OS}" "${PGDRILL_INT_TARGET_ARCH}"
   printf 'go=%s\n' "$(go version)"
   printf 'build_source=%s\n' "${PGDRILL_INT_BUILD_SOURCE}"
   printf 'version=%s\n' "${PGDRILL_INT_VERSION}"

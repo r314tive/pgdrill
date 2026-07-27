@@ -1,0 +1,7 @@
+pgdrill=pgdrill v0.1.0-alpha.10 (a7b92a2aecaf82217bb2bfd9ffe9f52da055954c, 2026-07-22T12:10:27Z)
+wal_g=wal-g version v3.0.8	f81943e	2026.01.21_14:32:41	PostgreSQL
+postgresql=postgres (PostgreSQL) 18.3 (Debian 18.3-1.pgdg13+1)
+source_rows=101
+sentinel_wal=000000010000000000000003
+last_archived_wal=000000010000000000000003
+[{"backup_name":"base_000000010000000000000002","time":"2026-07-22T12:10:46.050605002Z","wal_file_name":"000000010000000000000002","storage_name":"default","start_time":"2026-07-22T12:10:45.952456Z","finish_time":"2026-07-22T12:10:46.047318Z","date_fmt":"%Y-%m-%dT%H:%M:%S.%fZ","hostname":"e136071863f4","data_dir":"/validation/source-data","pg_version":180003,"start_lsn":33554472,"finish_lsn":33554720,"is_permanent":false,"system_identifier":7665323677175173164,"uncompressed_size":23949061,"compressed_size":4389222}]

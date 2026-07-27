@@ -1,4 +1,4 @@
-.PHONY: build check demo-check demo-infra-check fmt format integration-check integration-syntax-check mod-check race release-artifacts release-check release-notes release-snapshot smoke test test-integration-barman test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
+.PHONY: build check demo-check demo-infra-check fmt format integration-check integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
 
 VERSION ?= v0.1.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -80,7 +80,12 @@ test-integration-pgbackrest: integration-syntax-check
 test-integration-pgprobackup: integration-syntax-check
 	test/integration/pgprobackup/run.sh
 
+test-integration-cnpg: integration-syntax-check
+	test/integration/cnpg/run.sh
+
 test-integration-native: test-integration-walg test-integration-barman test-integration-pgbackrest test-integration-pgprobackup
+
+test-integration-all: test-integration-native test-integration-cnpg
 
 test-local: check race smoke test-integration-native
 
@@ -130,6 +135,17 @@ release-check:
 	$(MAKE) -s race
 	$(MAKE) -s smoke VERSION="$(VERSION)" COMMIT="$(RELEASE_COMMIT)" DATE="$(RELEASE_DATE)"
 	$(MAKE) -s release-artifacts VERSION="$(VERSION)" RELEASE_COMMIT="$(RELEASE_COMMIT)" RELEASE_DATE="$(RELEASE_DATE)" RELEASE_TARGETS="$(RELEASE_TARGETS)"
+
+release-candidate-check:
+	@test -z "$$(git status --porcelain --untracked-files=normal)" || { \
+		printf 'release-candidate check requires a clean Git worktree\n'; \
+		exit 1; \
+	}
+	$(MAKE) -s release-check VERSION="$(VERSION)"
+	$(MAKE) -s integration-check
+	PGDRILL_INTEGRATION_VERSION="$(VERSION)" \
+		PGDRILL_INTEGRATION_REQUIRE_CLEAN=true \
+		$(MAKE) -s test-integration-all
 
 release-snapshot: toolchain-check check
 	mkdir -p $(DISTDIR)/$(BINARY)_$(VERSION)_$(GOOS)_$(GOARCH)

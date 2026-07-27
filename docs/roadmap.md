@@ -57,8 +57,9 @@ Initial target: WAL-G to a local restore target. Barman is now the second
 repeatable native path through the same engine lifecycle.
 
 Status: usable for local-target smoke drills and field-exercised at exact WAL-G
-3.0.8, Barman 3.19.1, and pgBackRest 2.58.0 / PostgreSQL 18.3 Linux arm64
-points.
+3.0.8, Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 /
+PostgreSQL 18.3 Linux arm64 points. All four also passed from one
+`v0.1.0-alpha.10` commit and deterministic release archive.
 
 - JSON evidence sink wired into `pgdrill run`.
 - JSON evidence report written to disk.
@@ -87,9 +88,10 @@ pgdrill catalog list -f pgdrill.yaml
 
 ## Phase 3: Kubernetes / CNPG Target
 
-Status: implemented and field-exercised in one disposable CNPG 1.26.0 /
-PostgreSQL 15.13 environment. That exact observation is recorded in the
-versioned evidence matrix; broader field coverage remains pending.
+Status: implemented and field-exercised in disposable CNPG 1.26.0 /
+PostgreSQL 15.13 and CNPG 1.26.3 / PostgreSQL 15.17 environments. Both exact
+observations are recorded in the versioned evidence matrix; broader field
+coverage remains pending.
 
 - CNPG verify-cluster name generation and manifest primitives.
 - First CNPG target CLI surface: `pgdrill target manifest`.
@@ -119,6 +121,10 @@ versioned evidence matrix; broader field coverage remains pending.
 - Exact public `v0.1.0-alpha.9` Linux amd64 artifact exercised through latest
   backup recovery, in-pod client preflight, readiness and SQL probes, evidence
   capture, and ownership-scoped cleanup.
+- Exact `v0.1.0-alpha.10` commit exercised through a pinned KinD 0.31.0 /
+  Kubernetes 1.32.11 / CNPG 1.26.3 / PostgreSQL 15.17 drill with
+  post-backup WAL replay, four probes, immutable manifest evidence, policy,
+  and cleanup.
 
 ## Phase 4: More Providers And Probes
 
@@ -137,9 +143,10 @@ in progress.
 
 ## Phase 5: Engine v0.2 Hardening
 
-Status: locally complete for protocol hardening and first native-provider field
-points. Release-candidate field gates remain before an Engine v0.2 readiness
-claim; public planning contracts remain intentionally unpublished.
+Status: complete for protocol hardening, exact alpha.10 consolidation, and
+reproducible candidate gates. The aggregate gate must still pass from the exact
+clean Engine v0.2 release-candidate commit before tagging; public planning
+contracts remain intentionally unpublished.
 
 Completed foundation:
 
@@ -204,16 +211,21 @@ Completed foundation:
 - Shared host-side integration mechanics for deterministic release archives,
   explicit dirty builds, rootless network-isolated Docker execution, and
   recursive artifact checksums, while provider semantics remain separate.
+- A checksum-pinned KinD/Kubernetes/CNPG/PostgreSQL/MinIO integration drill
+  that uses an isolated kubeconfig, loads digest-validated platform images,
+  creates a real object-store backup, requires post-backup WAL replay and
+  in-pod server/client checks, verifies owned cleanup, removes ephemeral
+  kubeconfig state, and retains checksummed artifacts.
+- A clean-tree `release-candidate-check` that runs the deterministic release
+  gate, ShellCheck, all four native-provider drills, and the disposable CNPG
+  drill with one version and full Git commit.
 
 Remaining external engine gates, in order:
 
-1. Exercise one release-candidate artifact and commit through all four local
-   native-provider drills. Reproducible harnesses now cover all four, while
-   current retained field reports intentionally bind different development
-   commits.
-2. Exercise the same release candidate through a live disposable CNPG drill
-   before calling Engine v0.2 release-ready.
-3. Broaden every provider beyond its first local latest-recovery point across
+1. Run `make -s release-candidate-check VERSION=v0.2.0-rc.1` from the exact
+   clean release commit and review all five checksummed artifact sets before
+   tagging.
+2. Broaden every provider beyond its first local latest-recovery point across
    storage backends, versions, platforms, backup modes, and PITR targets.
 
 `pgdrill.report/v1alpha1` remains the durable terminal contract during this
@@ -241,8 +253,8 @@ pending and no cloud compatibility claim is recorded yet.
 
 Remaining gates, in order:
 
-1. Pass the local WAL-G integration drill from the exact clean demo candidate
-   and retain its checksummed report as rehearsal input, not cloud evidence.
+1. Pass the aggregate local release-candidate gate and retain its checksummed
+   WAL-G report as rehearsal input, not cloud evidence.
 2. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
    retain infrastructure inventory plus a successful bootstrap transcript.
 3. Produce two consecutive passed reports from the same release-candidate
@@ -304,9 +316,10 @@ API. A UI must not become a second orchestration engine.
 
 ## Release Readiness
 
-Status: implemented and exercised through the published `v0.1.0-alpha.9`
-prerelease; each future release still requires its own green CI, immutable tag,
-published assets, and checksum verification.
+Status: implemented, exercised through the published `v0.1.0-alpha.9`
+prerelease, and locally consolidated at `v0.1.0-alpha.10`; each future release
+still requires its own exact-candidate gate, green CI, immutable tag, published
+assets, and checksum verification.
 
 - Non-mutating format, module, vet, and test gate.
 - Minimum and pinned release Go toolchain checks.
@@ -319,6 +332,8 @@ published assets, and checksum verification.
 - Read-only build job separated from the write-enabled publication job.
 - Cross-host checksum parity between all four local release archives and the
   corresponding published `v0.1.0-alpha.9` assets.
+- One clean-tree aggregate candidate command binding release artifacts, all
+  four native drills, and disposable CNPG to the same version and commit.
 - Dependabot, contribution, security, compatibility, issue, and pull request
   policies.
 

@@ -1,8 +1,9 @@
 # Compatibility And Validation
 
-`pgdrill` is pre-alpha. This document separates build portability, automated
-test coverage, and real-environment validation so a green unit test is not
-mistaken for a production support claim.
+`pgdrill` is preparing its first Engine v0.2 release candidate. This document
+separates build portability, automated test coverage, and real-environment
+validation so a green unit test is not mistaken for a production support
+claim.
 
 ## Machine-Readable Evidence
 
@@ -24,9 +25,10 @@ requires another entry. Repository tests resolve those references and all
 current adapters run the same canonical provider suite. The local and CNPG
 targets run native and managed process-loss reconciliation suites respectively.
 Native-provider field entries must reference a passed drill report. Repository
-tests parse it and cross-check the provider, recovery target, observation date,
-tool versions, pgdrill version, and full commit. Release packaging validates
-and includes the matrix and this document.
+tests parse referenced reports and cross-check provider or target identity,
+recovery target, observation date, PostgreSQL/tool versions, claimed CNPG
+operator version when applicable, pgdrill version, and full commit. Release
+packaging validates and includes the matrix and this document.
 
 ## Release Platforms
 
@@ -60,6 +62,31 @@ Before claiming a native version as validated:
 5. retain the JSON report with secrets redacted
 
 Add new output shapes as sanitized fixtures when they change parser behavior.
+
+### Consolidated v0.1.0-alpha.10 Validation
+
+On 2026-07-22, one clean pgdrill `v0.1.0-alpha.10` commit
+`a7b92a2aecaf82217bb2bfd9ffe9f52da055954c` was exercised through all four
+native-provider drills and a disposable CNPG drill.
+
+WAL-G 3.0.8, Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 all
+used the same deterministic Linux arm64 release archive, whose SHA-256 was
+`fe7f2f2f4e4b7aa614822b9477f24b3b096710d68b616b26d10b6bbc34d68791`.
+Each restored PostgreSQL 18.3 through post-backup WAL, passed its provider
+checks, post-restore probes, required policy verdicts, and owned cleanup.
+
+The corresponding deterministic macOS arm64 artifact then drove an isolated
+KinD 0.31.0 / Kubernetes 1.32.11 environment with CloudNativePG 1.26.3,
+PostgreSQL 15.17, and MinIO. The CNPG drill recovered a post-backup WAL
+sentinel, passed four in-pod probes and all required policy verdicts, retained
+the generated manifest, and removed the owned Cluster and PVC.
+
+The reports, runtime inventories, source/WAL boundaries, limitations, and
+local checksums are retained as separate exact field entries under
+[`compatibility/evidence`](../compatibility/evidence). This closes the
+single-commit consolidation gate for alpha.10; it does not substitute for
+rerunning the same five paths from the exact Engine v0.2 release-candidate
+commit.
 
 ### WAL-G Field Validation
 
@@ -182,9 +209,19 @@ execution. Earlier controlled `v0.1.0-alpha.6` runs separately exercised
 signal cancellation and cleanup and exposed the unauthenticated service-probe
 gap that the in-pod local-socket transport replaced.
 
-This is one validation point, not a production support matrix. Timestamp PITR,
-additional PostgreSQL majors, other CNPG/operator versions, storage classes,
-and failure modes still require field drills. Exercising CNPG's
+On 2026-07-22, `v0.1.0-alpha.10` at commit
+`a7b92a2aecaf82217bb2bfd9ffe9f52da055954c` added a second, faster disposable
+field point: CNPG 1.26.3 and PostgreSQL 15.17 on KinD/Kubernetes 1.32.11 Linux
+arm64 with a MinIO `barmanObjectStore`. It recovered a transaction committed
+after the base backup and passed readiness, SQL, `pg_amcheck`, schema-only
+`pg_dump`, policy, immutable-manifest, and owned-cleanup checks. The exact
+report and runtime inventory are retained under
+[`compatibility/evidence/cnpg-v1.26.3-postgresql-15.17-kind-arm64-pgdrill-v0.1.0-alpha.10`](../compatibility/evidence/cnpg-v1.26.3-postgresql-15.17-kind-arm64-pgdrill-v0.1.0-alpha.10/README.md).
+
+These are exact validation points, not a production support matrix. Timestamp
+PITR, additional PostgreSQL majors, other CNPG/operator versions, storage
+classes, object stores, and failure modes still require field drills.
+Exercising CNPG's
 `barmanObjectStore` bootstrap does not validate pgdrill's native Barman CLI
 adapter against a real Barman repository.
 

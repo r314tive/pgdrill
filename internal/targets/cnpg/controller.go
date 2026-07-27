@@ -57,11 +57,12 @@ type CaptureOptions struct {
 }
 
 type Instance struct {
-	PodName    string
-	Host       string
-	Port       int
-	Database   string
-	ConnString string
+	PodName         string
+	Host            string
+	Port            int
+	Database        string
+	ConnString      string
+	OperatorVersion string
 }
 
 type Controller struct {

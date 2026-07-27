@@ -3,6 +3,7 @@ package compatibility
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -321,6 +322,11 @@ func validateDrillReport(entry Entry, path string) error {
 	if entry.Component == ComponentProvider && string(result.Provider) != entry.Implementation {
 		return fmt.Errorf("drill report provider %q does not match implementation %q", result.Provider, entry.Implementation)
 	}
+	if entry.Component == ComponentTarget {
+		if err := validateTargetDrillReport(entry, result); err != nil {
+			return err
+		}
+	}
 	if result.RecoveryTarget.Type != entry.RecoveryTargets[0] {
 		return fmt.Errorf("drill report recovery target %q is not claimed by the entry", result.RecoveryTarget.Type)
 	}
@@ -340,10 +346,117 @@ func validateDrillReport(entry Entry, path string) error {
 	if entry.Component == ComponentProvider && !passedToolCheckContains(result.Checks, "tool."+entry.Implementation, entry.ImplementationVersions[0]) {
 		return fmt.Errorf("drill report has no passed %s version check matching the entry", entry.Implementation)
 	}
-	if !passedToolCheckContains(result.Checks, "tool.postgres", entry.PostgreSQLVersions[0]) {
+	if !hasPostgreSQLVersionEvidence(entry, result.Checks, entry.PostgreSQLVersions[0]) {
 		return fmt.Errorf("drill report has no passed PostgreSQL version check matching the entry")
 	}
 	return nil
+}
+
+func hasPostgreSQLVersionEvidence(entry Entry, checks []model.Check, claim string) bool {
+	if passedToolCheckContains(checks, "tool.postgres", claim) {
+		return true
+	}
+	return entry.Component == ComponentTarget &&
+		entry.Implementation == "cnpg" &&
+		passedPostgreSQLClientVersionChecks(checks, claim) >= 2
+}
+
+func validateTargetDrillReport(entry Entry, result model.DrillResult) error {
+	switch entry.Implementation {
+	case "cnpg":
+		if result.Target.Type != model.RestoreTargetKubernetes {
+			return fmt.Errorf("drill report target %q does not match CNPG", result.Target.Type)
+		}
+		ready := false
+		for _, check := range result.Checks {
+			if check.Name == "cnpg-instance-ready" && check.Status == model.CheckStatusPassed {
+				ready = true
+				break
+			}
+		}
+		if !ready {
+			return fmt.Errorf("drill report has no passed CNPG readiness check")
+		}
+		if len(entry.ImplementationVersions) != 1 {
+			return fmt.Errorf("CNPG field entry must claim one implementation version")
+		}
+		if !hasCNPGVersionEvidence(result, entry.ImplementationVersions[0]) {
+			return fmt.Errorf("drill report has no CNPG operator version evidence matching the entry")
+		}
+		return nil
+	case "local":
+		if result.Target.Type != model.RestoreTargetLocal {
+			return fmt.Errorf("drill report target %q does not match local", result.Target.Type)
+		}
+		return nil
+	default:
+		return fmt.Errorf("target drill report implementation %q is unsupported", entry.Implementation)
+	}
+}
+
+func hasCNPGVersionEvidence(result model.DrillResult, claim string) bool {
+	for _, check := range result.Checks {
+		if check.Name == "cnpg-instance-ready" &&
+			check.Status == model.CheckStatusPassed &&
+			check.Attributes["operator_version"] == claim {
+			return true
+		}
+	}
+	for _, evidence := range result.Evidence {
+		if evidence.Source != "kubernetes" ||
+			evidence.Command == nil ||
+			!evidence.Command.ExitStatus.Success ||
+			evidence.Command.StdoutTruncated {
+			continue
+		}
+		var value any
+		if err := json.Unmarshal([]byte(evidence.Command.Stdout), &value); err != nil {
+			continue
+		}
+		if jsonContainsStringField(value, "cnpg.io/operatorVersion", claim) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonContainsStringField(value any, field, claim string) bool {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if key == field {
+				if text, ok := child.(string); ok && text == claim {
+					return true
+				}
+			}
+			if jsonContainsStringField(child, field, claim) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if jsonContainsStringField(child, field, claim) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func passedPostgreSQLClientVersionChecks(checks []model.Check, claim string) int {
+	names := map[string]struct{}{
+		"tool.pg_amcheck": {},
+		"tool.pg_dump":    {},
+		"tool.pg_isready": {},
+		"tool.psql":       {},
+	}
+	passed := 0
+	for name := range names {
+		if passedToolCheckContains(checks, name, claim) {
+			passed++
+		}
+	}
+	return passed
 }
 
 func parsePGDrillBuild(value string) (string, string, error) {

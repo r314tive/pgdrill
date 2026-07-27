@@ -109,10 +109,12 @@ outside this module. Engine implementation packages remain internal.
 Implementation status: all seven steps are locally complete. Step 6 has
 reusable provider/native-target/managed-target suites, a strict
 `pgdrill.compatibility-matrix/v1alpha1` evidence format, and one exact native
-field point for each of WAL-G, Barman, pgBackRest, and pg_probackup. The
-remaining external release gate is to repeat those drills and the disposable
-CNPG drill from one release-candidate artifact and commit; fixture evidence is
-not promoted to native-version claims.
+field point for each of WAL-G, Barman, pgBackRest, and pg_probackup. One
+`v0.1.0-alpha.10` commit has also passed all four native drills and a
+disposable CNPG drill, with retained reports in the compatibility matrix. A
+clean-tree aggregate gate now repeats the deterministic release build, native
+drills, and pinned KinD/CNPG drill for the exact Engine v0.2 candidate before
+tagging; fixture evidence is never promoted to native-version claims.
 
 ### Control Plane
 

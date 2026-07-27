@@ -28,11 +28,18 @@ make test-integration-barman
 make test-integration-pgbackrest
 make test-integration-pgprobackup
 make test-integration-native
+make test-integration-cnpg
 ```
 
 Run `make integration-check` when ShellCheck is installed. Integration output
 is intentionally ignored and does not become a compatibility claim without a
 separate reviewed evidence update.
+
+Release-candidate owners should use the clean-tree aggregate gate:
+
+```sh
+make -s release-candidate-check VERSION=v0.2.0-rc.1
+```
 
 ## Engineering Rules
 
