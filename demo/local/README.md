@@ -10,6 +10,8 @@ It proves the published binary can:
 - discover and validate a real WAL-G backup;
 - restore a separate PostgreSQL target;
 - replay a row committed only after the base backup;
+- perform timestamp PITR to a boundary between two archived transactions,
+  retaining the earlier row and excluding the later row;
 - pass readiness, SQL, `pg_amcheck`, and schema-dump probes;
 - evaluate RTO, RPO, backup-age, recovery-target, and cleanup policy;
 - retain a checksummed report and command evidence.
@@ -44,8 +46,9 @@ make -s demo-rehearsal \
 
 Use the `linux_amd64` archive on an amd64 Docker daemon. The command rejects a
 wrong filename, target architecture, digest, version, or commit. It retains
-the complete run under `.cache/integration/walg/runs/` and prints the exact
-artifact and text-report paths.
+the complete latest and timestamp-PITR runs under
+`.cache/integration/walg/runs/` and prints the exact artifact and text-report
+paths.
 
 The current published prerelease is
 [`v0.2.0-rc.1`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.1).

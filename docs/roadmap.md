@@ -4,6 +4,20 @@
 usable product surface should work in cron, CI, Kubernetes Jobs, and incident
 runbooks without requiring a server.
 
+## Version Direction
+
+- `v0.2`: harden and publish the single-attempt engine contract.
+- Next pre-1.0 milestones: broaden real latest/PITR evidence, add daemon-free
+  typed planning and local durable history, then stabilize schemas,
+  distribution, upgrades, and pilot operations.
+- `v1.0.0`: the stable self-managed product described by the
+  [v1.0 release contract](v1.0-release-contract.md).
+- `v1.x`: remote executors, schedules, notifications, multi-user control-plane
+  capabilities, TUI, or web UI as justified by real operator workflows.
+
+The sequence is contractual, not a promise that each item consumes exactly one
+minor release. `v1.0.0` does not wait for a browser UI or hosted SaaS.
+
 ## Phase 1: Engine Skeleton
 
 Status: complete for the initial CLI engine.
@@ -268,7 +282,9 @@ Remaining gates, in order:
 ## Phase 6: Fleet Control Plane
 
 Status: architecture only. Do not implement a daemon before the Engine v0.2
-spec, idempotency, reconciliation, and real-repository gates are complete.
+spec, idempotency, reconciliation, and real-repository gates are complete. The
+daemon-free planner and local history are part of the `v1.0.0` product
+boundary; distributed controller/executor operation is not.
 
 The control plane will compile typed fleet resources into independent immutable
 engine runs:
@@ -312,6 +328,26 @@ Recommended order:
 
 All interfaces consume the same run specs, events, reports, and control-plane
 API. A UI must not become a second orchestration engine.
+
+## v1.0 GA Gate
+
+Status: target contract defined; not yet satisfied.
+
+The detailed acceptance contract is
+[docs/v1.0-release-contract.md](v1.0-release-contract.md). In summary, GA
+requires:
+
+- stable CLI and versioned external schemas with tested pre-GA migration;
+- field-backed latest and timestamp PITR support cells for the advertised
+  providers, versions, platforms, and repository topologies;
+- local and CNPG target evidence with strict ownership and cleanup;
+- daemon-free typed planning and local durable run history;
+- signed archives and OCI images with checksums, SBOM, and provenance;
+- independently verified exact-candidate runs, a reproducible demo, and at
+  least one bounded external pilot.
+
+Web UI, SaaS multi-tenancy, remote executors, a general DAG, and universal
+provider/version coverage are explicitly outside the GA gate.
 
 ## Release Readiness
 

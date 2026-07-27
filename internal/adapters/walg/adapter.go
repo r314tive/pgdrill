@@ -389,7 +389,12 @@ func (a *Adapter) recoveryConfig(target model.RecoveryTarget) (string, error) {
 		if target.Value == "" {
 			return "", fmt.Errorf("timestamp recovery target requires value")
 		}
-		lines = append(lines, "recovery_target_time = "+postgresString(target.Value))
+		timestamp, err := target.Timestamp()
+		if err != nil {
+			return "", err
+		}
+		postgresTimestamp := timestamp.UTC().Format("2006-01-02 15:04:05.999999999-07:00")
+		lines = append(lines, "recovery_target_time = "+postgresString(postgresTimestamp))
 	case model.RecoveryTargetLSN:
 		if target.Value == "" {
 			return "", fmt.Errorf("lsn recovery target requires value")

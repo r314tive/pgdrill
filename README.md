@@ -53,6 +53,12 @@ Fleet scheduling, durable multi-run history, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
 than become a second orchestration implementation.
 
+The intended stable-product boundary and its evidence requirements are defined
+in the [v1.0 release contract](docs/v1.0-release-contract.md). `v1.0.0` is
+CLI-first and does not wait for a web UI or hosted SaaS, but it does require
+stable schemas, proven latest/PITR support cells, daemon-free planning and local
+history, signed distribution, and external pilot evidence.
+
 ## Goals
 
 - Verify backup catalogs and WAL continuity through provider-specific adapters.
@@ -247,6 +253,8 @@ engine/control-plane boundary is recorded in
 [ADR 0001](docs/adr/0001-engine-v0.2-and-control-plane-boundary.md).
 The typed topology and CLI/TUI/web sequence are expanded in
 [docs/control-plane-roadmap.md](docs/control-plane-roadmap.md).
+The GA boundary is tracked separately in
+[docs/v1.0-release-contract.md](docs/v1.0-release-contract.md).
 User-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md). Contribution
 and security reporting guidance is available in
 [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

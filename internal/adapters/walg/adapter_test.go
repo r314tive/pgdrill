@@ -293,7 +293,7 @@ func TestPlanRestoreBuildsBackupFetchStep(t *testing.T) {
 	for _, expected := range []string{
 		"restore_command = ",
 		"wal-fetch",
-		"recovery_target_time = '2026-07-06T01:00:00Z'",
+		"recovery_target_time = '2026-07-06 01:00:00+00:00'",
 		"recovery_target_timeline = 'latest'",
 		"recovery_target_inclusive = false",
 	} {
@@ -303,6 +303,25 @@ func TestPlanRestoreBuildsBackupFetchStep(t *testing.T) {
 	}
 	if recoveryStep.Files[1].Path != "/tmp/pgdrill/main/data/recovery.signal" {
 		t.Fatalf("unexpected recovery signal path %q", recoveryStep.Files[1].Path)
+	}
+}
+
+func TestRecoveryConfigConvertsRFC3339TimestampForPostgreSQL(t *testing.T) {
+	adapter := New(Config{}, nil)
+
+	config, err := adapter.recoveryConfig(model.RecoveryTarget{
+		Type:  model.RecoveryTargetTimestamp,
+		Value: "2026-07-27T17:44:07.531376+05:00",
+	})
+	if err != nil {
+		t.Fatalf("recovery config: %v", err)
+	}
+
+	if !strings.Contains(config, "recovery_target_time = '2026-07-27 12:44:07.531376+00:00'") {
+		t.Fatalf("expected PostgreSQL-compatible UTC timestamp, got:\n%s", config)
+	}
+	if strings.Contains(config, "T17:44:07.531376+05:00") {
+		t.Fatalf("RFC3339 transport form leaked into PostgreSQL configuration:\n%s", config)
 	}
 }
 

@@ -12,8 +12,13 @@ called out explicitly even while the major version is `0`.
 
 - A local demo rehearsal that runs a supplied, checksum-verified published
   Linux release archive through the real WAL-G/PostgreSQL restore drill and
-  requires a passed report, post-backup WAL replay, policy, cleanup, and
-  checksummed retained artifacts.
+  requires passed latest and timestamp-PITR reports, post-backup WAL replay, a
+  proven before/after transaction boundary, policy, cleanup, and checksummed
+  retained artifacts.
+- An explicit `v1.0.0` release contract separating the stable self-managed
+  engine, evidence-backed support matrix, local planner/history, distribution,
+  migration, and pilot gates from later web/SaaS and distributed-control-plane
+  work.
 
 ### Changed
 
@@ -23,6 +28,13 @@ called out explicitly even while the major version is `0`.
   invalid metadata, digest, filename, and symlink payloads.
 - Development builds now default to `v0.2.0-dev`, and release/demo
   documentation records the published `v0.2.0-rc.1` gate.
+
+### Fixed
+
+- WAL-G timestamp recovery now converts the canonical RFC3339 recovery target
+  into the timestamp-with-offset form accepted by PostgreSQL
+  `recovery_target_time`; a real PostgreSQL 18.3 PITR regression proves both
+  sides of the requested transaction boundary.
 
 ## [0.2.0-rc.1] - 2026-07-27
 

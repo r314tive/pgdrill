@@ -15,6 +15,9 @@ compatibility evidence claimed by that release.
   reuse a tag after it has been pushed.
 - Every release has an exact `## [<version>] - YYYY-MM-DD` section in
   `CHANGELOG.md`. `Unreleased` remains at the top for subsequent work.
+- `v1.0.0` additionally requires every exit criterion in the
+  [v1.0 release contract](v1.0-release-contract.md). A green build alone is not
+  a GA support claim.
 
 ## Toolchain Contract
 

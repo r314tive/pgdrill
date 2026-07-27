@@ -12,10 +12,12 @@ The scenario:
 2. inserts 100 rows and takes a real WAL-G full backup;
 3. commits row 101 only after the base backup and archives its WAL segment;
 4. runs `pgdrill doctor` and catalog discovery;
-5. requires WAL-G `wal-verify integrity` during a real restore drill;
-6. starts an independent restored PostgreSQL on another port;
-7. requires readiness, the 101-row WAL sentinel, `pg_amcheck`, schema dump,
-   recovery policy, and owned cleanup to pass.
+5. restores latest recovery and requires the 101-row WAL sentinel;
+6. records a timestamp boundary, commits and archives row 102 after it, then
+   restores to that timestamp;
+7. requires the PITR target to contain row 101 but not row 102;
+8. requires WAL integrity, readiness, `pg_amcheck`, schema dump, five recovery
+   policy verdicts, and owned cleanup for both attempts.
 
 ## Run
 
@@ -47,8 +49,9 @@ itself forbids image pulls, runs rootless with all Linux capabilities dropped,
 uses a read-only root filesystem and disposable tmpfs state, and has no
 network.
 
-Each run writes `report.json`, doctor/catalog output, logs, exact runtime
-inventory, durable operation checkpoints, and recursive checksums under the ignored
+Each run writes latest and timestamp-PITR reports, the rendered PITR
+configuration, doctor/catalog output, logs, exact runtime inventory, durable
+operation checkpoints, and recursive checksums under the ignored
 `.cache/integration/walg/runs/<timestamp>/` directory. A dirty source tree is
 allowed for development, but both version and commit metadata are suffixed
 with `dirty`; such output must not be promoted to compatibility evidence.
@@ -68,7 +71,8 @@ recorded if the result is retained.
 
 ## Scope Boundary
 
-This test covers a full backup, latest recovery, one post-backup WAL segment,
-filesystem storage, and one process/container boundary. It does not establish
-remote-object-store behavior, encryption, incremental backups, timestamp PITR,
-multi-host isolation, production RTO, or customer readiness.
+This test covers a full backup, latest recovery, timestamp PITR between two
+archived transactions, filesystem storage, and one process/container boundary.
+It does not establish remote-object-store behavior, encryption, incremental
+backups, other PITR target types, multi-host isolation, production RTO, or
+customer readiness.

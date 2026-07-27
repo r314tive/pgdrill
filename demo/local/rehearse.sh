@@ -124,7 +124,15 @@ case "${run_dir}" in
   *) die "integration drill returned an unexpected artifact directory: ${run_dir}" ;;
 esac
 
-for artifact in checksums.txt report.json report.txt runtime.txt source-state.txt; do
+for artifact in \
+  checksums.txt \
+  pitr-config.yaml \
+  pitr-report.json \
+  pitr-report.txt \
+  report.json \
+  report.txt \
+  runtime.txt \
+  source-state.txt; do
   [[ -f "${run_dir}/${artifact}" ]] ||
     die "integration drill did not retain ${artifact}"
 done
@@ -138,9 +146,23 @@ grep -Eq '^post_backup_wal_replayed[[:space:]]+sql[[:space:]]+passed' "${run_dir
   die "retained report does not prove post-backup WAL replay"
 grep -Eq '^cleanup[[:space:]]+true[[:space:]]+passed' "${run_dir}/report.txt" ||
   die "retained report does not prove owned cleanup"
+grep -Eq '^Status[[:space:]]+passed$' "${run_dir}/pitr-report.txt" ||
+  die "retained timestamp PITR report status is not passed"
+grep -Eq '^Policy[[:space:]]+5 passed, 0 failed, 0 unknown, 0 not configured$' \
+  "${run_dir}/pitr-report.txt" ||
+  die "retained timestamp PITR policy did not produce five passed verdicts"
+grep -Eq '^timestamp_boundary_replayed[[:space:]]+sql[[:space:]]+passed' \
+  "${run_dir}/pitr-report.txt" ||
+  die "retained timestamp PITR report does not prove the before/after boundary"
+grep -Eq '^cleanup[[:space:]]+true[[:space:]]+passed' "${run_dir}/pitr-report.txt" ||
+  die "retained timestamp PITR report does not prove owned cleanup"
+grep -F '"type": "timestamp"' "${run_dir}/pitr-report.json" >/dev/null ||
+  die "retained timestamp PITR report has the wrong recovery target"
 
 printf '\n[demo/local] PASS\n'
 printf 'release_archive_sha256=%s\n' "${archive_sha256}"
-printf 'report_sha256=%s\n' "$(sha256_file "${run_dir}/report.json")"
+printf 'latest_report_sha256=%s\n' "$(sha256_file "${run_dir}/report.json")"
+printf 'pitr_report_sha256=%s\n' "$(sha256_file "${run_dir}/pitr-report.json")"
 printf 'artifacts=%s\n' "${run_dir}"
-printf 'report=%s\n' "${run_dir}/report.txt"
+printf 'latest_report=%s\n' "${run_dir}/report.txt"
+printf 'pitr_report=%s\n' "${run_dir}/pitr-report.txt"
