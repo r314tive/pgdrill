@@ -297,8 +297,9 @@ effective override is retained in runtime evidence.
 
 The work directory must be missing or empty and must not itself be a symlink.
 This is checked read-only before native preflight and repository access, then
-checked again during preparation. A non-empty path is never adopted by writing
-a marker into it.
+checked again during preparation. Preparation sets the adopted empty directory
+to mode `0700` before publishing its private ownership marker. A non-empty path
+is never adopted by writing a marker into it.
 
 The target does not remove `work_dir` by default. Removal must be explicitly
 enabled and is guarded by a deterministic attempt-scoped ownership marker whose

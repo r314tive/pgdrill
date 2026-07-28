@@ -185,28 +185,34 @@ func (s DirectoryStore) ApplyRetention(
 		if err != nil {
 			return err
 		}
-		if containsDigest(state.pending, confirmation) {
+		if err := validateRetentionStateCardinality(state); err != nil {
+			return err
+		}
+		if len(state.pending) == 1 {
+			if state.pending[0] != confirmation {
+				return pendingRetentionError("completed cleanup", state.pending[0])
+			}
+			plan, err := validateCompletedRetentionOperation(root, confirmation)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(plan.Policy, policy) {
+				return fmt.Errorf(
+					"completed retention operation %s uses a different policy",
+					confirmation,
+				)
+			}
 			if err := removePrivateTree(retentionPendingPath(root, confirmation)); err != nil {
 				return fmt.Errorf("finish completed retention cleanup: %w", err)
 			}
-			result = PruneResult{
-				SchemaVersion:  CurrentPruneResultSchema,
-				PlanDigest:     confirmation,
-				Resumed:        true,
-				AlreadyApplied: true,
-			}
+			result = pruneResult(plan, true)
+			result.AlreadyApplied = true
 			return nil
-		}
-		if len(state.pending) > 0 {
-			return pendingRetentionError("completed cleanup", state.pending[0])
-		}
-		if len(state.operations) > 1 {
-			return fmt.Errorf("history store has multiple pending retention operations")
 		}
 		if len(state.operations) == 1 && state.operations[0] != confirmation {
 			return pendingRetentionError("operation", state.operations[0])
 		}
-		if len(state.trash) > 1 || len(state.trash) == 1 && state.trash[0] != confirmation {
+		if len(state.trash) == 1 && state.trash[0] != confirmation {
 			return pendingRetentionError("trash", state.trash[0])
 		}
 
@@ -812,18 +818,26 @@ func createRetentionOperation(ctx context.Context, root string, plan RetentionPl
 }
 
 func readRetentionOperation(root, digest string) (RetentionPlan, error) {
+	return readRetentionPlanAt(
+		retentionOperationPath(root, digest),
+		digest,
+		"pending retention plan",
+	)
+}
+
+func readRetentionPlanAt(path, digest, description string) (RetentionPlan, error) {
 	plan, err := readJSONFile[RetentionPlan](
-		filepath.Join(retentionOperationPath(root, digest), retentionPlanFileName),
+		filepath.Join(path, retentionPlanFileName),
 		MaxReportBytes,
 	)
 	if err != nil {
-		return RetentionPlan{}, fmt.Errorf("read pending retention plan: %w", err)
+		return RetentionPlan{}, fmt.Errorf("read %s: %w", description, err)
 	}
 	if err := plan.Validate(); err != nil {
-		return RetentionPlan{}, fmt.Errorf("validate pending retention plan: %w", err)
+		return RetentionPlan{}, fmt.Errorf("validate %s: %w", description, err)
 	}
 	if plan.Digest != digest {
-		return RetentionPlan{}, fmt.Errorf("pending retention plan identity does not match directory")
+		return RetentionPlan{}, fmt.Errorf("%s identity does not match directory", description)
 	}
 	return plan, nil
 }

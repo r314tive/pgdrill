@@ -27,6 +27,8 @@ LABEL org.opencontainers.image.title="pgdrill" \
       org.opencontainers.image.base.digest="sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818"
 
 COPY --from=release --chmod=0755 /release/pgdrill_${ARCHIVE_VERSION}_linux_${TARGETARCH}/pgdrill /usr/local/bin/pgdrill
+COPY --from=release --chmod=0444 /release/pgdrill_${ARCHIVE_VERSION}_linux_${TARGETARCH}/LICENSE /usr/share/doc/pgdrill/LICENSE
+COPY --from=release --chmod=0444 /release/pgdrill_${ARCHIVE_VERSION}_linux_${TARGETARCH}/NOTICE /usr/share/doc/pgdrill/NOTICE
 
 ENV HOME=/tmp
 WORKDIR /tmp

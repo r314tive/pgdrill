@@ -6,11 +6,11 @@ Release tags publish a multi-architecture OCI image at:
 ghcr.io/r314tive/pgdrill:<version>
 ```
 
-The image contains the exact statically linked Linux `pgdrill` binary from the
-checksummed release archive for its platform. Published manifests cover
-`linux/amd64` and `linux/arm64`. The image runs as numeric UID/GID `65532`,
-uses `/tmp` as its working directory, and forwards `SIGTERM` directly to the
-pgdrill process.
+The image contains the exact statically linked Linux `pgdrill` binary and the
+`LICENSE`/`NOTICE` files from the checksummed release archive for its platform.
+Published manifests cover `linux/amd64` and `linux/arm64`. The image runs as
+numeric UID/GID `65532`, uses `/tmp` as its working directory, and forwards
+`SIGTERM` directly to the pgdrill process.
 
 ## Runtime Boundary
 

@@ -25,6 +25,7 @@ type ociFixtureOptions struct {
 	missingSBOM    bool
 	wrongBinary    bool
 	wrongImageUser bool
+	whiteoutBinary bool
 }
 
 func TestVerifyOCIArchive(t *testing.T) {
@@ -87,6 +88,11 @@ func TestVerifyOCIArchiveRejectsBrokenContracts(t *testing.T) {
 			name:    "root runtime user",
 			options: ociFixtureOptions{wrongImageUser: true},
 			want:    "image user",
+		},
+		{
+			name:    "later layer removes binary",
+			options: ociFixtureOptions{whiteoutBinary: true},
+			want:    "has no /usr/local/bin/pgdrill",
 		},
 	}
 
@@ -177,6 +183,28 @@ func writeOCIFixture(t *testing.T, options ociFixtureOptions) (string, string) {
 			t.Fatal(err)
 		}
 		layer := addBlob(layerData, "application/vnd.oci.image.layer.v1.tar+gzip")
+		layers := []ociDescriptor{layer}
+		if options.whiteoutBinary && architecture == "amd64" {
+			whiteoutPath := filepath.Join(root, "whiteout-"+architecture+".tar.gz")
+			if err := writeTarGz(
+				whiteoutPath,
+				releaseTime,
+				[]archiveEntry{{
+					Name: "usr/local/bin/.wh.pgdrill",
+					Mode: 0o000,
+				}},
+			); err != nil {
+				t.Fatal(err)
+			}
+			whiteoutData, err := os.ReadFile(whiteoutPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers = append(
+				layers,
+				addBlob(whiteoutData, "application/vnd.oci.image.layer.v1.tar+gzip"),
+			)
+		}
 
 		user := containerUser
 		if options.wrongImageUser && architecture == "amd64" {
@@ -208,7 +236,7 @@ func writeOCIFixture(t *testing.T, options ociFixtureOptions) (string, string) {
 			SchemaVersion: 2,
 			MediaType:     ociManifestMediaType,
 			Config:        config,
-			Layers:        []ociDescriptor{layer},
+			Layers:        layers,
 		})
 		manifest := addBlob(manifestData, ociManifestMediaType)
 		manifest.Platform = &ociPlatform{OS: "linux", Architecture: architecture}

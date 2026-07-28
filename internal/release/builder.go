@@ -118,6 +118,10 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read LICENSE: %w", err)
 	}
+	notice, err := os.ReadFile(filepath.Join(opts.SourceDir, "NOTICE"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read NOTICE: %w", err)
+	}
 	compatibilityDocument, err := os.ReadFile(filepath.Join(opts.SourceDir, "docs", "compatibility.md"))
 	if err != nil {
 		return Result{}, fmt.Errorf("read compatibility document: %w", err)
@@ -210,6 +214,7 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 			{Name: filepath.ToSlash(filepath.Join(rootName, "FLEET_PLAN.md")), Mode: 0o644, Body: fleetPlanDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "HISTORY.md")), Mode: 0o644, Body: historyDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "LICENSE")), Mode: 0o644, Body: license},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "NOTICE")), Mode: 0o644, Body: notice},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "README.md")), Mode: 0o644, Body: readme},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "UPGRADE.md")), Mode: 0o644, Body: upgradeDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "compatibility-matrix.yaml")), Mode: 0o644, Body: compatibilityMatrix},

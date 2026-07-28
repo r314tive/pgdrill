@@ -155,6 +155,13 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- Local restore preparation now establishes a private mode `0700` work
+  directory before publishing ownership. Recovery accepts only bounded,
+  private, identity-matching operation receipts whose PostgreSQL data and log
+  paths remain inside that owned directory.
+- The repository now retains the canonical Apache-2.0 license text and a
+  separate project `NOTICE`; deterministic release archives and OCI images
+  include both.
 - pg_probackup timestamp targets now fail before repository access unless they
   use the provider's whole-second precision; accepted RFC3339 values are
   converted to the native space-separated UTC representation.
@@ -232,6 +239,16 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- Completed history-retention operations are now fully revalidated before
+  pending cleanup, reject tampered or overlapping maintenance state, preserve
+  the confirmed policy, and return the original deletion counts after a
+  crash-resume.
+- Recovered local PostgreSQL cleanup now revalidates owned postmaster identity
+  immediately before signalling and refuses to delete the target while process
+  shutdown is unproven. Started-process kill waits are bounded as well.
+- OCI verification now applies later-layer whiteouts to the effective pgdrill
+  binary and bounds decompressed layer bytes and entries, preventing a removed
+  binary or decompression-heavy layer from passing archive verification.
 - pgBackRest timestamp recovery now converts canonical RFC3339 targets to the
   PostgreSQL timestamp representation written by pgBackRest; the previous raw
   `T...Z` value made PostgreSQL 18 reject `postgresql.auto.conf`.

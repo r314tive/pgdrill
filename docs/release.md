@@ -118,8 +118,9 @@ source commit, release compiler, version, and commit timestamp:
 - macOS amd64
 - macOS arm64
 
-Each `.tar.gz` contains `pgdrill`, `README.md`, `LICENSE`, the release
-`.go-version` compiler pin, `ATTEMPT_RECOVERY.md`, `COMPATIBILITY.md`,
+Each `.tar.gz` contains `pgdrill`, `README.md`, the canonical Apache-2.0
+`LICENSE`, project attribution in `NOTICE`, the release `.go-version` compiler
+pin, `ATTEMPT_RECOVERY.md`, `COMPATIBILITY.md`,
 `CONTAINER_IMAGE.md`, `FLEET_PLAN.md`, `HISTORY.md`, `UPGRADE.md`, the validated
 `compatibility-matrix.yaml`, and `fleet.example.yaml`. The
 release builder compiles the packaged fleet example and rejects placement

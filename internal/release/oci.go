@@ -35,6 +35,8 @@ const (
 	maxOCIArchiveBytes      = 512 << 20
 	maxOCIFileBytes         = 128 << 20
 	maxOCIArchiveEntries    = 10_000
+	maxOCILayerBytes        = 512 << 20
+	maxOCILayerEntries      = 100_000
 )
 
 type OCIOptions struct {
@@ -98,6 +100,13 @@ type inTotoStatement struct {
 	Subject       []struct {
 		Digest map[string]string `json:"digest"`
 	} `json:"subject"`
+}
+
+type ociLayerBinaryState struct {
+	Binary  []byte
+	Mode    os.FileMode
+	Found   bool
+	Removed bool
 }
 
 func VerifyOCIArchive(opts OCIOptions) (OCIResult, error) {
@@ -511,13 +520,17 @@ func verifyOCIImage(
 		if err != nil {
 			return err
 		}
-		candidate, mode, found, err := readBinaryFromLayer(layerData, layer.MediaType)
+		state, err := readBinaryFromLayer(layerData, layer.MediaType)
 		if err != nil {
 			return fmt.Errorf("read image layer %s: %w", layer.Digest, err)
 		}
-		if found {
-			imageBinary = candidate
-			imageMode = mode
+		if state.Removed {
+			imageBinary = nil
+			imageMode = 0
+		}
+		if state.Found {
+			imageBinary = state.Binary
+			imageMode = state.Mode
 		}
 	}
 	if imageBinary == nil {
@@ -671,49 +684,156 @@ func readReleaseBinary(distDir, version, architecture string) ([]byte, error) {
 	return binary, nil
 }
 
-func readBinaryFromLayer(data []byte, mediaType string) ([]byte, os.FileMode, bool, error) {
+func readBinaryFromLayer(data []byte, mediaType string) (ociLayerBinaryState, error) {
 	var source io.Reader = bytes.NewReader(data)
 	var gzipReader *gzip.Reader
 	switch mediaType {
 	case "application/vnd.oci.image.layer.v1.tar+gzip":
 		reader, err := gzip.NewReader(source)
 		if err != nil {
-			return nil, 0, false, err
+			return ociLayerBinaryState{}, err
 		}
 		gzipReader = reader
 		source = reader
 	case "application/vnd.oci.image.layer.v1.tar":
 	default:
-		return nil, 0, false, fmt.Errorf("unsupported OCI layer media type %q", mediaType)
+		return ociLayerBinaryState{}, fmt.Errorf("unsupported OCI layer media type %q", mediaType)
 	}
 	if gzipReader != nil {
 		defer gzipReader.Close()
 	}
-	reader := tar.NewReader(source)
-	for {
+	bounded := &countingReader{
+		reader: io.LimitReader(source, maxOCILayerBytes+1),
+	}
+	reader := tar.NewReader(bounded)
+	state := ociLayerBinaryState{}
+	seen := make(map[string]struct{})
+	ancestorReplacement := false
+	for entries := 0; ; entries++ {
+		if entries >= maxOCILayerEntries {
+			return ociLayerBinaryState{}, fmt.Errorf(
+				"OCI layer exceeds %d entries",
+				maxOCILayerEntries,
+			)
+		}
 		header, err := reader.Next()
+		if bounded.bytes > maxOCILayerBytes {
+			return ociLayerBinaryState{}, fmt.Errorf(
+				"OCI layer exceeds %d uncompressed bytes",
+				maxOCILayerBytes,
+			)
+		}
 		if errors.Is(err, io.EOF) {
-			return nil, 0, false, nil
+			if state.Found && ancestorReplacement {
+				return ociLayerBinaryState{}, fmt.Errorf(
+					"OCI layer replaces a pgdrill parent directory with a non-directory entry",
+				)
+			}
+			return state, nil
 		}
 		if err != nil {
-			return nil, 0, false, err
+			return ociLayerBinaryState{}, err
 		}
-		name := strings.TrimPrefix(path.Clean(header.Name), "./")
+		name, err := normalizeOCILayerPath(header.Name)
+		if err != nil {
+			return ociLayerBinaryState{}, err
+		}
+		if name == "." {
+			if header.Typeflag != tar.TypeDir {
+				return ociLayerBinaryState{}, fmt.Errorf(
+					"OCI layer root entry is not a directory",
+				)
+			}
+			continue
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return ociLayerBinaryState{}, fmt.Errorf(
+				"OCI layer contains duplicate entry %q",
+				name,
+			)
+		}
+		seen[name] = struct{}{}
+
+		if removesContainerBinary(name) {
+			state.Removed = true
+		}
+		if isContainerBinaryAncestor(name) &&
+			header.Typeflag != tar.TypeDir {
+			state.Removed = true
+			ancestorReplacement = true
+		}
 		if name != containerBinaryPath {
 			continue
 		}
+		if state.Found {
+			return ociLayerBinaryState{}, fmt.Errorf("OCI layer contains duplicate pgdrill entry")
+		}
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
-			return nil, 0, false, fmt.Errorf("pgdrill layer entry is not a regular file")
+			return ociLayerBinaryState{}, fmt.Errorf("pgdrill layer entry is not a regular file")
 		}
 		binary, err := io.ReadAll(io.LimitReader(reader, maxOCIFileBytes+1))
 		if err != nil {
-			return nil, 0, false, err
+			return ociLayerBinaryState{}, err
 		}
 		if len(binary) > maxOCIFileBytes {
-			return nil, 0, false, fmt.Errorf("pgdrill layer entry exceeds %d bytes", maxOCIFileBytes)
+			return ociLayerBinaryState{}, fmt.Errorf(
+				"pgdrill layer entry exceeds %d bytes",
+				maxOCIFileBytes,
+			)
 		}
-		return binary, header.FileInfo().Mode(), true, nil
+		state.Binary = binary
+		state.Mode = header.FileInfo().Mode()
+		state.Found = true
 	}
+}
+
+func normalizeOCILayerPath(value string) (string, error) {
+	for strings.HasPrefix(value, "./") {
+		value = strings.TrimPrefix(value, "./")
+	}
+	name := path.Clean(value)
+	if strings.HasPrefix(name, "/") ||
+		name == ".." ||
+		strings.HasPrefix(name, "../") {
+		return "", fmt.Errorf("OCI layer has unsafe path %q", value)
+	}
+	return name, nil
+}
+
+func removesContainerBinary(name string) bool {
+	switch name {
+	case ".wh.usr",
+		".wh..wh..opq",
+		"usr/.wh.local",
+		"usr/.wh..wh..opq",
+		"usr/local/.wh.bin",
+		"usr/local/.wh..wh..opq",
+		"usr/local/bin/.wh.pgdrill",
+		"usr/local/bin/.wh..wh..opq":
+		return true
+	default:
+		return false
+	}
+}
+
+func isContainerBinaryAncestor(name string) bool {
+	switch name {
+	case "usr", "usr/local", "usr/local/bin":
+		return true
+	default:
+		return false
+	}
+}
+
+type countingReader struct {
+	reader io.Reader
+	bytes  int64
+}
+
+func (r *countingReader) Read(buffer []byte) (int, error) {
+	read, err := r.reader.Read(buffer)
+	r.bytes += int64(read)
+	return read, err
 }
 
 func decodeOCIJSON(data []byte, name string, target any) error {

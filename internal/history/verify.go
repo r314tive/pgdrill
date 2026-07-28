@@ -94,17 +94,16 @@ func (s DirectoryStore) Verify(ctx context.Context) (VerificationResult, error) 
 		if err != nil {
 			return err
 		}
-		if len(state.operations) > 1 || len(state.trash) > 1 {
-			return fmt.Errorf("history store has multiple concurrent retention operations")
-		}
-		if len(state.pending) > 0 && (len(state.operations) > 0 || len(state.trash) > 0) {
-			return fmt.Errorf("history store has overlapping active and completed retention operations")
-		}
-		if len(state.trash) == 1 && !containsDigest(state.operations, state.trash[0]) {
-			return fmt.Errorf("history store has orphaned retention trash %s", state.trash[0])
+		if err := validateRetentionStateCardinality(state); err != nil {
+			return err
 		}
 		for _, digest := range state.operations {
 			if err := validateRetentionOperationState(root, digest, containsDigest(state.trash, digest)); err != nil {
+				return err
+			}
+		}
+		for _, digest := range state.pending {
+			if _, err := validateCompletedRetentionOperation(root, digest); err != nil {
 				return err
 			}
 		}
@@ -120,6 +119,19 @@ func (s DirectoryStore) Verify(ctx context.Context) (VerificationResult, error) 
 		return VerificationResult{}, err
 	}
 	return result, nil
+}
+
+func validateRetentionStateCardinality(state retentionState) error {
+	if len(state.operations) > 1 || len(state.trash) > 1 || len(state.pending) > 1 {
+		return fmt.Errorf("history store has multiple concurrent retention operations")
+	}
+	if len(state.pending) > 0 && (len(state.operations) > 0 || len(state.trash) > 0) {
+		return fmt.Errorf("history store has overlapping active and completed retention operations")
+	}
+	if len(state.trash) == 1 && !containsDigest(state.operations, state.trash[0]) {
+		return fmt.Errorf("history store has orphaned retention trash %s", state.trash[0])
+	}
+	return nil
 }
 
 func validateRetentionOperationState(root, digest string, hasTrash bool) error {
@@ -138,12 +150,7 @@ func validateRetentionOperationState(root, digest string, hasTrash bool) error {
 	)
 	completion, err := readJSONFile[retentionCompletion](completionPath, MaxIdentityBytes)
 	if err == nil {
-		expected := retentionCompletion{
-			SchemaVersion:   retentionCompleteSchema,
-			PlanDigest:      plan.Digest,
-			DeletedAttempts: len(plan.Attempts),
-			DeletedRuns:     len(plan.Runs),
-		}
+		expected := expectedRetentionCompletion(plan)
 		if !reflect.DeepEqual(completion, expected) {
 			return fmt.Errorf("retention completion does not match confirmed plan")
 		}
@@ -161,29 +168,7 @@ func validateRetentionOperationState(root, digest string, hasTrash bool) error {
 	if err != nil {
 		return fmt.Errorf("read retention progress: %w", err)
 	}
-	expected := make(map[string]retentionProgress, len(plan.Attempts)+len(plan.Runs))
-	for index, item := range plan.Attempts {
-		name := filepath.Base(retentionProgressPath(root, digest, "attempt", index))
-		expected[name] = retentionProgress{
-			SchemaVersion: retentionProgressSchema,
-			PlanDigest:    digest,
-			Kind:          "attempt",
-			Index:         index,
-			RunID:         item.RunID,
-			AttemptID:     item.AttemptID,
-			RecordDigest:  item.RecordDigest,
-		}
-	}
-	for index, item := range plan.Runs {
-		name := filepath.Base(retentionProgressPath(root, digest, "run", index))
-		expected[name] = retentionProgress{
-			SchemaVersion: retentionProgressSchema,
-			PlanDigest:    digest,
-			Kind:          "run",
-			Index:         index,
-			RunID:         item.RunID,
-		}
-	}
+	expected := expectedRetentionProgress(root, digest, plan)
 	marked := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		want, ok := expected[entry.Name()]
@@ -277,6 +262,154 @@ func validateRetentionOperationState(root, digest string, hasTrash bool) error {
 		}
 	}
 	return nil
+}
+
+func validateCompletedRetentionOperation(root, digest string) (RetentionPlan, error) {
+	path := retentionPendingPath(root, digest)
+	plan, err := readRetentionPlanAt(path, digest, "completed retention plan")
+	if err != nil {
+		return RetentionPlan{}, err
+	}
+	completion, err := readJSONFile[retentionCompletion](
+		filepath.Join(path, retentionCompleteFileName),
+		MaxIdentityBytes,
+	)
+	if err != nil {
+		return RetentionPlan{}, fmt.Errorf("read completed retention result: %w", err)
+	}
+	if !reflect.DeepEqual(completion, expectedRetentionCompletion(plan)) {
+		return RetentionPlan{}, fmt.Errorf("retention completion does not match confirmed plan")
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return RetentionPlan{}, fmt.Errorf("read completed retention operation: %w", err)
+	}
+	allowed := map[string]bool{
+		retentionPlanFileName:      false,
+		retentionProgressDirectory: true,
+		retentionCompleteFileName:  false,
+	}
+	for _, entry := range entries {
+		directory, ok := allowed[entry.Name()]
+		if !ok || entry.IsDir() != directory {
+			return RetentionPlan{}, fmt.Errorf(
+				"completed retention operation contains unexpected entry %q",
+				entry.Name(),
+			)
+		}
+	}
+	if len(entries) != len(allowed) {
+		return RetentionPlan{}, fmt.Errorf("completed retention operation file set is incomplete")
+	}
+
+	progressDir := filepath.Join(path, retentionProgressDirectory)
+	if err := requireDirectory(progressDir); err != nil {
+		return RetentionPlan{}, fmt.Errorf("inspect completed retention progress: %w", err)
+	}
+	progressEntries, err := os.ReadDir(progressDir)
+	if err != nil {
+		return RetentionPlan{}, fmt.Errorf("read completed retention progress: %w", err)
+	}
+	expected := expectedRetentionProgress(root, digest, plan)
+	if len(progressEntries) != len(expected) {
+		return RetentionPlan{}, fmt.Errorf("completed retention progress is incomplete")
+	}
+	for _, entry := range progressEntries {
+		want, ok := expected[entry.Name()]
+		if !ok || entry.IsDir() {
+			return RetentionPlan{}, fmt.Errorf(
+				"completed retention progress contains unexpected entry %q",
+				entry.Name(),
+			)
+		}
+		actual, err := readJSONFile[retentionProgress](
+			filepath.Join(progressDir, entry.Name()),
+			MaxIdentityBytes,
+		)
+		if err != nil {
+			return RetentionPlan{}, fmt.Errorf(
+				"read completed retention progress %q: %w",
+				entry.Name(),
+				err,
+			)
+		}
+		if !reflect.DeepEqual(actual, want) {
+			return RetentionPlan{}, fmt.Errorf(
+				"completed retention progress %q does not match confirmed plan",
+				entry.Name(),
+			)
+		}
+	}
+
+	for _, item := range plan.Attempts {
+		source := filepath.Join(
+			root,
+			"runs",
+			runDirectoryName(item.RunID),
+			"attempts",
+			attemptDirectoryName(item.RunID, item.AttemptID),
+		)
+		if exists, err := privateDirectoryExists(source); err != nil {
+			return RetentionPlan{}, err
+		} else if exists {
+			return RetentionPlan{}, fmt.Errorf(
+				"completed retention attempt %q remains active",
+				item.AttemptID,
+			)
+		}
+	}
+	for _, item := range plan.Runs {
+		source := filepath.Join(root, "runs", runDirectoryName(item.RunID))
+		if exists, err := privateDirectoryExists(source); err != nil {
+			return RetentionPlan{}, err
+		} else if exists {
+			return RetentionPlan{}, fmt.Errorf(
+				"completed retention run %q remains active",
+				item.RunID,
+			)
+		}
+	}
+	return plan, nil
+}
+
+func expectedRetentionCompletion(plan RetentionPlan) retentionCompletion {
+	return retentionCompletion{
+		SchemaVersion:   retentionCompleteSchema,
+		PlanDigest:      plan.Digest,
+		DeletedAttempts: len(plan.Attempts),
+		DeletedRuns:     len(plan.Runs),
+	}
+}
+
+func expectedRetentionProgress(
+	root, digest string,
+	plan RetentionPlan,
+) map[string]retentionProgress {
+	expected := make(map[string]retentionProgress, len(plan.Attempts)+len(plan.Runs))
+	for index, item := range plan.Attempts {
+		name := filepath.Base(retentionProgressPath(root, digest, "attempt", index))
+		expected[name] = retentionProgress{
+			SchemaVersion: retentionProgressSchema,
+			PlanDigest:    digest,
+			Kind:          "attempt",
+			Index:         index,
+			RunID:         item.RunID,
+			AttemptID:     item.AttemptID,
+			RecordDigest:  item.RecordDigest,
+		}
+	}
+	for index, item := range plan.Runs {
+		name := filepath.Base(retentionProgressPath(root, digest, "run", index))
+		expected[name] = retentionProgress{
+			SchemaVersion: retentionProgressSchema,
+			PlanDigest:    digest,
+			Kind:          "run",
+			Index:         index,
+			RunID:         item.RunID,
+		}
+	}
+	return expected
 }
 
 func (v VerificationResult) Validate() error {

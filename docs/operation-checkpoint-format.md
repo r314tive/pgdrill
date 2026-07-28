@@ -63,11 +63,12 @@ Targets return one bounded disposition after read-only observation:
 - `unknown`: evidence is insufficient
 - `conflict`: observed ownership belongs to another resource or attempt
 
-The local target proves preparation with its exact ownership marker and proves
-restore steps with private, synced operation receipts under
-`.pgdrill-operations`. A PostgreSQL-start receipt is accepted only with a
-matching owned `postmaster.pid` and live process. Missing receipts after a
-possibly started command remain `unknown`.
+The local target proves preparation with its exact private ownership marker
+and proves restore steps with bounded, private, synced operation receipts under
+`.pgdrill-operations`. A PostgreSQL-start receipt is accepted only when its
+data and log paths remain inside the owned mode-`0700` work directory and a
+matching `postmaster.pid` names the same data directory and a live process.
+Missing or invalid receipts after a possibly started command remain `unknown`.
 
 The CNPG target queries `Cluster` objects by the attempt ownership label. A
 matching Ready instance proves managed startup; no match proves the create was

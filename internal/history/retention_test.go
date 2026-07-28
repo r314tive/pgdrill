@@ -417,11 +417,21 @@ func TestApplyRetentionFinishesCompletedPendingDeleteAfterProcessLoss(t *testing
 		t.Fatalf("verification = %#v", verification)
 	}
 
+	if _, err := base.ApplyRetention(
+		context.Background(),
+		RetentionPolicy{Before: policy.Before.Add(time.Hour)},
+		plan.Digest,
+	); err == nil || !strings.Contains(err.Error(), "different policy") {
+		t.Fatalf("ApplyRetention(changed policy) error = %v", err)
+	}
 	resumed, err := base.ApplyRetention(context.Background(), policy, plan.Digest)
 	if err != nil {
 		t.Fatalf("ApplyRetention(resume pending delete) error = %v", err)
 	}
-	if !resumed.Resumed || !resumed.AlreadyApplied || resumed.PlanDigest != plan.Digest {
+	if !resumed.Resumed || !resumed.AlreadyApplied ||
+		resumed.PlanDigest != plan.Digest ||
+		resumed.DeletedAttempts != 1 ||
+		resumed.DeletedRuns != 1 {
 		t.Fatalf("resumed result = %#v", resumed)
 	}
 	clean, err := base.Verify(context.Background())
@@ -431,6 +441,98 @@ func TestApplyRetentionFinishesCompletedPendingDeleteAfterProcessLoss(t *testing
 	if clean.MaintenanceRequired {
 		t.Fatalf("clean verification = %#v", clean)
 	}
+}
+
+func TestCompletedRetentionOperationRejectsTamperingAndMultiplePendingDeletes(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "history")
+	base := DirectoryStore{Path: storePath}
+	result := validResult(t, "retention-completed-tamper", "attempt-1", model.DrillStatusPassed)
+	saveHistoryReport(t, base, result)
+	policy := RetentionPolicy{Before: result.FinishedAt.Add(time.Hour)}
+	plan, err := base.PlanRetention(context.Background(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("lost after final operation move")
+	interrupted := DirectoryStore{
+		Path: storePath,
+		retentionHook: func(step string, _ int) error {
+			if step == retentionStepAfterFinalizeMove {
+				return injected
+			}
+			return nil
+		},
+	}
+	if _, err := interrupted.ApplyRetention(
+		context.Background(),
+		policy,
+		plan.Digest,
+	); !errors.Is(err, injected) {
+		t.Fatalf("ApplyRetention(interrupted) error = %v", err)
+	}
+
+	completionPath := filepath.Join(
+		retentionPendingPath(storePath, plan.Digest),
+		retentionCompleteFileName,
+	)
+	tampered := expectedRetentionCompletion(plan)
+	tampered.DeletedAttempts++
+	payload, err := marshalJSON(tampered, MaxIdentityBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(completionPath, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := base.Verify(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "completion does not match") {
+		t.Fatalf("Verify(tampered completion) error = %v", err)
+	}
+	if _, err := base.ApplyRetention(
+		context.Background(),
+		policy,
+		plan.Digest,
+	); err == nil || !strings.Contains(err.Error(), "completion does not match") {
+		t.Fatalf("ApplyRetention(tampered completion) error = %v", err)
+	}
+	if _, err := os.Lstat(retentionPendingPath(storePath, plan.Digest)); err != nil {
+		t.Fatalf("tampered pending operation was removed: %v", err)
+	}
+
+	if err := os.WriteFile(
+		completionPath,
+		mustMarshalJSON(t, expectedRetentionCompletion(plan), MaxIdentityBytes),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	otherDigest := "sha256:" + strings.Repeat("f", 64)
+	if err := os.Mkdir(
+		retentionPendingPath(storePath, otherDigest),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := base.Verify(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "multiple concurrent") {
+		t.Fatalf("Verify(multiple pending) error = %v", err)
+	}
+	if _, err := base.ApplyRetention(
+		context.Background(),
+		policy,
+		plan.Digest,
+	); err == nil || !strings.Contains(err.Error(), "multiple concurrent") {
+		t.Fatalf("ApplyRetention(multiple pending) error = %v", err)
+	}
+}
+
+func mustMarshalJSON(t *testing.T, value any, maxBytes int) []byte {
+	t.Helper()
+	payload, err := marshalJSON(value, maxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func waitForHistoryProcessReady(

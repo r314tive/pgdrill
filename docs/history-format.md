@@ -194,7 +194,10 @@ pgdrill history prune \
 ```
 
 The exclusive lock recomputes the plan before the first mutation. A changed
-store or policy produces a new digest and rejects stale confirmation.
+store or policy produces a new digest and rejects stale confirmation. Removal
+is crash-resumable: an exact retry revalidates the immutable plan, every
+progress marker, completion counts, maintenance-state cardinality, and the
+identical policy before deleting a completed `pending-delete` operation.
 
 Selection is deliberately conservative:
 

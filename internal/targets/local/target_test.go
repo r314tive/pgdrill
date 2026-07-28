@@ -124,6 +124,38 @@ func TestPrepareCreatesWorkDirAndMarker(t *testing.T) {
 	}
 }
 
+func TestPrepareMakesExistingEmptyWorkDirPrivate(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	if err := os.Mkdir(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := New(Config{}, nil)
+	spec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}
+	if err := target.Validate(context.Background(), spec); err != nil {
+		t.Fatalf("validate empty workdir: %v", err)
+	}
+	before, err := os.Lstat(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Mode().Perm() != 0o755 {
+		t.Fatalf("read-only validation changed workdir mode to %o", before.Mode().Perm())
+	}
+	if err := prepareTarget(t, target, spec); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	after, err := os.Lstat(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Mode().Perm() != 0o700 {
+		t.Fatalf("prepared workdir mode = %o, want 700", after.Mode().Perm())
+	}
+}
+
 func TestPrepareRejectsNonEmptyExistingWorkDir(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	if err := os.Mkdir(workDir, 0o700); err != nil {
@@ -575,10 +607,10 @@ func TestPostgresReadinessUsesOwnedPostmasterStatus(t *testing.T) {
 	}{
 		{name: "invalid pid", payload: "not-a-pid\n", wantStatus: "postmaster.pid has an invalid pid"},
 		{name: "different pid", payload: "1\n", wantStatus: "postmaster.pid belongs to another process"},
-		{name: "missing status", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\n", pid), wantStatus: "postmaster status is empty"},
-		{name: "starting", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nstarting\n", pid), wantStatus: "starting"},
-		{name: "ready", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nready   \n", pid), wantReady: true, wantStatus: "ready"},
-		{name: "standby", payload: fmt.Sprintf("%d\n/data\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nstandby\n", pid), wantReady: true, wantStatus: "standby"},
+		{name: "missing status", payload: fmt.Sprintf("%d\n%s\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\n", pid, dataDir), wantStatus: "postmaster status is empty"},
+		{name: "starting", payload: fmt.Sprintf("%d\n%s\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nstarting\n", pid, dataDir), wantStatus: "starting"},
+		{name: "ready", payload: fmt.Sprintf("%d\n%s\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nready   \n", pid, dataDir), wantReady: true, wantStatus: "ready"},
+		{name: "standby", payload: fmt.Sprintf("%d\n%s\n0\n5432\n127.0.0.1\n127.0.0.1\n0 0\nstandby\n", pid, dataDir), wantReady: true, wantStatus: "standby"},
 	}
 
 	for _, tt := range tests {
@@ -686,6 +718,85 @@ func TestDestroyRejectsMismatchedOwnershipMarker(t *testing.T) {
 	}
 }
 
+func TestDestroyRejectsSymbolicLinkOwnershipMarker(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	target := New(Config{RemoveWorkDir: true}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	markerPath := filepath.Join(workDir, markerFile)
+	if err := os.Remove(markerPath); err != nil {
+		t.Fatal(err)
+	}
+	externalMarker := filepath.Join(t.TempDir(), "marker")
+	if err := os.WriteFile(
+		externalMarker,
+		[]byte(ownershipMarker(target.ownerID)),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalMarker, markerPath); err != nil {
+		t.Skipf("create ownership marker symlink: %v", err)
+	}
+
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 1)
+	evidence, err := target.Destroy(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "non-symbolic-link") {
+		t.Fatalf("Destroy(symlink marker) error = %v", err)
+	}
+	if _, err := os.Lstat(workDir); err != nil {
+		t.Fatalf("unsafe workdir was removed: %v", err)
+	}
+	if len(evidence) != 1 || evidence[0].Attributes["cleanup"] != "refused" {
+		t.Fatalf("cleanup evidence = %#v", evidence)
+	}
+}
+
+func TestDestroyRefusesRecoveredProcessWhenOwnershipChanges(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	target := New(Config{RemoveWorkDir: true}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	target.recovered = &recoveredPostgres{
+		pid:           999999,
+		dataDirectory: filepath.Join(workDir, "data"),
+		logPath:       filepath.Join(workDir, "postgres.log"),
+		port:          15432,
+		receipt: operationReceipt{
+			OperationKey: "sha256:" + strings.Repeat("b", 64),
+			CompletedAt:  time.Now().UTC(),
+		},
+	}
+	if err := os.WriteFile(
+		filepath.Join(workDir, markerFile),
+		[]byte("changed\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 1)
+	evidence, err := target.Destroy(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ownership marker") {
+		t.Fatalf("Destroy(changed ownership) error = %v", err)
+	}
+	if _, err := os.Lstat(workDir); err != nil {
+		t.Fatalf("workdir was removed after ownership loss: %v", err)
+	}
+	if len(evidence) != 1 ||
+		evidence[0].Attributes["postgres_shutdown"] != "ownership_unproven" {
+		t.Fatalf("shutdown evidence = %#v", evidence)
+	}
+}
+
 func TestDestroySkipsRemovalByDefault(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	target := New(Config{}, nil)
@@ -771,6 +882,64 @@ func TestReconcileUsesRestoreStepReceiptAndRefusesUnprovenStep(t *testing.T) {
 	}
 	if result.Disposition != model.ReconciliationUnknown {
 		t.Fatalf("unproven step reconciliation = %#v, want unknown", result)
+	}
+}
+
+func TestReconcileRejectsPostgresReceiptOutsideOwnedWorkDir(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "restore")
+	first := New(Config{}, nil)
+	spec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}
+	if err := prepareTarget(t, first, spec); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	operation := beginLocalOperation(
+		t,
+		first,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+	outsideDataDir := filepath.Join(root, "outside-data")
+	if err := os.Mkdir(outsideDataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(workDir, "postgres.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.writeOperationReceipt(operationReceipt{
+		OperationKey: operation.Key,
+		CompletedAt:  time.Now().UTC(),
+		Postgres: &model.RunningPostgres{
+			ConnString:    "postgresql://127.0.0.1:15432/postgres?sslmode=disable",
+			DataDirectory: outsideDataDir,
+			Host:          "127.0.0.1",
+			Port:          15432,
+		},
+		PID:     os.Getpid(),
+		LogPath: logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered := New(Config{}, nil)
+	if err := recovered.BindAttempt(first.attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := recovered.BeginOperation(operation); err != nil {
+		t.Fatal(err)
+	}
+	result, err := recovered.Reconcile(
+		context.Background(),
+		operationCheckpoint(operation),
+	)
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.Disposition != model.ReconciliationUnknown ||
+		recovered.recovered != nil {
+		t.Fatalf("outside receipt reconciliation = %#v recovered=%#v", result, recovered.recovered)
 	}
 }
 

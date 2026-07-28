@@ -376,4 +376,4 @@ and security reporting guidance is available in
 
 ## License
 
-Apache License 2.0.
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
