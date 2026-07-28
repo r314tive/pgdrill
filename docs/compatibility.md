@@ -240,9 +240,18 @@ The gate provisions CNPG 1.29.2, Barman Cloud Plugin 0.13.0, cert-manager
 1.21.0, PostgreSQL 15.17, and MinIO in an isolated KinD cluster. It requires a
 real plugin backup, exact backup-ID recovery, post-backup WAL replay, probes,
 evidence/history verification, and cleanup. A passing developer run is not
-included in the field matrix and does not establish an advertised CNPG 1.29
-support claim until it is reviewed, bound to an exact clean release candidate,
-and deliberately promoted. The manifest follows the upstream
+automatically included in the field matrix.
+
+On 2026-07-28, the exact clean `v0.3.0-alpha.6` candidate at commit
+`60ff0349c3e38cf1934686c2cadcbb0dffe387e7` passed that gate on Linux arm64 and
+was deliberately promoted as one narrow observation. Its reviewed report,
+runtime inventory, source/WAL boundary, immutable recovery manifest, and
+checksums are retained under
+[`compatibility/evidence/cnpg-v1.29.2-barman-plugin-v0.13.0-postgresql-15.17-kind-arm64-pgdrill-v0.3.0-alpha.6`](../compatibility/evidence/cnpg-v1.29.2-barman-plugin-v0.13.0-postgresql-15.17-kind-arm64-pgdrill-v0.3.0-alpha.6/README.md).
+The candidate was not a published or signed release asset, and this cell is
+not an adjacent-version, production-Kubernetes, PITR, or RTO claim.
+
+The manifest follows the upstream
 [Barman Cloud Plugin recovery contract](https://cloudnative-pg.io/plugin-barman-cloud/docs/usage/#restoring-a-cluster);
 the current native-removal schedule is recorded in the [CNPG 1.29.2 release
 notes](https://cloudnative-pg.io/docs/1.29/release_notes/v1.29/#version-1292).

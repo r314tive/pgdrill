@@ -1,5 +1,5 @@
 schema_version: pgdrill.compatibility-matrix/v1
-updated_at: "2026-07-27"
+updated_at: "2026-07-28"
 entries:
   - id: provider.barman.field
     component: provider
@@ -482,6 +482,44 @@ entries:
       - Only latest recovery from one barmanObjectStore backup with post-backup WAL replay was exercised.
       - Other PostgreSQL and CNPG versions, storage classes, object stores, PITR, and failure modes remain unvalidated.
       - The CNPG barmanObjectStore bootstrap does not validate the native Barman CLI adapter.
+  - id: target.cnpg.field.v0-3-0-alpha-6-plugin
+    component: target
+    implementation: cnpg
+    evidence_level: field
+    capabilities:
+      - barman_cloud_plugin_recovery
+      - end_to_end_restore
+      - exact_backup_id_binding
+      - immutable_manifest_evidence
+      - owned_cleanup
+      - plugin_source_discovery
+      - plugin_version_evidence
+      - post_backup_wal_replay
+      - post_restore_probes
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "1.29.2"
+    pgdrill_versions:
+      - v0.3.0-alpha.6
+    pgdrill_commits:
+      - 60ff0349c3e38cf1934686c2cadcbb0dffe387e7
+    postgresql_versions:
+      - "15.17"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/cnpg-v1.29.2-barman-plugin-v0.13.0-postgresql-15.17-kind-arm64-pgdrill-v0.3.0-alpha.6/report.json
+      - kind: field_note
+        ref: compatibility/evidence/cnpg-v1.29.2-barman-plugin-v0.13.0-postgresql-15.17-kind-arm64-pgdrill-v0.3.0-alpha.6/README.md#validated-scope
+    limitations:
+      - This is one local macOS arm64 driver and Linux arm64 KinD/MinIO observation, not a production Kubernetes support claim or RTO guarantee.
+      - Only latest recovery from one Barman Cloud Plugin 0.13.0 backup with post-backup WAL replay was exercised.
+      - Other architectures, PostgreSQL, CNPG, plugin and cert-manager versions, storage classes, object stores, PITR, and failure modes remain unvalidated.
+      - The pgdrill candidate archive was not a published or signed release asset.
+      - Barman Cloud Plugin recovery does not validate the native Barman CLI adapter.
   - id: target.local.controlled
     component: target
     implementation: local

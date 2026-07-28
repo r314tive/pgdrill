@@ -375,14 +375,15 @@ func validateTargetDrillReport(entry Entry, result model.DrillResult) error {
 		if result.Target.Type != model.RestoreTargetKubernetes {
 			return fmt.Errorf("drill report target %q does not match CNPG", result.Target.Type)
 		}
-		ready := false
-		for _, check := range result.Checks {
+		var ready *model.Check
+		for index := range result.Checks {
+			check := &result.Checks[index]
 			if check.Name == "cnpg-instance-ready" && check.Status == model.CheckStatusPassed {
-				ready = true
+				ready = check
 				break
 			}
 		}
-		if !ready {
+		if ready == nil {
 			return fmt.Errorf("drill report has no passed CNPG readiness check")
 		}
 		if len(entry.ImplementationVersions) != 1 {
@@ -390,6 +391,11 @@ func validateTargetDrillReport(entry Entry, result model.DrillResult) error {
 		}
 		if !hasCNPGVersionEvidence(result, entry.ImplementationVersions[0]) {
 			return fmt.Errorf("drill report has no CNPG operator version evidence matching the entry")
+		}
+		if hasCapability(entry, "barman_cloud_plugin_recovery") {
+			if err := validateBarmanCloudPluginEvidence(*ready, result); err != nil {
+				return err
+			}
 		}
 		return nil
 	case "local":
@@ -400,6 +406,43 @@ func validateTargetDrillReport(entry Entry, result model.DrillResult) error {
 	default:
 		return fmt.Errorf("target drill report implementation %q is unsupported", entry.Implementation)
 	}
+}
+
+func validateBarmanCloudPluginEvidence(ready model.Check, result model.DrillResult) error {
+	const pluginName = "barman-cloud.cloudnative-pg.io"
+	if ready.Attributes["recovery_method"] != "plugin" {
+		return fmt.Errorf("drill report does not identify plugin recovery")
+	}
+	if ready.Attributes["plugin"] != pluginName {
+		return fmt.Errorf("drill report does not identify Barman Cloud Plugin")
+	}
+	for attribute, metadata := range map[string]string{
+		"backup_id":           "cnpg_backup_id",
+		"plugin":              "cnpg_plugin",
+		"plugin_object_store": "cnpg_plugin_object_store",
+		"plugin_version":      "cnpg_plugin_version",
+		"recovery_method":     "cnpg_recovery_method",
+	} {
+		value := ready.Attributes[attribute]
+		if value == "" {
+			return fmt.Errorf("drill report CNPG readiness has no %s", attribute)
+		}
+		if result.Backup.Metadata[metadata] != value {
+			return fmt.Errorf("drill report CNPG readiness %s does not match backup metadata %s", attribute, metadata)
+		}
+	}
+	for _, artifact := range result.Artifacts {
+		if artifact.MediaType == "application/yaml" &&
+			artifact.RedactionState == model.ArtifactRedactionNotRequired {
+			return nil
+		}
+	}
+	return fmt.Errorf("drill report has no immutable CNPG YAML manifest artifact")
+}
+
+func hasCapability(entry Entry, capability string) bool {
+	index := sort.SearchStrings(entry.Capabilities, capability)
+	return index < len(entry.Capabilities) && entry.Capabilities[index] == capability
 }
 
 func hasCNPGVersionEvidence(result model.DrillResult, claim string) bool {

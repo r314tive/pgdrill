@@ -18,6 +18,10 @@ called out explicitly even while the major version is `0`.
   KinD drill with real MinIO backup, post-backup WAL replay, recovery probes,
   policy evaluation, artifact/history verification, and ownership-scoped
   cleanup.
+- A narrow compatibility evidence cell for the exact clean
+  `v0.3.0-alpha.6`/CNPG 1.29.2/Barman Cloud Plugin 0.13.0/PostgreSQL 15.17
+  Linux arm64 candidate observation, with a content-addressed recovery
+  manifest and capability-specific matrix validation.
 - An explicit `target.cnpg.recovery_method` protocol with strict
   `backup_resource`/`plugin` configuration validation and a runnable plugin
   target example.

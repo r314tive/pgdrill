@@ -22,8 +22,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 17 {
-		t.Fatalf("matrix entry count = %d, want 17", len(matrix.Entries))
+	if len(matrix.Entries) != 18 {
+		t.Fatalf("matrix entry count = %d, want 18", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -67,6 +67,7 @@ func TestCommittedMatrix(t *testing.T) {
 		"provider.pgbackrest.field.v0-1-0-alpha-10",
 		"provider.wal-g.field.v0-1-0-alpha-10",
 		"target.cnpg.field.v0-1-0-alpha-10",
+		"target.cnpg.field.v0-3-0-alpha-6-plugin",
 	} {
 		if levels[id] != EvidenceLevelField {
 			t.Fatalf("%s level = %q, want field", id, levels[id])
@@ -140,6 +141,48 @@ func TestValidateTargetDrillReportRequiresMatchingTargetAndReadiness(t *testing.
 	result.Checks = nil
 	if err := validateTargetDrillReport(entry, result); err == nil || !strings.Contains(err.Error(), "readiness") {
 		t.Fatalf("missing-readiness error = %v", err)
+	}
+}
+
+func TestValidateTargetDrillReportRequiresBarmanCloudPluginEvidence(t *testing.T) {
+	entry := Entry{
+		Implementation:         "cnpg",
+		ImplementationVersions: []string{"1.29.2"},
+		Capabilities:           []string{"barman_cloud_plugin_recovery"},
+	}
+	result := model.DrillResult{
+		Target: model.TargetSpec{Type: model.RestoreTargetKubernetes},
+		Backup: model.Backup{Metadata: map[string]string{
+			"cnpg_backup_id":           "20260728T012336",
+			"cnpg_plugin":              "barman-cloud.cloudnative-pg.io",
+			"cnpg_plugin_object_store": "source-backups",
+			"cnpg_plugin_version":      "0.13.0",
+			"cnpg_recovery_method":     "plugin",
+		}},
+		Checks: []model.Check{{
+			Name:   "cnpg-instance-ready",
+			Status: model.CheckStatusPassed,
+			Attributes: map[string]string{
+				"backup_id":           "20260728T012336",
+				"operator_version":    "1.29.2",
+				"plugin":              "barman-cloud.cloudnative-pg.io",
+				"plugin_object_store": "source-backups",
+				"plugin_version":      "0.13.0",
+				"recovery_method":     "plugin",
+			},
+		}},
+		Artifacts: []model.ArtifactRef{{
+			MediaType:      "application/yaml",
+			RedactionState: model.ArtifactRedactionNotRequired,
+		}},
+	}
+	if err := validateTargetDrillReport(entry, result); err != nil {
+		t.Fatalf("valid Barman Cloud Plugin evidence rejected: %v", err)
+	}
+
+	result.Checks[0].Attributes["backup_id"] = ""
+	if err := validateTargetDrillReport(entry, result); err == nil || !strings.Contains(err.Error(), "backup_id") {
+		t.Fatalf("missing-backup-ID error = %v", err)
 	}
 }
 

@@ -1,0 +1,38 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+    name: verify-source-20260728t012153z-56221
+    namespace: pgdrill-cnpg
+    labels:
+        app.kubernetes.io/component: recovery-drill
+        app.kubernetes.io/managed-by: pgdrill
+        environment: local-integration
+        pgdrill.io/drill-id: integration-cnpg-plugin-20260728t012153z-56221
+        pgdrill.io/ownership-id: 70ed217673980456b857a9f97d1dcd52
+        pgdrill.io/source-cluster: source
+spec:
+    imageName: pgdrill.local/postgresql:15.17-pgdrill-ce92730c48402c2377ea438d978dd3d76702800a2d215fcbdd53ab83d4833524
+    instances: 1
+    inheritedMetadata:
+        labels:
+            pgdrill.io/ownership-id: 70ed217673980456b857a9f97d1dcd52
+    storage:
+        size: 1Gi
+    resources:
+        requests:
+            cpu: 100m
+            memory: 256Mi
+        limits:
+            memory: 1Gi
+    bootstrap:
+        recovery:
+            source: source
+            recoveryTarget:
+                backupID: 20260728T012336
+    externalClusters:
+        - name: source
+          plugin:
+            name: barman-cloud.cloudnative-pg.io
+            parameters:
+                barmanObjectName: source-backups
+                serverName: source

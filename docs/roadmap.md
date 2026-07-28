@@ -152,11 +152,12 @@ inferred continuation of the 1.26 result.
 
 Remaining compatibility extension:
 
-- Bind the Barman Cloud Plugin drill to an exact clean release candidate,
-  review its retained evidence, and deliberately promote supported cells before
-  advertising the CNPG 1.29.x path. CNPG 1.29.2 schedules native in-tree
-  Barman Cloud removal for 1.31.0, but implementation or a dirty developer run
-  is not compatibility evidence.
+- The first exact clean CNPG 1.29.2 / Barman Cloud Plugin 0.13.0 Linux arm64
+  observation is retained in the matrix. Broaden it to Linux amd64, the final
+  published/signed candidate, additional object-storage and Kubernetes
+  environments, failure cases, and supported PITR targets before advertising a
+  range. CNPG 1.29.2 schedules native in-tree Barman Cloud removal for 1.31.0;
+  adjacent versions are not inferred from this cell.
 
 ## Phase 4: More Providers And Probes
 

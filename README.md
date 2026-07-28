@@ -73,9 +73,9 @@ implementation is on `main`, but it is not a published support claim until an
 exact tag has completed the workflow and its assets have been independently
 verified.
 Current `main` also implements typed CNPG Barman Cloud Plugin recovery and a
-pinned CNPG 1.29.2 live developer gate. It remains outside the advertised
-compatibility matrix until a reviewed clean-candidate run is deliberately
-promoted.
+pinned CNPG 1.29.2 live gate. The compatibility matrix records one exact
+clean-candidate Linux arm64 observation; it is not a broader version/platform
+claim or a published release result.
 Fleet scheduling, leases, remote executors, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
 than become a second orchestration implementation.
