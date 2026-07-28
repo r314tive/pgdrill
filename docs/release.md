@@ -84,7 +84,8 @@ make -s release-check VERSION=v0.3.0-alpha.5
 ```
 
 The aggregate prerelease-candidate gate requires a clean worktree and runs the
-release gate, ShellCheck, all four native-provider drills, and the disposable
+release gate, a non-published Linux amd64/arm64 OCI build and content
+verification, ShellCheck, all four native-provider drills, and the disposable
 KinD/CNPG drill:
 
 ```sh
@@ -113,7 +114,7 @@ source commit, release compiler, version, and commit timestamp:
 
 Each `.tar.gz` contains `pgdrill`, `README.md`, `LICENSE`, the release
 `.go-version` compiler pin, `ATTEMPT_RECOVERY.md`, `COMPATIBILITY.md`,
-`FLEET_PLAN.md`, `HISTORY.md`, `UPGRADE.md`, the validated
+`CONTAINER_IMAGE.md`, `FLEET_PLAN.md`, `HISTORY.md`, `UPGRADE.md`, the validated
 `compatibility-matrix.yaml`, and `fleet.example.yaml`. The
 release builder compiles the packaged fleet example and rejects placement
 rejections before creating archives. Archive paths, modes, ordering,
@@ -144,6 +145,65 @@ Verify them on Linux or macOS respectively:
 `release-snapshot` remains available as a quick host-only build and smoke
 check. It is not a substitute for `release-check`.
 
+## OCI, SBOM, And Provenance
+
+The clean candidate gate constructs a non-published OCI layout from the exact
+Linux release archives:
+
+```sh
+make -s container-check VERSION=v0.3.0-alpha.5
+make -s container-smoke VERSION=v0.3.0-alpha.5
+```
+
+The build context is an allowlist containing only the release Dockerfile and
+Linux archives. The Dockerfile selects the archive by BuildKit `TARGETARCH`,
+copies the exact pgdrill binary, uses a digest-pinned Debian runtime manifest,
+and runs as numeric UID/GID `65532`. It does not install provider, PostgreSQL,
+or Kubernetes executables.
+
+The Go OCI verifier rejects a layout unless all of the following hold:
+
+- the content-addressed blobs and descriptor sizes are valid;
+- the platform set is exactly Linux amd64 and arm64;
+- version, full commit, timestamp, source, license, and base-image labels
+  match the release inputs;
+- the runtime user, work directory, entrypoint, and stop signal match the
+  documented contract;
+- each embedded pgdrill binary is byte-identical to its checksummed archive;
+- each platform has SPDX SBOM and SLSA provenance statements produced with
+  the digest-pinned BuildKit scanner.
+
+The native smoke gate separately loads the host-architecture Linux image,
+executes the non-root entrypoint, and requires exact version/full-commit
+output. Before publication, the tag workflow repeats the full two-platform OCI
+content verification against its exact tag archives. After pushing the index,
+it repeats image smoke on Linux amd64 by immutable digest.
+
+The tag workflow additionally generates one release-wide SPDX 2.3 document
+from all four archives. GitHub's OIDC-backed Sigstore service signs:
+
+- an SBOM attestation binding that document to the archive checksums;
+- SLSA build provenance covering archives, checksums, and the SBOM;
+- the pushed `ghcr.io/r314tive/pgdrill:<version>` manifest digest.
+
+The signed bundles are retained as `.sigstore.json` GitHub Release assets
+together with the image digest and resolved manifest metadata. The image also
+carries BuildKit SBOM/provenance referrers. The release workflow pins every
+third-party action, Syft version, runtime base, and image SBOM generator to an
+immutable version or digest.
+
+The release commit timestamp normalizes the two platform image payloads.
+BuildKit's SLSA statements correctly retain each real invocation time, so the
+attested top-level index is not claimed to be byte-reproducible across separate
+builders. Verify and deploy the one published digest; compare platform-manifest
+digests when checking payload reproducibility.
+
+The GHCR package must be publicly readable. On its first publication, confirm
+the package is linked to the repository and set its visibility to public. The
+image job logs out and performs an anonymous manifest read before the GitHub
+Release job can run; if visibility is still private, make it public and rerun
+the failed workflow jobs without moving the tag.
+
 ## Release Checklist
 
 1. Prepare the release changes and move them from `Unreleased` into a dated
@@ -159,8 +219,8 @@ make -s release-notes VERSION="$VERSION"
 ```
 
 5. Inspect `dist/RELEASE_NOTES.md`, archive contents, checksums, CLI help,
-   `pgdrill version` from the native archive, and the five latest integration
-   artifact directories.
+   `pgdrill version` from the native archive, the verified OCI layout, and the
+   five latest integration artifact directories.
 6. If any source or release metadata changes after the gate, create a new
    commit and repeat steps 3 through 5 because commit metadata is part of every
    binary and report.
@@ -172,13 +232,41 @@ git tag -a "$VERSION" -m "pgdrill $VERSION"
 
 8. Push the release commit, wait for branch CI, then push the tag as a separate
    explicit publication action.
-9. Wait for both release workflow jobs, then confirm that the GitHub Release is
-   a prerelease when appropriate and contains exactly the expected archives
-   plus checksum file.
+9. Wait for the archive-build, GHCR-image, and GitHub-Release jobs. Confirm that
+   a prerelease is marked correctly and contains archives, checksums, SPDX
+   SBOM, archive/SBOM/image Sigstore bundles, image identity, and resolved image
+   manifest metadata.
 10. Download the published assets into a fresh directory, verify every archive
-    against the downloaded checksum file, run the native `pgdrill version`, and
+    against the downloaded checksum file and retained attestations, run the
+    native `pgdrill version`, anonymously resolve the image by digest, and
     confirm that the remote annotated tag dereferences to the exact tested
     commit.
+
+For example:
+
+```sh
+VERSION=v0.3.0-alpha.5
+NAME="${VERSION#v}"
+COMMIT="$(git rev-list -n 1 "$VERSION")"
+gh attestation verify "pgdrill_${NAME}_linux_amd64.tar.gz" \
+  --repo r314tive/pgdrill \
+  --bundle "pgdrill_${NAME}_provenance.sigstore.json" \
+  --signer-workflow r314tive/pgdrill/.github/workflows/release.yml \
+  --source-ref "refs/tags/$VERSION" \
+  --source-digest "$COMMIT"
+gh attestation verify "pgdrill_${NAME}_linux_amd64.tar.gz" \
+  --repo r314tive/pgdrill \
+  --bundle "pgdrill_${NAME}_sbom-attestation.sigstore.json" \
+  --predicate-type https://spdx.dev/Document/v2.3 \
+  --signer-workflow r314tive/pgdrill/.github/workflows/release.yml \
+  --source-ref "refs/tags/$VERSION" \
+  --source-digest "$COMMIT"
+gh attestation verify "oci://ghcr.io/r314tive/pgdrill:$VERSION" \
+  --repo r314tive/pgdrill \
+  --signer-workflow r314tive/pgdrill/.github/workflows/release.yml \
+  --source-ref "refs/tags/$VERSION" \
+  --source-digest "$COMMIT"
+```
 
 ## Tag Automation
 
@@ -190,13 +278,19 @@ publication it verifies that:
 - an exact non-empty changelog section exists
 - the full release gate passes with the pinned compiler
 - checksums and the native Linux archive are valid
+- the release SBOM and archive provenance are signed and re-verified
+- the exact Linux archives produce a two-platform GHCR image
+- the image digest passes native smoke, signed-provenance, and anonymous-read
+  verification
 
-The build job has read-only repository permissions. A separate job receives
-only the verified bundle and gets `contents: write` solely to create the GitHub
-release. The publish job deliberately does not check out the repository; it
-passes `github.repository` to GitHub CLI through `GH_REPO` instead of relying
-on local Git metadata. Prerelease tags are published as prereleases and are not
-marked latest.
+The archive build job has read-only repository access plus only the OIDC and
+attestation permissions needed to sign its output. A separate image job waits
+for that verified bundle and alone receives `packages: write`. A final job
+receives both verified bundles and gets `contents: write` solely to create the
+GitHub release. The publish job deliberately does not check out the repository;
+it passes `github.repository` to GitHub CLI through `GH_REPO` instead of
+relying on local Git metadata. Prerelease tags are published as prereleases and
+are not marked latest.
 
 If a pushed tag fails before publication, fix the source and use the next
 prerelease identifier. Do not silently retarget the failed tag.

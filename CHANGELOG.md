@@ -10,6 +10,19 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- A minimal non-root `linux/amd64` and `linux/arm64` OCI distribution assembled
+  only from the exact checksummed Linux release archives, with a digest-pinned
+  Debian runtime base, digest-pinned BuildKit Syft scanner, immutable OCI
+  labels, an archive-allowlisted Docker context, and no bundled provider
+  toolchain.
+- A Go OCI-layout verifier that checks content-addressed blobs, the exact
+  platform set, non-root runtime configuration, version/commit/base labels,
+  per-platform binary equality with the release archives, and attached SPDX
+  SBOM plus SLSA provenance statements.
+- Tag-workflow generation of a release-wide SPDX 2.3 SBOM, signed
+  GitHub/Sigstore SBOM and build-provenance bundles, a multi-architecture GHCR
+  image, signed image provenance, digest-bound image smoke verification, and
+  release assets describing the immutable image reference.
 - Stable `v1` schema identifiers for newly produced reports, drill specs, run
   events, operation checkpoints, policy evaluations, artifact references and
   local stores, fleet/plan documents, compatibility matrices, doctor output,
@@ -91,6 +104,11 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- The clean-tree aggregate release-candidate gate now constructs and verifies a
+  non-published multi-architecture OCI layout after deterministic archive
+  generation, then runs the native non-root image entrypoint and verifies exact
+  version/commit output. GitHub release publication waits for both the verified
+  archive bundle and the separately permissioned GHCR image job.
 - Current producers emit only stable schema identifiers. Readers retain the
   documented `v1alpha1` report/spec/event/operation/policy/artifact-reference
   and `v0.3.0-alpha.1` history compatibility needed for immutable pre-GA

@@ -122,6 +122,10 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read compatibility document: %w", err)
 	}
+	containerImageDocument, err := os.ReadFile(filepath.Join(opts.SourceDir, "docs", "container-image.md"))
+	if err != nil {
+		return Result{}, fmt.Errorf("read container image document: %w", err)
+	}
 	compatibilityMatrix, err := os.ReadFile(filepath.Join(opts.SourceDir, "compatibility", "matrix.yaml"))
 	if err != nil {
 		return Result{}, fmt.Errorf("read compatibility matrix: %w", err)
@@ -202,6 +206,7 @@ func Build(ctx context.Context, opts Options) (Result, error) {
 			{Name: filepath.ToSlash(filepath.Join(rootName, ".go-version")), Mode: 0o644, Body: goVersion},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "ATTEMPT_RECOVERY.md")), Mode: 0o644, Body: attemptRecoveryDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "COMPATIBILITY.md")), Mode: 0o644, Body: compatibilityDocument},
+			{Name: filepath.ToSlash(filepath.Join(rootName, "CONTAINER_IMAGE.md")), Mode: 0o644, Body: containerImageDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "FLEET_PLAN.md")), Mode: 0o644, Body: fleetPlanDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "HISTORY.md")), Mode: 0o644, Body: historyDocument},
 			{Name: filepath.ToSlash(filepath.Join(rootName, "LICENSE")), Mode: 0o644, Body: license},

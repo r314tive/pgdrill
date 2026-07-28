@@ -1,0 +1,6 @@
+**
+!dist/
+!dist/pgdrill_*_linux_*.tar.gz
+!packaging/
+!packaging/container/
+!packaging/container/Dockerfile

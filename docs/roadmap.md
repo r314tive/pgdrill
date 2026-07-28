@@ -356,9 +356,10 @@ Implemented foundation:
 
 Next implementation order:
 
-1. Keep the `v1.0.0` path focused on exact published-candidate provider
-   evidence, signed distribution/provenance, reproducible demo operation, and
-   an external pilot; none requires a daemon.
+1. Keep the `v1.0.0` path focused on publishing and independently verifying
+   the implemented signed archive/OCI supply chain, exact published-candidate
+   provider evidence, reproducible demo operation, and an external pilot; none
+   requires a daemon.
 2. After the single-host engine and recovery schemas settle, add controller and
    executor binaries with leases, heartbeats, idempotency, and executor-local
    secret resolution as a separately gated `v1.x` capability.
@@ -425,11 +426,17 @@ verification. Every future release requires the same gates.
 - Strict compatibility evidence validation and packaged compatibility document
   plus machine-readable matrix in every release archive.
 - Changelog-derived release notes and annotated-tag validation.
-- Read-only build job separated from the write-enabled publication job.
+- A digest-pinned, archive-only, non-root Linux amd64/arm64 OCI build with a Go
+  verifier for platform, label, binary, SBOM, and provenance identity.
+- Tag-workflow SPDX generation plus OIDC-backed signed archive/SBOM/image
+  provenance, with archive build, GHCR write, and GitHub Release write split
+  across least-privilege jobs. This is implemented on `main`; an exact tag must
+  still publish and independently verify it before it becomes release evidence.
 - Cross-host checksum parity between all four local release archives and the
   corresponding published `v0.2.0-rc.2` assets.
-- One clean-tree aggregate candidate command binding release artifacts, all
-  four native drills, and disposable CNPG to the same version and commit.
+- One clean-tree aggregate candidate command binding release archives, the
+  verified multi-architecture OCI layout, all four native drills, and
+  disposable CNPG to the same version and commit.
 - Dependabot, contribution, security, compatibility, issue, and pull request
   policies.
 

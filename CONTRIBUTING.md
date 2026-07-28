@@ -41,6 +41,15 @@ Release-candidate owners should use the clean-tree aggregate gate:
 make -s release-candidate-check VERSION=v0.3.0-alpha.1
 ```
 
+It builds and verifies the non-published Linux amd64/arm64 OCI layout in
+addition to all deterministic archives and live disposable drills. Packaging
+changes may run the narrower gate after `release-artifacts`:
+
+```sh
+make -s container-check VERSION=v0.3.0-alpha.1
+make -s container-smoke VERSION=v0.3.0-alpha.1
+```
+
 ## Engineering Rules
 
 - Keep the control plane in Go. Shell is a compatibility boundary for external

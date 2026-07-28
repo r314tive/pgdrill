@@ -25,6 +25,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runArtifacts(args[1:], stdout, stderr)
 	case "notes":
 		return runNotes(args[1:], stdout, stderr)
+	case "verify-oci":
+		return runVerifyOCI(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown release command %q\n", args[0])
 		writeUsage(stderr)
@@ -95,6 +97,45 @@ func runNotes(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runVerifyOCI(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("verify-oci", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var archivePath, distDir, version, commit, date string
+	fs.StringVar(&archivePath, "image", "", "OCI layout archive path")
+	fs.StringVar(&distDir, "dist", "dist", "release archive directory")
+	fs.StringVar(&version, "version", "", "release version tag")
+	fs.StringVar(&commit, "commit", "", "full release Git commit")
+	fs.StringVar(&date, "date", "", "release date in RFC3339 format")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "verify-oci does not accept positional arguments")
+		return 2
+	}
+	result, err := pgrelease.VerifyOCIArchive(pgrelease.OCIOptions{
+		ArchivePath: archivePath,
+		DistDir:     distDir,
+		Version:     version,
+		Commit:      commit,
+		Date:        date,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "verify OCI image: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "index  %s\n", result.IndexDigest)
+	for _, platform := range result.Platforms {
+		fmt.Fprintf(
+			stdout,
+			"platform  %s  %s\n",
+			platform,
+			result.ManifestDigests[platform],
+		)
+	}
+	return 0
+}
+
 func defaultTargetsValue() string {
 	values := make([]string, 0, len(pgrelease.DefaultTargets()))
 	for _, target := range pgrelease.DefaultTargets() {
@@ -104,5 +145,5 @@ func defaultTargetsValue() string {
 }
 
 func writeUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: go run ./internal/releasecmd <artifacts|notes> [flags]")
+	fmt.Fprintln(w, "usage: go run ./internal/releasecmd <artifacts|notes|verify-oci> [flags]")
 }

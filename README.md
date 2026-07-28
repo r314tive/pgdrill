@@ -37,6 +37,8 @@ The CLI implements:
 - digest-confirmed recovery of interrupted local attempts with observation-only
   operation reconciliation, exact ownership cleanup, immutable incomplete
   history, and a mandatory stopped-executor assertion
+- release packaging for a non-root multi-architecture OCI image assembled from
+  the exact Linux archives, plus SPDX SBOM and signed provenance workflows
 - text report inspection and Prometheus export
 
 Native and CNPG paths share one lifecycle, cancellation, reconciliation, and
@@ -66,7 +68,10 @@ release and controlled-demo gates, not broader compatibility claims.
 The typed planner, stable schemas, local history, copy migration, resumable
 retention/GC, and interrupted-attempt recovery are implemented on the current
 `main` branch after `v0.2.0-rc.2`; they are not part of that published archive
-yet.
+yet. The same is true of the signed archive/OCI supply-chain workflow: its
+implementation is on `main`, but it is not a published support claim until an
+exact tag has completed the workflow and its assets have been independently
+verified.
 Fleet scheduling, leases, remote executors, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
 than become a second orchestration implementation.
@@ -141,6 +146,13 @@ Published archives and SHA256 checksums are available under
 [GitHub Releases](https://github.com/r314tive/pgdrill/releases). Building from
 source remains supported.
 
+New tags using the current release workflow also publish
+`ghcr.io/r314tive/pgdrill:<version>` for Linux amd64/arm64 together with SPDX
+SBOM and signed provenance assets. The OCI image contains pgdrill itself, not
+an implicitly selected WAL-G/Barman/pgBackRest/pg_probackup toolchain. See
+[docs/container-image.md](docs/container-image.md) for the runtime and
+verification boundary.
+
 To build from source, install the Go version from `.go-version` and run:
 
 ```sh
@@ -205,7 +217,8 @@ network-isolated disposable native drills. Their artifacts remain under ignored
 [test/integration](test/integration/README.md) for the evidence boundary.
 
 For a clean release-candidate commit with Docker available, run the complete
-artifact, lint, native-provider, and disposable CNPG gate:
+artifact, multi-architecture OCI, lint, native-provider, and disposable CNPG
+gate:
 
 ```sh
 make -s release-candidate-check VERSION=v0.3.0-alpha.5

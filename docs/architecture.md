@@ -36,6 +36,10 @@ probes, and evidence, not in terms of one provider's command output.
   digest-confirmed crash-resumable history retention.
 - `internal/compatibility`: strict validation for the versioned compatibility
   evidence matrix and its repository references.
+- `internal/release`: deterministic native archives, changelog extraction,
+  release-version validation, and content-level verification of the
+  multi-architecture OCI layout against the exact Linux archive binaries and
+  required SBOM/provenance statements.
 - `internal/preflight`: config-derived executable requirements and native
   version checks used by read-only `pgdrill doctor` and target-aware execution
   preflight.
@@ -71,6 +75,8 @@ probes, and evidence, not in terms of one provider's command output.
   rollback, and data-removal procedure.
 - `docs/restore-targets.md`: lifecycle requirements for disposable restore
   environments, including Kubernetes/CNPG notes.
+- `docs/container-image.md`: non-root OCI runtime, external-tool boundary,
+  signed provenance, and digest-pinned deployment procedure.
 - `docs/roadmap.md`: implementation sequence and product surface decisions.
 - `docs/control-plane-roadmap.md`: typed fleet topology, persistence,
   interfaces, and repository/module decision for the future control plane.

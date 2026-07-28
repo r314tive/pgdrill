@@ -66,7 +66,10 @@ without rewriting immutable historical specs, events, or reports.
    sha256sum pgdrill-checkpoints-before-upgrade.tar.gz
    ```
 
-9. Retain the current binary, its checksum, version output, and configuration.
+9. Retain the current binary or image digest, checksum, signed provenance
+   bundle, version output, and configuration. Verify the replacement archive or
+   OCI digest against the expected repository, release workflow, and tag before
+   stopping the current executor.
 
 The archive contains operational evidence and can contain infrastructure
 identifiers. Do not upload it to a public issue or release.

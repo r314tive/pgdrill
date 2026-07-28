@@ -29,3 +29,13 @@ paths are trusted operator input. Security issues include escaping configured
 filesystem ownership boundaries, unsafe cleanup, redaction failures, command
 argument injection beyond the declared invocation, report integrity problems,
 or release supply-chain compromise.
+
+Releases completed by the current tag workflow use checksummed deterministic
+archives, SPDX SBOMs, and OIDC-backed signed provenance. Older published
+releases may predate that workflow and must not be assumed to carry those
+assets. The Linux OCI image is assembled only from the exact release archives
+with digest-pinned runtime and scanner inputs. Consumers should verify the
+retained attestation against the expected repository, release workflow, tag
+ref, and source commit, then deploy an immutable image digest. See
+[`docs/release.md`](docs/release.md) and
+[`docs/container-image.md`](docs/container-image.md).

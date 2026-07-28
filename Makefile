@@ -1,12 +1,18 @@
-.PHONY: build check cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
+.PHONY: build check container-check container-smoke cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
 
 VERSION ?= v0.3.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 RELEASE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 RELEASE_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+RELEASE_EPOCH ?= $(shell git show -s --format=%ct HEAD 2>/dev/null || date -u +%s)
 RELEASE_TARGETS ?= linux/amd64,linux/arm64,darwin/amd64,darwin/arm64
 RELEASE_GO_VERSION ?= $(shell sed -n '1p' .go-version)
+CONTAINER_PLATFORMS ?= linux/amd64,linux/arm64
+CONTAINER_NATIVE_PLATFORM ?= linux/$(GOARCH)
+CONTAINER_IMAGE ?= pgdrill-local:$(VERSION)
+CONTAINER_OUTPUT ?= $(DISTDIR)/pgdrill_$(patsubst v%,%,$(VERSION))_image.oci.tar
+CONTAINER_SBOM_GENERATOR ?= docker.io/docker/buildkit-syft-scanner@sha256:79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 BINDIR ?= bin
@@ -158,6 +164,66 @@ release-artifacts: toolchain-check
 		-output "$(DISTDIR)" \
 		-targets "$(RELEASE_TARGETS)"
 
+container-check:
+	@test "$(patsubst v%,%,$(VERSION))" != "$(VERSION)" || { \
+		printf 'container version must start with v: %s\n' "$(VERSION)"; \
+		exit 2; \
+	}
+	@test -f "$(DISTDIR)/pgdrill_$(patsubst v%,%,$(VERSION))_linux_amd64.tar.gz" || { \
+		printf 'missing linux/amd64 release archive for %s\n' "$(VERSION)"; \
+		exit 2; \
+	}
+	@test -f "$(DISTDIR)/pgdrill_$(patsubst v%,%,$(VERSION))_linux_arm64.tar.gz" || { \
+		printf 'missing linux/arm64 release archive for %s\n' "$(VERSION)"; \
+		exit 2; \
+	}
+	mkdir -p "$(dir $(CONTAINER_OUTPUT))"
+	docker buildx build \
+		--file packaging/container/Dockerfile \
+		--platform "$(CONTAINER_PLATFORMS)" \
+		--build-arg "ARCHIVE_VERSION=$(patsubst v%,%,$(VERSION))" \
+		--build-arg "VERSION=$(VERSION)" \
+		--build-arg "COMMIT=$(RELEASE_COMMIT)" \
+		--build-arg "CREATED=$(RELEASE_DATE)" \
+		--build-arg "SOURCE_DATE_EPOCH=$(RELEASE_EPOCH)" \
+		--tag "$(CONTAINER_IMAGE)" \
+		--provenance=mode=max \
+		--attest "type=sbom,generator=$(CONTAINER_SBOM_GENERATOR)" \
+		--output "type=oci,dest=$(CONTAINER_OUTPUT)" \
+		.
+	go run ./internal/releasecmd verify-oci \
+		-image "$(CONTAINER_OUTPUT)" \
+		-dist "$(DISTDIR)" \
+		-version "$(VERSION)" \
+		-commit "$(RELEASE_COMMIT)" \
+		-date "$(RELEASE_DATE)"
+	@printf 'oci image layout: %s\n' "$(CONTAINER_OUTPUT)"
+
+container-smoke:
+	@test -f "$(DISTDIR)/pgdrill_$(patsubst v%,%,$(VERSION))_linux_$(GOARCH).tar.gz" || { \
+		printf 'missing native Linux release archive for %s/%s\n' "$(VERSION)" "$(GOARCH)"; \
+		exit 2; \
+	}
+	@set -eu; \
+	trap 'docker image rm -f "$(CONTAINER_IMAGE)" >/dev/null 2>&1 || true' EXIT; \
+	docker buildx build \
+		--file packaging/container/Dockerfile \
+		--platform "$(CONTAINER_NATIVE_PLATFORM)" \
+		--build-arg "ARCHIVE_VERSION=$(patsubst v%,%,$(VERSION))" \
+		--build-arg "VERSION=$(VERSION)" \
+		--build-arg "COMMIT=$(RELEASE_COMMIT)" \
+		--build-arg "CREATED=$(RELEASE_DATE)" \
+		--build-arg "SOURCE_DATE_EPOCH=$(RELEASE_EPOCH)" \
+		--tag "$(CONTAINER_IMAGE)" \
+		--load \
+		.; \
+	output="$$(docker run --rm --platform "$(CONTAINER_NATIVE_PLATFORM)" "$(CONTAINER_IMAGE)" version)"; \
+	expected="pgdrill $(VERSION) ($(RELEASE_COMMIT),"; \
+	case "$$output" in \
+		"$$expected"*) printf '%s\n' "$$output" ;; \
+		*) printf 'unexpected container version: %s\n' "$$output"; exit 1 ;; \
+	esac
+
 release-notes:
 	go run ./internal/releasecmd notes \
 		-version "$(VERSION)" \
@@ -178,6 +244,8 @@ release-candidate-check:
 		exit 1; \
 	}
 	$(MAKE) -s release-check VERSION="$(VERSION)"
+	$(MAKE) -s container-check VERSION="$(VERSION)"
+	$(MAKE) -s container-smoke VERSION="$(VERSION)"
 	$(MAKE) -s integration-check
 	PGDRILL_INTEGRATION_VERSION="$(VERSION)" \
 		PGDRILL_INTEGRATION_REQUIRE_CLEAN=true \
