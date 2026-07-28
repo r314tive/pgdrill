@@ -1,0 +1,90 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "metadata": {
+        "name": "altbox-plugin-old",
+        "creationTimestamp": "2026-07-06T01:00:00Z"
+      },
+      "spec": {
+        "cluster": {
+          "name": "altbox"
+        },
+        "method": "plugin",
+        "pluginConfiguration": {
+          "name": "barman-cloud.cloudnative-pg.io"
+        }
+      },
+      "status": {
+        "phase": "completed",
+        "backupId": "20260706T010002",
+        "pluginMetadata": {
+          "version": "0.12.1"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "altbox-plugin-running",
+        "creationTimestamp": "2026-07-08T01:00:00Z"
+      },
+      "spec": {
+        "cluster": {
+          "name": "altbox"
+        },
+        "method": "plugin",
+        "pluginConfiguration": {
+          "name": "barman-cloud.cloudnative-pg.io"
+        }
+      },
+      "status": {
+        "phase": "running"
+      }
+    },
+    {
+      "metadata": {
+        "name": "other-plugin-new",
+        "creationTimestamp": "2026-07-09T01:00:00Z"
+      },
+      "spec": {
+        "cluster": {
+          "name": "other"
+        },
+        "method": "plugin",
+        "pluginConfiguration": {
+          "name": "barman-cloud.cloudnative-pg.io"
+        }
+      },
+      "status": {
+        "phase": "completed",
+        "backupId": "20260709T010002",
+        "pluginMetadata": {
+          "version": "0.13.0"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "altbox-plugin-new",
+        "creationTimestamp": "2026-07-07T02:00:00Z"
+      },
+      "spec": {
+        "cluster": {
+          "name": "altbox"
+        },
+        "method": "plugin",
+        "pluginConfiguration": {
+          "name": "barman-cloud.cloudnative-pg.io"
+        }
+      },
+      "status": {
+        "phase": "completed",
+        "backupId": "20260707T020304",
+        "pluginMetadata": {
+          "version": "0.13.0"
+        }
+      }
+    }
+  ],
+  "kind": "BackupList"
+}

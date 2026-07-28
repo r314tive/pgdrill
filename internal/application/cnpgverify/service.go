@@ -52,6 +52,7 @@ func (s Service) Run(ctx context.Context, cfg config.Config, opts Options) (mode
 	if len(cfg.Probes) == 0 {
 		return model.DrillResult{}, fmt.Errorf("CNPG target verification requires at least one post-restore probe")
 	}
+	normalizeCNPGTarget(&cfg.Target.CNPG)
 
 	sink := s.Sink
 	if sink == nil {
@@ -136,6 +137,7 @@ func DiscoverInputs(ctx context.Context, cfg config.Config, target *config.CNPGT
 	if strings.TrimSpace(target.SourceCluster) == "" {
 		return nil, fmt.Errorf("target.cnpg.source_cluster is required for discovery")
 	}
+	normalizeCNPGTarget(target)
 
 	client := cnpg.NewKubectlClient(kubectlConfig(cfg), runner)
 	discoverySpec := cnpg.VerifyClusterSpec{
@@ -144,13 +146,47 @@ func DiscoverInputs(ctx context.Context, cfg config.Config, target *config.CNPGT
 	}
 	evidence := []model.EvidenceRecord{}
 
-	if strings.TrimSpace(target.BackupName) == "" {
-		backupName, backupEvidence, err := client.LatestCompletedBackup(ctx, discoverySpec)
+	if strings.TrimSpace(target.BackupName) == "" || target.RecoveryMethod == config.CNPGRecoveryPlugin {
+		selected, backupEvidence, err := client.CompletedBackup(ctx, discoverySpec, target.BackupName)
 		evidence = append(evidence, backupEvidence...)
 		if err != nil {
-			return evidence, fmt.Errorf("discover latest completed CNPG Backup: %w", err)
+			return evidence, fmt.Errorf("discover completed CNPG Backup: %w", err)
 		}
-		target.BackupName = backupName
+		target.BackupName = selected.Name
+		if target.RecoveryMethod == config.CNPGRecoveryPlugin {
+			if selected.Method != string(config.CNPGRecoveryPlugin) {
+				return evidence, fmt.Errorf("CNPG Backup %q method is %q, not plugin", selected.Name, selected.Method)
+			}
+			if selected.PluginName != target.Plugin.Name {
+				return evidence, fmt.Errorf("CNPG Backup %q plugin is %q, not %q", selected.Name, selected.PluginName, target.Plugin.Name)
+			}
+			if strings.TrimSpace(selected.BackupID) == "" {
+				return evidence, fmt.Errorf("CNPG Backup %q has no status.backupId", selected.Name)
+			}
+			if configuredID := strings.TrimSpace(target.BackupID); configuredID != "" && configuredID != selected.BackupID {
+				return evidence, fmt.Errorf("CNPG Backup %q status.backupId %q does not match configured backup_id %q", selected.Name, selected.BackupID, configuredID)
+			}
+			target.BackupID = selected.BackupID
+			target.ObservedPluginVersion = strings.TrimSpace(selected.PluginVersion)
+		}
+	}
+	if target.RecoveryMethod == config.CNPGRecoveryPlugin {
+		source, pluginEvidence, err := client.SourceClusterPlugin(ctx, discoverySpec, target.Plugin.Name)
+		evidence = append(evidence, pluginEvidence...)
+		if err != nil {
+			return evidence, fmt.Errorf("discover CNPG source plugin: %w", err)
+		}
+		if !source.WALArchiver {
+			return evidence, fmt.Errorf("CNPG source plugin %q is not configured as WAL archiver", source.PluginName)
+		}
+		if configured := strings.TrimSpace(target.Plugin.ObjectStore); configured != "" && configured != source.ObjectStore {
+			return evidence, fmt.Errorf("CNPG source plugin object store %q does not match configured object_store %q", source.ObjectStore, configured)
+		}
+		if configured := strings.TrimSpace(target.Plugin.ServerName); configured != "" && configured != source.ServerName {
+			return evidence, fmt.Errorf("CNPG source plugin server name %q does not match configured server_name %q", source.ServerName, configured)
+		}
+		target.Plugin.ObjectStore = source.ObjectStore
+		target.Plugin.ServerName = source.ServerName
 	}
 	if strings.TrimSpace(target.ImageName) == "" {
 		imageName, imageEvidence, err := client.SourceClusterImage(ctx, discoverySpec)
@@ -171,7 +207,14 @@ func BuildSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameS
 		VerifyClusterName: target.VerifyClusterName,
 		NameSeed:          nameSeed,
 		OwnershipID:       ownershipID,
+		RecoveryMethod:    cnpg.RecoveryMethod(target.RecoveryMethod.Normalized()),
 		BackupName:        target.BackupName,
+		BackupID:          target.BackupID,
+		PluginName:        target.Plugin.Name,
+		PluginVersion:     target.ObservedPluginVersion,
+		PluginObjectStore: target.Plugin.ObjectStore,
+		PluginServerName:  target.Plugin.ServerName,
+		RecoverySource:    target.Plugin.RecoverySource,
 		ImageName:         target.ImageName,
 		StorageSize:       target.StorageSize,
 		StorageClass:      target.StorageClass,
@@ -183,6 +226,22 @@ func BuildSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameS
 		NodeLabelValue:    target.NodeLabelValue,
 		Labels:            cfg.Target.Labels,
 	}, drillID)
+}
+
+func normalizeCNPGTarget(target *config.CNPGTargetConfig) {
+	if target == nil {
+		return
+	}
+	target.RecoveryMethod = target.RecoveryMethod.Normalized()
+	if target.RecoveryMethod != config.CNPGRecoveryPlugin {
+		return
+	}
+	if strings.TrimSpace(target.Plugin.Name) == "" {
+		target.Plugin.Name = config.DefaultCNPGPluginName
+	}
+	if strings.TrimSpace(target.Plugin.RecoverySource) == "" {
+		target.Plugin.RecoverySource = config.DefaultCNPGRecoverySource
+	}
 }
 
 type managedResolver struct {
@@ -306,9 +365,15 @@ func backup(target config.CNPGTargetConfig, verifyCluster string) model.Backup {
 	}
 	metadata := map[string]string{}
 	for key, value := range map[string]string{
-		"cnpg_backup":         backupName,
-		"cnpg_source_cluster": sourceCluster,
-		"cnpg_verify_cluster": verifyCluster,
+		"cnpg_backup":              backupName,
+		"cnpg_backup_id":           strings.TrimSpace(target.BackupID),
+		"cnpg_plugin":              strings.TrimSpace(target.Plugin.Name),
+		"cnpg_plugin_version":      strings.TrimSpace(target.ObservedPluginVersion),
+		"cnpg_plugin_object_store": strings.TrimSpace(target.Plugin.ObjectStore),
+		"cnpg_plugin_server":       strings.TrimSpace(target.Plugin.ServerName),
+		"cnpg_recovery_method":     string(target.RecoveryMethod.Normalized()),
+		"cnpg_source_cluster":      sourceCluster,
+		"cnpg_verify_cluster":      verifyCluster,
 	} {
 		if value != "" {
 			metadata[key] = value

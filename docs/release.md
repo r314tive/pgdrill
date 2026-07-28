@@ -70,6 +70,7 @@ make test-integration-pgbackrest
 make test-integration-pgprobackup
 make test-integration-native
 make test-integration-cnpg
+make test-integration-cnpg-plugin
 ```
 
 `integration-check` requires ShellCheck. The executable tests prepare pinned
@@ -85,8 +86,8 @@ make -s release-check VERSION=v0.3.0-alpha.5
 
 The aggregate prerelease-candidate gate requires a clean worktree and runs the
 release gate, a non-published Linux amd64/arm64 OCI build and content
-verification, ShellCheck, all four native-provider drills, and the disposable
-KinD/CNPG drill:
+verification, ShellCheck, all four native-provider drills, and both disposable
+KinD/CNPG protocol drills:
 
 ```sh
 make -s release-candidate-check VERSION=v0.3.0-alpha.5
@@ -94,8 +95,8 @@ make -s release-candidate-check VERSION=v0.3.0-alpha.5
 
 Every integration process receives the same version and full Git commit.
 Native drills execute the corresponding deterministic Linux archive; the CNPG
-driver executes the deterministic host archive while restoring into a pinned
-Linux KinD target. The WAL-G drill additionally kills the complete pgdrill
+drivers execute the deterministic host archive while restoring into pinned
+Linux KinD targets. The WAL-G drill additionally kills the complete pgdrill
 process group after durable restore intent, requires digest-confirmed
 owned-target recovery, preserves the incomplete attempt, and passes a clean
 new attempt. Checksummed run artifacts remain under `.cache/integration`. They
@@ -299,7 +300,7 @@ prerelease identifier. Do not silently retarget the failed tag.
 
 A green artifact release does not prove provider or Kubernetes compatibility.
 For provider-facing releases, record at least one real `catalog list` or drill
-run for the changed adapter. CNPG changes require a disposable live-cluster
-drill. `release-candidate-check` supplies the controlled local baseline; a
-production support claim still requires separately scoped customer or field
-evidence.
+run for the changed adapter. CNPG changes require the applicable disposable
+live-cluster protocol drill. `release-candidate-check` supplies the controlled
+local baseline; a production support claim still requires separately scoped
+customer or field evidence.

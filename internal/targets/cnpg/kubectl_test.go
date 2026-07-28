@@ -2,6 +2,7 @@ package cnpg
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -300,6 +301,67 @@ func TestKubectlClientLatestCompletedBackupSelectsNewest(t *testing.T) {
 	}
 }
 
+func TestKubectlClientCompletedBackupRetainsPluginIdentity(t *testing.T) {
+	fixture := string(mustReadCNPGFixture(t, "backups-plugin.json"))
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"backups.postgresql.cnpg.io": fixture,
+		},
+	}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+
+	latest, evidence, err := client.CompletedBackup(context.Background(), spec, "")
+	if err != nil {
+		t.Fatalf("discover latest plugin backup: %v", err)
+	}
+	if latest.Name != "altbox-plugin-new" ||
+		latest.BackupID != "20260707T020304" ||
+		latest.Method != "plugin" ||
+		latest.PluginName != DefaultPluginName ||
+		latest.PluginVersion != "0.13.0" {
+		t.Fatalf("unexpected latest plugin backup %#v", latest)
+	}
+	if !hasOperation(evidence, "kubectl-discover-cnpg-backups") {
+		t.Fatalf("missing backup discovery evidence %#v", evidence)
+	}
+
+	exact, _, err := client.CompletedBackup(context.Background(), spec, "altbox-plugin-old")
+	if err != nil {
+		t.Fatalf("discover exact plugin backup: %v", err)
+	}
+	if exact.Name != "altbox-plugin-old" || exact.BackupID != "20260706T010002" {
+		t.Fatalf("unexpected exact plugin backup %#v", exact)
+	}
+}
+
+func TestKubectlClientCompletedBackupRejectsInvalidExactSelection(t *testing.T) {
+	fixture := string(mustReadCNPGFixture(t, "backups-plugin.json"))
+	tests := []struct {
+		name   string
+		backup string
+		want   string
+	}{
+		{name: "not completed", backup: "altbox-plugin-running", want: "not completed"},
+		{name: "different source cluster", backup: "other-plugin-new", want: `not "altbox"`},
+		{name: "missing", backup: "missing", want: "not found"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &fakeCommandRunner{
+				stdoutByArgContains: map[string]string{
+					"backups.postgresql.cnpg.io": fixture,
+				},
+			}
+			client := NewKubectlClient(KubectlConfig{}, runner)
+			_, _, err := client.CompletedBackup(context.Background(), testVerifyClusterSpec(t), test.backup)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("CompletedBackup() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestKubectlClientSourceClusterImage(t *testing.T) {
 	runner := &fakeCommandRunner{
 		stdoutByArgContains: map[string]string{
@@ -319,6 +381,88 @@ func TestKubectlClientSourceClusterImage(t *testing.T) {
 	}
 	if !hasOperation(evidence, "kubectl-discover-cnpg-source-image") {
 		t.Fatalf("missing image discovery evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientSourceClusterPlugin(t *testing.T) {
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"cluster.postgresql.cnpg.io": string(mustReadCNPGFixture(t, "cluster-plugin.json")),
+		},
+	}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+
+	source, evidence, err := client.SourceClusterPlugin(context.Background(), spec, DefaultPluginName)
+	if err != nil {
+		t.Fatalf("source cluster plugin: %v", err)
+	}
+	if source.PluginName != DefaultPluginName ||
+		source.ObjectStore != "altbox-backups" ||
+		source.ServerName != "altbox-archive" ||
+		!source.WALArchiver {
+		t.Fatalf("unexpected plugin source %#v", source)
+	}
+	if !hasOperation(evidence, "kubectl-discover-cnpg-source-plugin") {
+		t.Fatalf("missing source plugin evidence %#v", evidence)
+	}
+}
+
+func TestParseClusterPluginDefaultsServerName(t *testing.T) {
+	source, err := parseClusterPlugin([]byte(`{
+  "spec": {
+    "plugins": [{
+      "name": "barman-cloud.cloudnative-pg.io",
+      "isWALArchiver": true,
+      "parameters": {"barmanObjectName": "backups"}
+    }]
+  }
+}`), DefaultPluginName, "altbox")
+	if err != nil {
+		t.Fatalf("parse source plugin: %v", err)
+	}
+	if source.ServerName != "altbox" {
+		t.Fatalf("server name = %q, want source cluster fallback", source.ServerName)
+	}
+}
+
+func TestParseClusterPluginRejectsUnusableConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "disabled",
+			data: `{"spec":{"plugins":[{
+			  "name":"barman-cloud.cloudnative-pg.io",
+			  "enabled":false,
+			  "parameters":{"barmanObjectName":"backups"}
+			}]}}`,
+			want: "disabled",
+		},
+		{
+			name: "missing object store",
+			data: `{"spec":{"plugins":[{
+			  "name":"barman-cloud.cloudnative-pg.io",
+			  "isWALArchiver":true,
+			  "parameters":{}
+			}]}}`,
+			want: "no barmanObjectName",
+		},
+		{
+			name: "missing plugin",
+			data: `{"spec":{"plugins":[]}}`,
+			want: "has no plugin",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseClusterPlugin([]byte(test.data), DefaultPluginName, "altbox")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("parseClusterPlugin() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -407,6 +551,15 @@ func sortedKeys(values map[string]string) []string {
 		return len(keys[i]) > len(keys[j])
 	})
 	return keys
+}
+
+func mustReadCNPGFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/" + name)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	return data
 }
 
 func commandStdoutForOperation(records []model.EvidenceRecord, operation string) string {

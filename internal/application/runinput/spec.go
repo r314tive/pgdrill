@@ -98,6 +98,20 @@ func ManagedCNPG(cfg config.Config, discover bool) (runspec.Spec, error) {
 	if sourceCluster == "" {
 		return runspec.Spec{}, fmt.Errorf("target.cnpg.source_cluster is required")
 	}
+	recoveryMethod := cfg.Target.CNPG.RecoveryMethod.Normalized()
+	if !recoveryMethod.IsKnown() {
+		return runspec.Spec{}, fmt.Errorf("target.cnpg.recovery_method %q is unsupported", recoveryMethod)
+	}
+	if recoveryMethod == config.CNPGRecoveryPlugin {
+		if strings.TrimSpace(cfg.Target.CNPG.Plugin.Name) == "" {
+			cfg.Target.CNPG.Plugin.Name = config.DefaultCNPGPluginName
+		}
+		if strings.TrimSpace(cfg.Target.CNPG.Plugin.RecoverySource) == "" {
+			cfg.Target.CNPG.Plugin.RecoverySource = config.DefaultCNPGRecoverySource
+		}
+	} else if strings.TrimSpace(cfg.Target.CNPG.BackupID) != "" || hasCNPGPluginConfig(cfg.Target.CNPG.Plugin) {
+		return runspec.Spec{}, fmt.Errorf("target.cnpg plugin recovery fields require recovery_method %q", config.CNPGRecoveryPlugin)
+	}
 	recoveryTarget := cfg.RecoveryTarget()
 	if recoveryTarget.Type != model.RecoveryTargetLatest || recoveryTarget.Value != "" || recoveryTarget.Timeline != "" || recoveryTarget.Inclusive != nil {
 		return runspec.Spec{}, fmt.Errorf("managed CNPG drills currently support only recovery.target %q without value, timeline, or inclusive", model.RecoveryTargetLatest)
@@ -109,17 +123,38 @@ func ManagedCNPG(cfg config.Config, discover bool) (runspec.Spec, error) {
 	} else if !discover {
 		return runspec.Spec{}, fmt.Errorf("target.cnpg.backup_name is required unless discovery is enabled")
 	}
+	if strings.TrimSpace(cfg.Target.CNPG.BackupID) != "" && strings.TrimSpace(cfg.Target.CNPG.BackupName) == "" {
+		return runspec.Spec{}, fmt.Errorf("target.cnpg.backup_id requires target.cnpg.backup_name")
+	}
+	if !discover && strings.TrimSpace(cfg.Target.CNPG.ImageName) == "" {
+		return runspec.Spec{}, fmt.Errorf("target.cnpg.image_name is required unless discovery is enabled")
+	}
+	if recoveryMethod == config.CNPGRecoveryPlugin && !discover {
+		if strings.TrimSpace(cfg.Target.CNPG.BackupID) == "" {
+			return runspec.Spec{}, fmt.Errorf("target.cnpg.backup_id is required for plugin recovery unless discovery is enabled")
+		}
+		if strings.TrimSpace(cfg.Target.CNPG.Plugin.ObjectStore) == "" {
+			return runspec.Spec{}, fmt.Errorf("target.cnpg.plugin.object_store is required for plugin recovery unless discovery is enabled")
+		}
+		if strings.TrimSpace(cfg.Target.CNPG.Plugin.ServerName) == "" {
+			return runspec.Spec{}, fmt.Errorf("target.cnpg.plugin.server_name is required for plugin recovery unless discovery is enabled")
+		}
+	}
 
 	sourceRevision, err := componentRevision(struct {
-		Namespace     string `json:"namespace"`
-		Kubeconfig    string `json:"kubeconfig,omitempty"`
-		Context       string `json:"context,omitempty"`
-		SourceCluster string `json:"source_cluster"`
+		Namespace      string                    `json:"namespace"`
+		Kubeconfig     string                    `json:"kubeconfig,omitempty"`
+		Context        string                    `json:"context,omitempty"`
+		SourceCluster  string                    `json:"source_cluster"`
+		RecoveryMethod config.CNPGRecoveryMethod `json:"recovery_method"`
+		Plugin         config.CNPGPluginConfig   `json:"plugin,omitempty"`
 	}{
-		Namespace:     cfg.Target.Kubernetes.Namespace,
-		Kubeconfig:    cfg.Target.Kubernetes.Kubeconfig,
-		Context:       cfg.Target.Kubernetes.Context,
-		SourceCluster: cfg.Target.CNPG.SourceCluster,
+		Namespace:      cfg.Target.Kubernetes.Namespace,
+		Kubeconfig:     cfg.Target.Kubernetes.Kubeconfig,
+		Context:        cfg.Target.Kubernetes.Context,
+		SourceCluster:  cfg.Target.CNPG.SourceCluster,
+		RecoveryMethod: recoveryMethod,
+		Plugin:         cfg.Target.CNPG.Plugin,
 	}, cfg.Target.RedactValues...)
 	if err != nil {
 		return runspec.Spec{}, fmt.Errorf("fingerprint CNPG source: %w", err)
@@ -172,6 +207,13 @@ func ManagedCNPG(cfg config.Config, discover bool) (runspec.Spec, error) {
 		return runspec.Spec{}, fmt.Errorf("build managed CNPG drill spec: %w", err)
 	}
 	return spec, nil
+}
+
+func hasCNPGPluginConfig(plugin config.CNPGPluginConfig) bool {
+	return strings.TrimSpace(plugin.Name) != "" ||
+		strings.TrimSpace(plugin.ObjectStore) != "" ||
+		strings.TrimSpace(plugin.ServerName) != "" ||
+		strings.TrimSpace(plugin.RecoverySource) != ""
 }
 
 func probeProfile(configs []config.ProbeConfig) ([]config.ProbeConfig, []model.ProbeDescriptor, error) {

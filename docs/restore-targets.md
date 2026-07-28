@@ -56,6 +56,8 @@ Implemented primitives:
 - deterministic verify-cluster names: `verify-<source-prefix>-<hash8>`,
   bounded to the CNPG-friendly 50-character limit
 - strict config parsing for `target.kubernetes` and `target.cnpg`
+- explicit `backup_resource` and `plugin` recovery protocols; the plugin path
+  binds recovery to the selected Barman `status.backupId`
 - source image, backup name, storage size/class, resource requests/limits, and
   optional node affinity in the generated CNPG `Cluster`
 - stable pgdrill labels for ownership, drill ID, and source cluster; mutating
@@ -65,8 +67,10 @@ Implemented primitives:
   collection
 
 The manifest builder expects the caller to provide the selected CNPG `Backup`
-resource name and PostgreSQL image. The executor should discover those from the
-source cluster and selected backup before rendering the manifest.
+resource name and PostgreSQL image. Plugin recovery additionally needs the
+Barman backup ID, plugin name, `ObjectStore` reference, archive server name,
+and external-cluster source name. The executor can discover these read-only
+from the selected `Backup` and source `Cluster` before rendering the manifest.
 
 The first CLI surface renders this manifest without applying it:
 
@@ -75,7 +79,10 @@ pgdrill target manifest -f pgdrill-cnpg.yaml
 ```
 
 If `target.cnpg.backup_name` or `target.cnpg.image_name` are omitted, the CLI
-can discover them read-only through the `kubectl` compatibility client:
+can discover them read-only through the `kubectl` compatibility client. In
+plugin mode it also resolves and cross-checks `Backup.spec.method`,
+`Backup.spec.pluginConfiguration.name`, `Backup.status.backupId`, and missing
+source plugin parameters:
 
 ```sh
 pgdrill target manifest -f pgdrill-cnpg.yaml -discover
@@ -122,7 +129,12 @@ The same compatibility client can discover CNPG inputs by parsing Kubernetes
 JSON output in Go:
 
 - select the newest `Backup` with `status.phase=completed` for the configured
-  source cluster
+  source cluster, or validate an explicitly named completed `Backup`
+- retain the selected backup method, plugin name, exact Barman backup ID, and
+  creation timestamp as typed inputs
+- for plugin recovery, reject method/plugin/backup-ID mismatches and discover
+  `barmanObjectName` plus `serverName` from the source Cluster plugin; an
+  omitted server name defaults to the source cluster name
 - read `Cluster.spec.imageName` from the source cluster so verify clusters
   reuse the same PostgreSQL image, falling back to a source pod's `postgres`
   container image when needed
@@ -159,6 +171,27 @@ before target creation until the CNPG manifest mapping and live PITR evidence
 exist. Managed resolution echoes the applied target so the engine cannot accept
 a silent fallback.
 
+`target.cnpg.recovery_method` selects the restore protocol:
+
+- `backup_resource` (default) emits
+  `bootstrap.recovery.backup.name` and preserves the exercised CNPG 1.26 path.
+- `plugin` emits `bootstrap.recovery.source`,
+  `bootstrap.recovery.recoveryTarget.backupID`, and a read-only
+  `externalClusters[].plugin` reference. It deliberately does not add
+  `spec.plugins` or `isWALArchiver` to the verify cluster, so a drill cannot
+  archive WAL back into the source repository.
+
+The Barman Cloud Plugin protocol has fixture/unit coverage and a separate
+checksum- and digest-pinned live KinD gate:
+
+```sh
+make test-integration-cnpg-plugin
+```
+
+Passing that developer gate is not by itself a CNPG 1.29 compatibility claim.
+Promotion still requires reviewed evidence bound to an exact clean release
+candidate.
+
 The service account needs `create` on the `pods/exec` subresource in addition to
 the lifecycle and evidence permissions shown in the example. Because pod exec is
 a privileged capability, use a dedicated service account and namespace-scoped
@@ -187,7 +220,9 @@ The manifest artifact is written after the operation intent and before the
 Kubernetes mutation; reconciliation can regenerate and deduplicate it.
 
 See [../examples/cnpg-target-verify.yaml](../examples/cnpg-target-verify.yaml)
-for a local CLI config example and
+for the native Backup-resource path,
+[../examples/cnpg-plugin-target-verify.yaml](../examples/cnpg-plugin-target-verify.yaml)
+for Barman Cloud Plugin recovery, and
 [../examples/kubernetes/cnpg-target-verify-cronjob.yaml](../examples/kubernetes/cnpg-target-verify-cronjob.yaml)
 for a CronJob/RBAC template.
 
@@ -207,6 +242,7 @@ target:
     capture_logs: true
   cnpg:
     source_cluster: altbox
+    recovery_method: backup_resource
     backup_name: altbox-backup-20260707
     image_name: ghcr.io/cloudnative-pg/postgresql:16
     storage_size: 20Gi

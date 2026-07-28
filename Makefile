@@ -1,4 +1,4 @@
-.PHONY: build check container-check container-smoke cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
+.PHONY: build check container-check container-smoke cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-cnpg-plugin test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-walg test-local toolchain-check vet workflow-check
 
 VERSION ?= v0.3.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -114,9 +114,12 @@ test-integration-pgprobackup: integration-syntax-check
 test-integration-cnpg: integration-syntax-check
 	test/integration/cnpg/run.sh
 
+test-integration-cnpg-plugin: integration-syntax-check
+	PGDRILL_CNPG_RECOVERY_MODE=plugin test/integration/cnpg/run.sh
+
 test-integration-native: test-integration-walg test-integration-barman test-integration-pgbackrest test-integration-pgprobackup
 
-test-integration-all: test-integration-native test-integration-cnpg
+test-integration-all: test-integration-native test-integration-cnpg test-integration-cnpg-plugin
 
 test-local: check race smoke test-integration-native
 

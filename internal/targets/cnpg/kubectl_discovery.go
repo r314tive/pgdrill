@@ -4,45 +4,84 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
 type BackupResource struct {
-	Name      string
-	Cluster   string
-	Phase     string
-	CreatedAt time.Time
+	Name          string
+	Cluster       string
+	Phase         string
+	Method        string
+	PluginName    string
+	PluginVersion string
+	BackupID      string
+	CreatedAt     time.Time
 }
 
-func (c *KubectlClient) LatestCompletedBackup(ctx context.Context, spec VerifyClusterSpec) (string, []model.EvidenceRecord, error) {
+type PluginRecoverySource struct {
+	PluginName  string
+	ObjectStore string
+	ServerName  string
+	WALArchiver bool
+}
+
+func (c *KubectlClient) CompletedBackup(ctx context.Context, spec VerifyClusterSpec, name string) (BackupResource, []model.EvidenceRecord, error) {
 	evidence, result, err := c.run(ctx, "kubectl-discover-cnpg-backups", c.args(spec, "get", "backups.postgresql.cnpg.io", "-o", "json"), nil, c.cfg.Timeout)
 	if err != nil {
-		return "", evidence, err
+		return BackupResource{}, evidence, err
 	}
 	if !result.Evidence.ExitStatus.Success {
-		return "", evidence, fmt.Errorf("kubectl-discover-cnpg-backups failed: %s", result.Evidence.ExitStatus.Summary())
+		return BackupResource{}, evidence, fmt.Errorf("kubectl-discover-cnpg-backups failed: %s", result.Evidence.ExitStatus.Summary())
 	}
 
 	backups, err := parseBackupResources(result.Raw.Stdout)
 	if err != nil {
-		return "", evidence, err
+		return BackupResource{}, evidence, err
+	}
+
+	requestedName := strings.TrimSpace(name)
+	if requestedName != "" {
+		for _, backup := range backups {
+			if backup.Name != requestedName {
+				continue
+			}
+			if backup.Cluster != spec.SourceCluster {
+				return BackupResource{}, evidence, fmt.Errorf("CNPG Backup %q belongs to cluster %q, not %q", requestedName, backup.Cluster, spec.SourceCluster)
+			}
+			if !strings.EqualFold(backup.Phase, "completed") {
+				return BackupResource{}, evidence, fmt.Errorf("CNPG Backup %q phase is %q, not completed", requestedName, backup.Phase)
+			}
+			return backup, evidence, nil
+		}
+		return BackupResource{}, evidence, fmt.Errorf("CNPG Backup %q not found", requestedName)
 	}
 
 	var selected BackupResource
 	for _, backup := range backups {
-		if backup.Cluster != spec.SourceCluster || backup.Phase != "completed" {
+		if backup.Cluster != spec.SourceCluster || !strings.EqualFold(backup.Phase, "completed") {
 			continue
 		}
-		if selected.Name == "" || backup.CreatedAt.After(selected.CreatedAt) {
+		if selected.Name == "" ||
+			backup.CreatedAt.After(selected.CreatedAt) ||
+			(backup.CreatedAt.Equal(selected.CreatedAt) && backup.Name > selected.Name) {
 			selected = backup
 		}
 	}
 	if selected.Name == "" {
-		return "", evidence, fmt.Errorf("no completed CNPG Backup found for cluster %q", spec.SourceCluster)
+		return BackupResource{}, evidence, fmt.Errorf("no completed CNPG Backup found for cluster %q", spec.SourceCluster)
 	}
-	return selected.Name, evidence, nil
+	return selected, evidence, nil
+}
+
+func (c *KubectlClient) LatestCompletedBackup(ctx context.Context, spec VerifyClusterSpec) (string, []model.EvidenceRecord, error) {
+	backup, evidence, err := c.CompletedBackup(ctx, spec, "")
+	if err != nil {
+		return "", evidence, err
+	}
+	return backup.Name, evidence, nil
 }
 
 func (c *KubectlClient) SourceClusterImage(ctx context.Context, spec VerifyClusterSpec) (string, []model.EvidenceRecord, error) {
@@ -78,6 +117,22 @@ func (c *KubectlClient) SourceClusterImage(ctx context.Context, spec VerifyClust
 	return image, evidence, nil
 }
 
+func (c *KubectlClient) SourceClusterPlugin(ctx context.Context, spec VerifyClusterSpec, pluginName string) (PluginRecoverySource, []model.EvidenceRecord, error) {
+	evidence, result, err := c.run(ctx, "kubectl-discover-cnpg-source-plugin", c.args(spec, "get", "cluster.postgresql.cnpg.io", spec.SourceCluster, "-o", "json"), nil, c.cfg.Timeout)
+	if err != nil {
+		return PluginRecoverySource{}, evidence, err
+	}
+	if !result.Evidence.ExitStatus.Success {
+		return PluginRecoverySource{}, evidence, fmt.Errorf("kubectl-discover-cnpg-source-plugin failed: %s", result.Evidence.ExitStatus.Summary())
+	}
+
+	source, err := parseClusterPlugin(result.Raw.Stdout, pluginName, spec.SourceCluster)
+	if err != nil {
+		return PluginRecoverySource{}, evidence, err
+	}
+	return source, evidence, nil
+}
+
 func parseBackupResources(data []byte) ([]BackupResource, error) {
 	var list struct {
 		Items []struct {
@@ -89,9 +144,17 @@ func parseBackupResources(data []byte) ([]BackupResource, error) {
 				Cluster struct {
 					Name string `json:"name"`
 				} `json:"cluster"`
+				Method              string `json:"method"`
+				PluginConfiguration struct {
+					Name string `json:"name"`
+				} `json:"pluginConfiguration"`
 			} `json:"spec"`
 			Status struct {
-				Phase string `json:"phase"`
+				Phase          string `json:"phase"`
+				BackupID       string `json:"backupId"`
+				PluginMetadata struct {
+					Version string `json:"version"`
+				} `json:"pluginMetadata"`
 			} `json:"status"`
 		} `json:"items"`
 	}
@@ -106,13 +169,58 @@ func parseBackupResources(data []byte) ([]BackupResource, error) {
 			return nil, fmt.Errorf("parse CNPG Backup creationTimestamp %q: %w", item.Metadata.CreationTimestamp, err)
 		}
 		backups = append(backups, BackupResource{
-			Name:      item.Metadata.Name,
-			Cluster:   item.Spec.Cluster.Name,
-			Phase:     item.Status.Phase,
-			CreatedAt: createdAt,
+			Name:          item.Metadata.Name,
+			Cluster:       item.Spec.Cluster.Name,
+			Phase:         item.Status.Phase,
+			Method:        item.Spec.Method,
+			PluginName:    item.Spec.PluginConfiguration.Name,
+			PluginVersion: item.Status.PluginMetadata.Version,
+			BackupID:      item.Status.BackupID,
+			CreatedAt:     createdAt,
 		})
 	}
 	return backups, nil
+}
+
+func parseClusterPlugin(data []byte, pluginName, defaultServerName string) (PluginRecoverySource, error) {
+	var cluster struct {
+		Spec struct {
+			Plugins []struct {
+				Name          string            `json:"name"`
+				Enabled       *bool             `json:"enabled"`
+				IsWALArchiver bool              `json:"isWALArchiver"`
+				Parameters    map[string]string `json:"parameters"`
+			} `json:"plugins"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(data, &cluster); err != nil {
+		return PluginRecoverySource{}, fmt.Errorf("parse CNPG Cluster plugins: %w", err)
+	}
+
+	name := strings.TrimSpace(pluginName)
+	for _, plugin := range cluster.Spec.Plugins {
+		if plugin.Name != name {
+			continue
+		}
+		if plugin.Enabled != nil && !*plugin.Enabled {
+			return PluginRecoverySource{}, fmt.Errorf("CNPG source plugin %q is disabled", name)
+		}
+		objectStore := strings.TrimSpace(plugin.Parameters["barmanObjectName"])
+		if objectStore == "" {
+			return PluginRecoverySource{}, fmt.Errorf("CNPG source plugin %q has no barmanObjectName parameter", name)
+		}
+		serverName := strings.TrimSpace(plugin.Parameters["serverName"])
+		if serverName == "" {
+			serverName = strings.TrimSpace(defaultServerName)
+		}
+		return PluginRecoverySource{
+			PluginName:  name,
+			ObjectStore: objectStore,
+			ServerName:  serverName,
+			WALArchiver: plugin.IsWALArchiver,
+		}, nil
+	}
+	return PluginRecoverySource{}, fmt.Errorf("CNPG source cluster has no plugin %q", name)
 }
 
 func parseClusterImage(data []byte) (string, error) {

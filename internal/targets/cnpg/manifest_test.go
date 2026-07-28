@@ -45,6 +45,9 @@ func TestBuildVerifyClusterSpecDefaults(t *testing.T) {
 	if spec.CPURequest != DefaultCPURequest || spec.MemoryRequest != DefaultMemoryRequest {
 		t.Fatalf("unexpected resource requests cpu=%q memory=%q", spec.CPURequest, spec.MemoryRequest)
 	}
+	if spec.RecoveryMethod != RecoveryMethodBackupResource {
+		t.Fatalf("unexpected recovery method %q", spec.RecoveryMethod)
+	}
 	if spec.Labels["team"] != "dba" {
 		t.Fatalf("expected custom label to be preserved, labels=%#v", spec.Labels)
 	}
@@ -190,12 +193,64 @@ func TestManifestYAMLRendersCNPGRecoveryCluster(t *testing.T) {
 	if manifest.Spec.Resources.Limits["cpu"] != "2" || manifest.Spec.Resources.Limits["memory"] != "4Gi" {
 		t.Fatalf("unexpected resource limits %#v", manifest.Spec.Resources.Limits)
 	}
-	if manifest.Spec.Bootstrap.Recovery.Backup.Name != "altbox-backup-20260707" {
+	if manifest.Spec.Bootstrap.Recovery.Backup == nil || manifest.Spec.Bootstrap.Recovery.Backup.Name != "altbox-backup-20260707" {
 		t.Fatalf("unexpected backup reference %#v", manifest.Spec.Bootstrap.Recovery.Backup)
+	}
+	if manifest.Spec.Bootstrap.Recovery.Source != "" || manifest.Spec.Bootstrap.Recovery.RecoveryTarget != nil || len(manifest.Spec.ExternalClusters) != 0 {
+		t.Fatalf("backup resource recovery leaked plugin fields: %#v", manifest.Spec)
 	}
 	requirements := manifest.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions
 	if len(requirements) != 1 || requirements[0].Key != "node-role.kubernetes.io/database" || requirements[0].Values[0] != "true" {
 		t.Fatalf("unexpected node affinity %#v", requirements)
+	}
+}
+
+func TestManifestYAMLRendersPluginRecoveryByExactBackupID(t *testing.T) {
+	spec, err := BuildVerifyClusterSpec(Config{
+		Namespace:         "d003-db",
+		SourceCluster:     "altbox",
+		RecoveryMethod:    RecoveryMethodPlugin,
+		BackupName:        "altbox-backup-20260707",
+		BackupID:          "20260707T010203",
+		PluginObjectStore: "altbox-backups",
+		PluginServerName:  "altbox",
+		ImageName:         "registry.example/postgres:17.5",
+	}, "drill-plugin")
+	if err != nil {
+		t.Fatalf("build plugin verify cluster spec: %v", err)
+	}
+	if spec.PluginName != DefaultPluginName || spec.RecoverySource != DefaultRecoverySource {
+		t.Fatalf("plugin defaults were not applied: %#v", spec)
+	}
+
+	data, err := spec.ManifestYAML()
+	if err != nil {
+		t.Fatalf("render plugin manifest: %v", err)
+	}
+
+	var manifest clusterManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("parse plugin manifest yaml: %v\n%s", err, data)
+	}
+	recovery := manifest.Spec.Bootstrap.Recovery
+	if recovery.Backup != nil {
+		t.Fatalf("plugin recovery must not reference a Backup resource: %#v", recovery)
+	}
+	if recovery.Source != DefaultRecoverySource || recovery.RecoveryTarget == nil || recovery.RecoveryTarget.BackupID != "20260707T010203" {
+		t.Fatalf("unexpected exact plugin recovery target %#v", recovery)
+	}
+	if len(manifest.Spec.ExternalClusters) != 1 {
+		t.Fatalf("unexpected external clusters %#v", manifest.Spec.ExternalClusters)
+	}
+	external := manifest.Spec.ExternalClusters[0]
+	if external.Name != DefaultRecoverySource || external.Plugin.Name != DefaultPluginName {
+		t.Fatalf("unexpected external plugin identity %#v", external)
+	}
+	if external.Plugin.Parameters["barmanObjectName"] != "altbox-backups" || external.Plugin.Parameters["serverName"] != "altbox" {
+		t.Fatalf("unexpected plugin parameters %#v", external.Plugin.Parameters)
+	}
+	if strings.Contains(string(data), "\n  plugins:") || strings.Contains(string(data), "isWALArchiver") {
+		t.Fatalf("verify cluster must not enable WAL archiving:\n%s", data)
 	}
 }
 
@@ -229,6 +284,62 @@ func TestBuildVerifyClusterSpecValidatesRequiredFields(t *testing.T) {
 				NodeLabelKey:  "role",
 			},
 			want: "node label key and value",
+		},
+		{
+			name: "unknown recovery method",
+			cfg: Config{
+				SourceCluster:  "main",
+				BackupName:     "backup",
+				ImageName:      "postgres:16",
+				RecoveryMethod: "future",
+			},
+			want: "recovery method",
+		},
+		{
+			name: "backup ID in backup resource mode",
+			cfg: Config{
+				SourceCluster: "main",
+				BackupName:    "backup",
+				BackupID:      "20260707T010203",
+				ImageName:     "postgres:16",
+			},
+			want: "valid only for plugin",
+		},
+		{
+			name: "plugin backup ID",
+			cfg: Config{
+				SourceCluster:     "main",
+				RecoveryMethod:    RecoveryMethodPlugin,
+				BackupName:        "backup",
+				PluginObjectStore: "backups",
+				PluginServerName:  "main",
+				ImageName:         "postgres:16",
+			},
+			want: "backup ID is required",
+		},
+		{
+			name: "plugin object store",
+			cfg: Config{
+				SourceCluster:    "main",
+				RecoveryMethod:   RecoveryMethodPlugin,
+				BackupName:       "backup",
+				BackupID:         "20260707T010203",
+				PluginServerName: "main",
+				ImageName:        "postgres:16",
+			},
+			want: "object store is required",
+		},
+		{
+			name: "plugin server name",
+			cfg: Config{
+				SourceCluster:     "main",
+				RecoveryMethod:    RecoveryMethodPlugin,
+				BackupName:        "backup",
+				BackupID:          "20260707T010203",
+				PluginObjectStore: "backups",
+				ImageName:         "postgres:16",
+			},
+			want: "server name is required",
 		},
 	}
 

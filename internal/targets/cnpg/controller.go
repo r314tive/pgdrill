@@ -86,18 +86,25 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 	}
 
 	manifestEvidence := c.runtimeEvidence("cnpg-manifest-render", map[string]string{
-		"backup":             c.Spec.BackupName,
-		"bytes":              strconv.Itoa(len(manifest)),
-		"cluster":            c.Spec.Name,
-		"full_recovery_job":  c.Spec.FullRecoveryJob,
-		"instance_pod":       c.Spec.InstancePodName,
-		"namespace":          c.Spec.Namespace,
-		"ownership_id":       c.Spec.OwnershipID,
-		"source_cluster":     c.Spec.SourceCluster,
-		"storage_size":       c.Spec.StorageSize,
-		"postgres_image":     c.Spec.ImageName,
-		"target_port":        strconv.Itoa(DefaultPostgresPort),
-		"verify_cluster_uid": c.Spec.Name,
+		"backup":              c.Spec.BackupName,
+		"backup_id":           c.Spec.BackupID,
+		"bytes":               strconv.Itoa(len(manifest)),
+		"cluster":             c.Spec.Name,
+		"full_recovery_job":   c.Spec.FullRecoveryJob,
+		"instance_pod":        c.Spec.InstancePodName,
+		"namespace":           c.Spec.Namespace,
+		"ownership_id":        c.Spec.OwnershipID,
+		"plugin":              c.Spec.PluginName,
+		"plugin_version":      c.Spec.PluginVersion,
+		"plugin_object_store": c.Spec.PluginObjectStore,
+		"plugin_server_name":  c.Spec.PluginServerName,
+		"source_cluster":      c.Spec.SourceCluster,
+		"recovery_method":     string(c.Spec.RecoveryMethod),
+		"recovery_source":     c.Spec.RecoverySource,
+		"storage_size":        c.Spec.StorageSize,
+		"postgres_image":      c.Spec.ImageName,
+		"target_port":         strconv.Itoa(DefaultPostgresPort),
+		"verify_cluster_uid":  c.Spec.Name,
 	})
 	manifestEvidence.ArtifactIDs = []string{manifestArtifact.ID}
 	evidence := []model.EvidenceRecord{manifestEvidence}

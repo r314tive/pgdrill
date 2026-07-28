@@ -1,0 +1,11 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: source-backup
+  namespace: pgdrill-cnpg
+spec:
+  method: plugin
+  cluster:
+    name: source
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

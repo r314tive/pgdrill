@@ -140,6 +140,25 @@ CNPG target verification currently accepts only `recovery.target: latest`
 without timeline or inclusive options. Other targets are rejected before
 Kubernetes mutation rather than being silently restored as latest.
 
+### CNPG Recovery Protocol
+
+`target.cnpg.recovery_method` is a closed enum:
+
+| Value | Required exact inputs without `-discover` | Generated recovery API |
+| --- | --- | --- |
+| `backup_resource` (default) | `backup_name`, `image_name` | `bootstrap.recovery.backup.name` |
+| `plugin` | `backup_name`, `backup_id`, `image_name`, `plugin.object_store`, `plugin.server_name` | `bootstrap.recovery.source`, exact `recoveryTarget.backupID`, and `externalClusters[].plugin` |
+
+Plugin defaults are `plugin.name: barman-cloud.cloudnative-pg.io` and
+`plugin.recovery_source: source`. With `-discover`, pgdrill can fill the backup
+name/ID, image, object store, and server name from Kubernetes JSON. An explicit
+backup ID is still compared with `Backup.status.backupId`; a mismatch fails
+before target creation. Plugin-only fields are rejected in `backup_resource`
+mode, and `backup_id` cannot be supplied without `backup_name`.
+
+The generated plugin verify cluster references the source object store only for
+recovery. It does not enable a WAL-archiver plugin on the restored cluster.
+
 ## Local Work Directory
 
 For `target.type: local`, `target.work_dir` must be missing or an empty real

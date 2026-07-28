@@ -1,0 +1,21 @@
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: source-backups
+  namespace: pgdrill-cnpg
+spec:
+  configuration:
+    destinationPath: s3://backups/
+    endpointURL: http://minio.pgdrill-cnpg.svc.cluster.local:9000
+    s3Credentials:
+      accessKeyId:
+        name: minio
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: minio
+        key: ACCESS_SECRET_KEY
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
+      maxParallel: 2

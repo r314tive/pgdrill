@@ -1,0 +1,60 @@
+# Example for a CloudNativePG source using the Barman Cloud Plugin:
+#
+#   pgdrill target verify \
+#     -f examples/cnpg-plugin-target-verify.yaml \
+#     -discover \
+#     -confirm-create
+#
+# Discovery selects the latest completed plugin Backup, binds recovery to its
+# exact status.backupId, reuses the source PostgreSQL image, and reads the
+# source plugin's ObjectStore/server parameters. The temporary verify cluster
+# gets a read-only recovery reference and does not archive WAL.
+
+cluster:
+  name: altbox
+
+target:
+  type: kubernetes
+  labels:
+    environment: recovery-drill
+  kubernetes:
+    namespace: d003-db
+    kubectl_binary: kubectl
+    command_timeout: 2m
+    wait_timeout: 2h
+    poll_interval: 5s
+    cleanup_pvc: true
+    cleanup_on_fail: true
+    capture_logs: true
+    events_tail: 200
+    postgres_log_tail: 5000
+  cnpg:
+    source_cluster: altbox
+    recovery_method: plugin
+    # The defaults are shown explicitly for reviewability.
+    plugin:
+      name: barman-cloud.cloudnative-pg.io
+      recovery_source: source
+    # With -discover, backup_name, backup_id, image_name,
+    # plugin.object_store, and plugin.server_name are resolved read-only.
+    storage_size: 20Gi
+    cpu_request: 500m
+    memory_request: 1Gi
+
+recovery:
+  target: latest
+
+policy:
+  maximum_rto: 2h
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: sql
+    name: select_1
+    query: "select 1"
+    timeout: 10s
+
+report:
+  format: json
+  path: ./pgdrill-cnpg-plugin-report.json

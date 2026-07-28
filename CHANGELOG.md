@@ -10,6 +10,17 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Typed CNPG Barman Cloud Plugin recovery with exact Barman backup-ID binding,
+  read-only `externalClusters[].plugin` manifests, source plugin/ObjectStore
+  discovery, selected-Backup method and plugin validation, fixture-driven JSON
+  parsing, and structured plugin identity/version evidence.
+- A checksum- and digest-pinned CNPG 1.29.2 / Barman Cloud Plugin 0.13.0 live
+  KinD drill with real MinIO backup, post-backup WAL replay, recovery probes,
+  policy evaluation, artifact/history verification, and ownership-scoped
+  cleanup.
+- An explicit `target.cnpg.recovery_method` protocol with strict
+  `backup_resource`/`plugin` configuration validation and a runnable plugin
+  target example.
 - A minimal non-root `linux/amd64` and `linux/arm64` OCI distribution assembled
   only from the exact checksummed Linux release archives, with a digest-pinned
   Debian runtime base, digest-pinned BuildKit Syft scanner, immutable OCI
@@ -104,6 +115,9 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- CNPG documentation now reflects the current 1.29.2 deprecation schedule
+  (in-tree Barman Cloud removal in 1.31.0) and keeps plugin manifest support
+  separate from an unproven live compatibility claim.
 - The clean-tree aggregate release-candidate gate now constructs and verifies a
   non-published multi-architecture OCI layout after deterministic archive
   generation, then runs the native non-root image entrypoint and verifies exact

@@ -1,0 +1,25 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: source
+  namespace: pgdrill-cnpg
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:15.17-202605110912-system-bookworm@sha256:ce92730c48402c2377ea438d978dd3d76702800a2d215fcbdd53ab83d4833524
+  imagePullPolicy: IfNotPresent
+  storage:
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  postgresql:
+    parameters:
+      archive_timeout: 10s
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: source-backups

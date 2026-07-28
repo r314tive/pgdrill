@@ -100,6 +100,26 @@ func TestManagedCNPGCapturesDiscoveryOrExactSelection(t *testing.T) {
 	}
 }
 
+func TestManagedCNPGAcceptsExactPluginRecoveryContract(t *testing.T) {
+	cfg := managedConfig()
+	cfg.Target.CNPG.RecoveryMethod = config.CNPGRecoveryPlugin
+	cfg.Target.CNPG.BackupName = "backup-plugin-1"
+	cfg.Target.CNPG.BackupID = "20260707T010203"
+	cfg.Target.CNPG.Plugin.ObjectStore = "altbox-backups"
+	cfg.Target.CNPG.Plugin.ServerName = "altbox"
+
+	spec, err := ManagedCNPG(cfg, false)
+	if err != nil {
+		t.Fatalf("ManagedCNPG(plugin) error = %v", err)
+	}
+	if got := spec.Document().BackupSelection; got.Type != model.BackupSelectionByID || got.BackupID != "cnpg:backup-plugin-1" {
+		t.Fatalf("unexpected plugin selection %#v", got)
+	}
+	if spec.Document().Source.Ref.Driver != "cnpg" || spec.Document().Source.Ref.Revision == "" {
+		t.Fatalf("unexpected source reference %#v", spec.Document().Source.Ref)
+	}
+}
+
 func TestManagedCNPGRequiresConcreteSourceAndSelectionIntent(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -110,6 +130,22 @@ func TestManagedCNPGRequiresConcreteSourceAndSelectionIntent(t *testing.T) {
 		{name: "backup", edit: func(*config.Config) {}, want: "backup_name"},
 		{name: "source", edit: func(c *config.Config) { c.Target.CNPG.SourceCluster = "" }, discover: true, want: "source_cluster"},
 		{name: "namespace", edit: func(c *config.Config) { c.Target.Kubernetes.Namespace = "" }, discover: true, want: "namespace"},
+		{name: "image", edit: func(c *config.Config) {
+			c.Target.CNPG.BackupName = "backup"
+			c.Target.CNPG.ImageName = ""
+		}, want: "image_name"},
+		{name: "plugin backup ID", edit: func(c *config.Config) {
+			c.Target.CNPG.RecoveryMethod = config.CNPGRecoveryPlugin
+			c.Target.CNPG.BackupName = "backup"
+			c.Target.CNPG.Plugin.ObjectStore = "backups"
+			c.Target.CNPG.Plugin.ServerName = "altbox"
+		}, want: "backup_id"},
+		{name: "plugin object store", edit: func(c *config.Config) {
+			c.Target.CNPG.RecoveryMethod = config.CNPGRecoveryPlugin
+			c.Target.CNPG.BackupName = "backup"
+			c.Target.CNPG.BackupID = "20260707T010203"
+			c.Target.CNPG.Plugin.ServerName = "altbox"
+		}, want: "object_store"},
 		{name: "recovery target", edit: func(c *config.Config) {
 			c.Recovery = config.RecoveryConfig{Target: model.RecoveryTargetTimestamp, Value: "2026-07-21T00:00:00Z"}
 		}, discover: true, want: "only recovery.target"},
@@ -159,6 +195,7 @@ func managedConfig() config.Config {
 			},
 			CNPG: config.CNPGTargetConfig{
 				SourceCluster: "altbox",
+				ImageName:     "ghcr.io/cloudnative-pg/postgresql:17.5",
 			},
 		},
 		Recovery: config.RecoveryConfig{Target: model.RecoveryTargetLatest},

@@ -220,12 +220,32 @@ other version, storage, and recovery-target combinations remain external
 gates.
 
 The CNPG target has manifest, discovery, lifecycle, failure, evidence, and CLI
-tests behind a `kubectl` compatibility client.
+tests behind a `kubectl` compatibility client. The typed adapter supports both
+CNPG `Backup`-resource recovery and the Barman Cloud Plugin recovery manifest,
+including exact `status.backupId` selection and source-plugin discovery.
 
 The current CNPG adapter implements only plain `latest` recovery. Other
 recovery-target types and timeline/inclusive options fail before resource
 creation. They are not compatibility claims until the manifest mapping and a
 live PITR drill prove them.
+
+The Barman Cloud Plugin path has fixture/unit coverage and a checksum- and
+digest-pinned live developer gate:
+
+```sh
+make test-integration-cnpg-plugin
+```
+
+The gate provisions CNPG 1.29.2, Barman Cloud Plugin 0.13.0, cert-manager
+1.21.0, PostgreSQL 15.17, and MinIO in an isolated KinD cluster. It requires a
+real plugin backup, exact backup-ID recovery, post-backup WAL replay, probes,
+evidence/history verification, and cleanup. A passing developer run is not
+included in the field matrix and does not establish an advertised CNPG 1.29
+support claim until it is reviewed, bound to an exact clean release candidate,
+and deliberately promoted. The manifest follows the upstream
+[Barman Cloud Plugin recovery contract](https://cloudnative-pg.io/plugin-barman-cloud/docs/usage/#restoring-a-cluster);
+the current native-removal schedule is recorded in the [CNPG 1.29.2 release
+notes](https://cloudnative-pg.io/docs/1.29/release_notes/v1.29/#version-1292).
 
 ### CNPG Field Validation
 

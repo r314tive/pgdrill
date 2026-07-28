@@ -104,9 +104,12 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 			return model.OperationReconciliation{Evidence: evidence}, artifactErr
 		}
 		manifestEvidence := t.controller.runtimeEvidence("cnpg-manifest-reconcile", map[string]string{
-			"cluster":      t.Spec.Name,
-			"namespace":    t.Spec.Namespace,
-			"ownership_id": t.Spec.OwnershipID,
+			"backup":          t.Spec.BackupName,
+			"backup_id":       t.Spec.BackupID,
+			"cluster":         t.Spec.Name,
+			"namespace":       t.Spec.Namespace,
+			"ownership_id":    t.Spec.OwnershipID,
+			"recovery_method": string(t.Spec.RecoveryMethod),
 		})
 		manifestEvidence.ArtifactIDs = []string{manifestArtifact.ID}
 		evidence = append(evidence, manifestEvidence)
@@ -136,12 +139,17 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 				Status:  model.CheckStatusPassed,
 				Message: "CNPG verify cluster is Ready after reconciliation",
 				Attributes: map[string]string{
-					"backup":           t.Spec.BackupName,
-					"instance_pod":     t.Spec.InstancePodName,
-					"operator_version": instance.OperatorVersion,
-					"postgres_host":    pg.Host,
-					"source_cluster":   t.Spec.SourceCluster,
-					"verify_cluster":   t.Spec.Name,
+					"backup":              t.Spec.BackupName,
+					"backup_id":           t.Spec.BackupID,
+					"instance_pod":        t.Spec.InstancePodName,
+					"operator_version":    instance.OperatorVersion,
+					"plugin":              t.Spec.PluginName,
+					"plugin_version":      t.Spec.PluginVersion,
+					"plugin_object_store": t.Spec.PluginObjectStore,
+					"postgres_host":       pg.Host,
+					"recovery_method":     string(t.Spec.RecoveryMethod),
+					"source_cluster":      t.Spec.SourceCluster,
+					"verify_cluster":      t.Spec.Name,
 				},
 			}}, Evidence: evidence, Artifacts: append([]model.ArtifactRef(nil), t.controller.artifactRefs...)},
 		}, nil
@@ -182,12 +190,17 @@ func (t *VerifyTarget) Start(ctx context.Context) (model.RunningPostgres, model.
 			Status:  status,
 			Message: message,
 			Attributes: map[string]string{
-				"backup":           t.Spec.BackupName,
-				"instance_pod":     t.Spec.InstancePodName,
-				"operator_version": t.controller.instance.OperatorVersion,
-				"postgres_host":    pg.Host,
-				"source_cluster":   t.Spec.SourceCluster,
-				"verify_cluster":   t.Spec.Name,
+				"backup":              t.Spec.BackupName,
+				"backup_id":           t.Spec.BackupID,
+				"instance_pod":        t.Spec.InstancePodName,
+				"operator_version":    t.controller.instance.OperatorVersion,
+				"plugin":              t.Spec.PluginName,
+				"plugin_version":      t.Spec.PluginVersion,
+				"plugin_object_store": t.Spec.PluginObjectStore,
+				"postgres_host":       pg.Host,
+				"recovery_method":     string(t.Spec.RecoveryMethod),
+				"source_cluster":      t.Spec.SourceCluster,
+				"verify_cluster":      t.Spec.Name,
 			},
 		}},
 		Evidence:  evidence,

@@ -44,11 +44,11 @@ The CLI implements:
 Native and CNPG paths share one lifecycle, cancellation, reconciliation, and
 reporting contract. Shared conformance suites cover every adapter and
 executable target. Reproducible integration harnesses exercise all four native
-providers plus a disposable KinD/CNPG environment through real base backups,
-post-backup WAL replay, probes, policy, and cleanup. The WAL-G gate also kills
-the complete drill process group after durable restore intent, reconciles and
-cleans the interrupted attempt, then requires a passed retry under a new
-attempt ID.
+providers plus separate native and Barman Cloud Plugin KinD/CNPG environments
+through real base backups, post-backup WAL replay, probes, policy, and cleanup.
+The WAL-G gate also kills the complete drill process group after durable
+restore intent, reconciles and cleans the interrupted attempt, then requires a
+passed retry under a new attempt ID.
 
 The compatibility matrix records narrow fixture, controlled, and exact-version
 field evidence. One clean `v0.1.0-alpha.10` commit has passed WAL-G 3.0.8,
@@ -72,6 +72,10 @@ yet. The same is true of the signed archive/OCI supply-chain workflow: its
 implementation is on `main`, but it is not a published support claim until an
 exact tag has completed the workflow and its assets have been independently
 verified.
+Current `main` also implements typed CNPG Barman Cloud Plugin recovery and a
+pinned CNPG 1.29.2 live developer gate. It remains outside the advertised
+compatibility matrix until a reviewed clean-candidate run is deliberately
+promoted.
 Fleet scheduling, leases, remote executors, a controller/agent protocol, TUI,
 and web UI remain roadmap work. They will consume the engine contracts rather
 than become a second orchestration implementation.
@@ -209,6 +213,7 @@ make test-integration-pgbackrest
 make test-integration-pgprobackup
 make test-integration-native
 make test-integration-cnpg
+make test-integration-cnpg-plugin
 ```
 
 `make test-local` combines the normal checks, race detector, CLI smoke, and all
@@ -217,8 +222,8 @@ network-isolated disposable native drills. Their artifacts remain under ignored
 [test/integration](test/integration/README.md) for the evidence boundary.
 
 For a clean release-candidate commit with Docker available, run the complete
-artifact, multi-architecture OCI, lint, native-provider, and disposable CNPG
-gate:
+artifact, multi-architecture OCI, lint, native-provider, and both disposable
+CNPG protocol gates:
 
 ```sh
 make -s release-candidate-check VERSION=v0.3.0-alpha.5
@@ -317,6 +322,8 @@ and CLI/UI direction. Probe configuration is documented in
 [docs/probes.md](docs/probes.md).
 CNPG target verification examples are available in
 [examples/cnpg-target-verify.yaml](examples/cnpg-target-verify.yaml) and
+[examples/cnpg-plugin-target-verify.yaml](examples/cnpg-plugin-target-verify.yaml),
+with the CronJob/RBAC surface in
 [examples/kubernetes/cnpg-target-verify-cronjob.yaml](examples/kubernetes/cnpg-target-verify-cronjob.yaml).
 A local pg_probackup drill example is available in
 [examples/pgprobackup.yaml](examples/pgprobackup.yaml).

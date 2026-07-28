@@ -107,6 +107,191 @@ func TestServicePersistsCheckpointFailureThroughManagedLifecycle(t *testing.T) {
 	}
 }
 
+func TestDiscoverInputsResolvesExactPluginRecoveryContract(t *testing.T) {
+	cfg := config.Config{
+		Target: config.TargetConfig{
+			Type: model.RestoreTargetKubernetes,
+			Kubernetes: config.KubernetesTargetConfig{
+				Namespace: "d003-db",
+			},
+		},
+	}
+	target := config.CNPGTargetConfig{
+		SourceCluster:  "altbox",
+		RecoveryMethod: config.CNPGRecoveryPlugin,
+	}
+	runner := &discoveryRunner{
+		backupJSON: `{
+  "items": [{
+    "metadata": {"name": "altbox-backup-1", "creationTimestamp": "2026-07-21T01:00:00Z"},
+    "spec": {
+      "cluster": {"name": "altbox"},
+      "method": "plugin",
+      "pluginConfiguration": {"name": "barman-cloud.cloudnative-pg.io"}
+    },
+    "status": {
+      "phase": "completed",
+      "backupId": "20260721T010203",
+      "pluginMetadata": {"version": "0.13.0"}
+    }
+  }]
+}`,
+		clusterJSON: `{
+  "spec": {
+    "imageName": "ghcr.io/cloudnative-pg/postgresql:17.5",
+    "plugins": [{
+      "name": "barman-cloud.cloudnative-pg.io",
+      "isWALArchiver": true,
+      "parameters": {"barmanObjectName": "altbox-backups"}
+    }]
+  }
+}`,
+	}
+
+	evidence, err := DiscoverInputs(context.Background(), cfg, &target, runner)
+	if err != nil {
+		t.Fatalf("DiscoverInputs() error = %v", err)
+	}
+	if target.BackupName != "altbox-backup-1" ||
+		target.BackupID != "20260721T010203" ||
+		target.ImageName != "ghcr.io/cloudnative-pg/postgresql:17.5" {
+		t.Fatalf("unexpected discovered backup/image %#v", target)
+	}
+	if target.Plugin.Name != config.DefaultCNPGPluginName ||
+		target.Plugin.ObjectStore != "altbox-backups" ||
+		target.Plugin.ServerName != "altbox" ||
+		target.Plugin.RecoverySource != config.DefaultCNPGRecoverySource {
+		t.Fatalf("unexpected discovered plugin config %#v", target.Plugin)
+	}
+	if target.ObservedPluginVersion != "0.13.0" {
+		t.Fatalf("unexpected observed plugin version %q", target.ObservedPluginVersion)
+	}
+	for _, operation := range []string{
+		"kubectl-discover-cnpg-backups",
+		"kubectl-discover-cnpg-source-plugin",
+		"kubectl-discover-cnpg-source-image",
+	} {
+		if !hasEvidenceOperation(evidence, operation) {
+			t.Fatalf("missing %s evidence: %#v", operation, evidence)
+		}
+	}
+}
+
+func TestDiscoverInputsRejectsConfiguredPluginBackupIDMismatch(t *testing.T) {
+	cfg := config.Config{
+		Target: config.TargetConfig{
+			Type:       model.RestoreTargetKubernetes,
+			Kubernetes: config.KubernetesTargetConfig{Namespace: "d003-db"},
+		},
+	}
+	target := config.CNPGTargetConfig{
+		SourceCluster:  "altbox",
+		RecoveryMethod: config.CNPGRecoveryPlugin,
+		BackupName:     "altbox-backup-1",
+		BackupID:       "configured-different-id",
+		ImageName:      "ghcr.io/cloudnative-pg/postgresql:17.5",
+		Plugin: config.CNPGPluginConfig{
+			ObjectStore: "altbox-backups",
+			ServerName:  "altbox",
+		},
+	}
+	runner := &discoveryRunner{
+		backupJSON: `{
+  "items": [{
+    "metadata": {"name": "altbox-backup-1", "creationTimestamp": "2026-07-21T01:00:00Z"},
+    "spec": {
+      "cluster": {"name": "altbox"},
+      "method": "plugin",
+      "pluginConfiguration": {"name": "barman-cloud.cloudnative-pg.io"}
+    },
+    "status": {"phase": "completed", "backupId": "actual-backup-id"}
+  }]
+}`,
+	}
+
+	evidence, err := DiscoverInputs(context.Background(), cfg, &target, runner)
+	if err == nil || !strings.Contains(err.Error(), "does not match configured backup_id") {
+		t.Fatalf("DiscoverInputs() error = %v, want backup ID mismatch", err)
+	}
+	if !hasEvidenceOperation(evidence, "kubectl-discover-cnpg-backups") {
+		t.Fatalf("backup mismatch lost discovery evidence %#v", evidence)
+	}
+}
+
+func TestDiscoverInputsRejectsConfiguredPluginSourceMismatch(t *testing.T) {
+	cfg := config.Config{
+		Target: config.TargetConfig{
+			Type:       model.RestoreTargetKubernetes,
+			Kubernetes: config.KubernetesTargetConfig{Namespace: "d003-db"},
+		},
+	}
+	target := config.CNPGTargetConfig{
+		SourceCluster:  "altbox",
+		RecoveryMethod: config.CNPGRecoveryPlugin,
+		Plugin: config.CNPGPluginConfig{
+			ObjectStore: "wrong-backups",
+		},
+	}
+	runner := &discoveryRunner{
+		backupJSON: `{
+  "items": [{
+    "metadata": {"name": "altbox-backup-1", "creationTimestamp": "2026-07-21T01:00:00Z"},
+    "spec": {
+      "cluster": {"name": "altbox"},
+      "method": "plugin",
+      "pluginConfiguration": {"name": "barman-cloud.cloudnative-pg.io"}
+    },
+    "status": {"phase": "completed", "backupId": "20260721T010203"}
+  }]
+}`,
+		clusterJSON: `{
+  "spec": {
+    "plugins": [{
+      "name": "barman-cloud.cloudnative-pg.io",
+      "isWALArchiver": true,
+      "parameters": {"barmanObjectName": "altbox-backups"}
+    }]
+  }
+}`,
+	}
+
+	evidence, err := DiscoverInputs(context.Background(), cfg, &target, runner)
+	if err == nil || !strings.Contains(err.Error(), "does not match configured object_store") {
+		t.Fatalf("DiscoverInputs() error = %v, want object store mismatch", err)
+	}
+	if !hasEvidenceOperation(evidence, "kubectl-discover-cnpg-source-plugin") {
+		t.Fatalf("plugin mismatch lost discovery evidence %#v", evidence)
+	}
+}
+
+func TestBackupRetainsObservedPluginMetadata(t *testing.T) {
+	got := backup(config.CNPGTargetConfig{
+		SourceCluster:         "altbox",
+		RecoveryMethod:        config.CNPGRecoveryPlugin,
+		BackupName:            "altbox-backup-1",
+		BackupID:              "20260721T010203",
+		ObservedPluginVersion: "0.13.0",
+		Plugin: config.CNPGPluginConfig{
+			Name:        config.DefaultCNPGPluginName,
+			ObjectStore: "altbox-backups",
+			ServerName:  "altbox",
+		},
+	}, "verify-altbox")
+
+	for key, want := range map[string]string{
+		"cnpg_backup_id":           "20260721T010203",
+		"cnpg_plugin":              config.DefaultCNPGPluginName,
+		"cnpg_plugin_object_store": "altbox-backups",
+		"cnpg_plugin_server":       "altbox",
+		"cnpg_plugin_version":      "0.13.0",
+		"cnpg_recovery_method":     string(config.CNPGRecoveryPlugin),
+	} {
+		if got.Metadata[key] != want {
+			t.Fatalf("backup metadata %s = %q, want %q", key, got.Metadata[key], want)
+		}
+	}
+}
+
 type failingCheckpointStore struct {
 	err error
 }
@@ -126,6 +311,43 @@ func (s failingCheckpointStore) List(context.Context, model.AttemptIdentity) ([]
 type successRunner struct {
 	now   time.Time
 	calls int
+}
+
+type discoveryRunner struct {
+	backupJSON  string
+	clusterJSON string
+}
+
+func (r *discoveryRunner) Run(_ context.Context, inv command.Invocation) (command.Result, error) {
+	stdout := r.clusterJSON
+	if strings.Contains(strings.Join(inv.Args, " "), "backups.postgresql.cnpg.io") {
+		stdout = r.backupJSON
+	}
+	now := time.Date(2026, 7, 21, 8, 0, 0, 0, time.UTC)
+	return command.Result{
+		Raw: command.RawEvidence{
+			Path:   inv.Path,
+			Args:   append([]string{}, inv.Args...),
+			Stdout: []byte(stdout),
+		},
+		Evidence: model.CommandEvidence{
+			Path:       inv.Path,
+			Args:       append([]string{}, inv.Args...),
+			StartedAt:  now,
+			FinishedAt: now,
+			ExitStatus: model.ExitStatus{Started: true, Exited: true, Success: true},
+			Stdout:     stdout,
+		},
+	}, nil
+}
+
+func hasEvidenceOperation(evidence []model.EvidenceRecord, operation string) bool {
+	for _, record := range evidence {
+		if record.Attributes["operation"] == operation {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *successRunner) Run(_ context.Context, inv command.Invocation) (command.Result, error) {

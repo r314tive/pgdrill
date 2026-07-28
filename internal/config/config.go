@@ -22,7 +22,27 @@ const (
 	DefaultKubernetesCommandTimeout = 2 * time.Minute
 	DefaultKubernetesWaitTimeout    = 2 * time.Hour
 	DefaultKubernetesPollInterval   = 5 * time.Second
+	DefaultCNPGPluginName           = "barman-cloud.cloudnative-pg.io"
+	DefaultCNPGRecoverySource       = "source"
 )
+
+type CNPGRecoveryMethod string
+
+const (
+	CNPGRecoveryBackupResource CNPGRecoveryMethod = "backup_resource"
+	CNPGRecoveryPlugin         CNPGRecoveryMethod = "plugin"
+)
+
+func (m CNPGRecoveryMethod) IsKnown() bool {
+	return m == CNPGRecoveryBackupResource || m == CNPGRecoveryPlugin
+}
+
+func (m CNPGRecoveryMethod) Normalized() CNPGRecoveryMethod {
+	if m == "" {
+		return CNPGRecoveryBackupResource
+	}
+	return m
+}
 
 type Config struct {
 	Cluster  ClusterConfig  `json:"cluster" yaml:"cluster"`
@@ -139,18 +159,30 @@ type KubernetesTargetConfig struct {
 }
 
 type CNPGTargetConfig struct {
-	SourceCluster     string `json:"source_cluster,omitempty" yaml:"source_cluster,omitempty"`
-	VerifyClusterName string `json:"verify_cluster_name,omitempty" yaml:"verify_cluster_name,omitempty"`
-	BackupName        string `json:"backup_name,omitempty" yaml:"backup_name,omitempty"`
-	ImageName         string `json:"image_name,omitempty" yaml:"image_name,omitempty"`
-	StorageSize       string `json:"storage_size,omitempty" yaml:"storage_size,omitempty"`
-	StorageClass      string `json:"storage_class,omitempty" yaml:"storage_class,omitempty"`
-	CPURequest        string `json:"cpu_request,omitempty" yaml:"cpu_request,omitempty"`
-	MemoryRequest     string `json:"memory_request,omitempty" yaml:"memory_request,omitempty"`
-	CPULimit          string `json:"cpu_limit,omitempty" yaml:"cpu_limit,omitempty"`
-	MemoryLimit       string `json:"memory_limit,omitempty" yaml:"memory_limit,omitempty"`
-	NodeLabelKey      string `json:"node_label_key,omitempty" yaml:"node_label_key,omitempty"`
-	NodeLabelValue    string `json:"node_label_value,omitempty" yaml:"node_label_value,omitempty"`
+	SourceCluster     string             `json:"source_cluster,omitempty" yaml:"source_cluster,omitempty"`
+	VerifyClusterName string             `json:"verify_cluster_name,omitempty" yaml:"verify_cluster_name,omitempty"`
+	RecoveryMethod    CNPGRecoveryMethod `json:"recovery_method,omitempty" yaml:"recovery_method,omitempty"`
+	BackupName        string             `json:"backup_name,omitempty" yaml:"backup_name,omitempty"`
+	BackupID          string             `json:"backup_id,omitempty" yaml:"backup_id,omitempty"`
+	// ObservedPluginVersion is populated from Backup status during discovery.
+	ObservedPluginVersion string           `json:"-" yaml:"-"`
+	ImageName             string           `json:"image_name,omitempty" yaml:"image_name,omitempty"`
+	StorageSize           string           `json:"storage_size,omitempty" yaml:"storage_size,omitempty"`
+	StorageClass          string           `json:"storage_class,omitempty" yaml:"storage_class,omitempty"`
+	CPURequest            string           `json:"cpu_request,omitempty" yaml:"cpu_request,omitempty"`
+	MemoryRequest         string           `json:"memory_request,omitempty" yaml:"memory_request,omitempty"`
+	CPULimit              string           `json:"cpu_limit,omitempty" yaml:"cpu_limit,omitempty"`
+	MemoryLimit           string           `json:"memory_limit,omitempty" yaml:"memory_limit,omitempty"`
+	NodeLabelKey          string           `json:"node_label_key,omitempty" yaml:"node_label_key,omitempty"`
+	NodeLabelValue        string           `json:"node_label_value,omitempty" yaml:"node_label_value,omitempty"`
+	Plugin                CNPGPluginConfig `json:"plugin,omitempty" yaml:"plugin,omitempty"`
+}
+
+type CNPGPluginConfig struct {
+	Name           string `json:"name,omitempty" yaml:"name,omitempty"`
+	ObjectStore    string `json:"object_store,omitempty" yaml:"object_store,omitempty"`
+	ServerName     string `json:"server_name,omitempty" yaml:"server_name,omitempty"`
+	RecoverySource string `json:"recovery_source,omitempty" yaml:"recovery_source,omitempty"`
 }
 
 type RecoveryConfig struct {
@@ -326,6 +358,17 @@ func (c *Config) Normalize() {
 		setDefaultDuration(&c.Target.Kubernetes.CommandTimeout, DefaultKubernetesCommandTimeout)
 		setDefaultDuration(&c.Target.Kubernetes.WaitTimeout, DefaultKubernetesWaitTimeout)
 		setDefaultDuration(&c.Target.Kubernetes.PollInterval, DefaultKubernetesPollInterval)
+		if c.Target.CNPG.RecoveryMethod == "" {
+			c.Target.CNPG.RecoveryMethod = CNPGRecoveryBackupResource
+		}
+		if c.Target.CNPG.RecoveryMethod == CNPGRecoveryPlugin {
+			if strings.TrimSpace(c.Target.CNPG.Plugin.Name) == "" {
+				c.Target.CNPG.Plugin.Name = DefaultCNPGPluginName
+			}
+			if strings.TrimSpace(c.Target.CNPG.Plugin.RecoverySource) == "" {
+				c.Target.CNPG.Plugin.RecoverySource = DefaultCNPGRecoverySource
+			}
+		}
 	}
 }
 
@@ -404,10 +447,50 @@ func (c Config) validateCommon() error {
 	if err := c.validateNumericSettings(); err != nil {
 		return err
 	}
+	if err := c.validateCNPGSettings(); err != nil {
+		return err
+	}
 	if err := c.validatePaths(); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func (c Config) validateCNPGSettings() error {
+	if c.Target.Type != model.RestoreTargetKubernetes {
+		return nil
+	}
+	method := c.Target.CNPG.RecoveryMethod.Normalized()
+	if !method.IsKnown() {
+		return fmt.Errorf("target.cnpg.recovery_method %q is unsupported", method)
+	}
+	if strings.TrimSpace(c.Target.CNPG.BackupID) != "" &&
+		strings.TrimSpace(c.Target.CNPG.BackupName) == "" {
+		return fmt.Errorf("target.cnpg.backup_id requires target.cnpg.backup_name")
+	}
+
+	plugin := c.Target.CNPG.Plugin
+	hasPluginConfig := strings.TrimSpace(plugin.Name) != "" ||
+		strings.TrimSpace(plugin.ObjectStore) != "" ||
+		strings.TrimSpace(plugin.ServerName) != "" ||
+		strings.TrimSpace(plugin.RecoverySource) != ""
+	switch method {
+	case CNPGRecoveryBackupResource:
+		if strings.TrimSpace(c.Target.CNPG.BackupID) != "" {
+			return fmt.Errorf("target.cnpg.backup_id is valid only for plugin recovery")
+		}
+		if hasPluginConfig {
+			return fmt.Errorf("target.cnpg.plugin is valid only for plugin recovery")
+		}
+	case CNPGRecoveryPlugin:
+		if strings.TrimSpace(plugin.Name) == "" {
+			return fmt.Errorf("target.cnpg.plugin.name is required for plugin recovery")
+		}
+		if strings.TrimSpace(plugin.RecoverySource) == "" {
+			return fmt.Errorf("target.cnpg.plugin.recovery_source is required for plugin recovery")
+		}
+	}
 	return nil
 }
 

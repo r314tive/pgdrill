@@ -1,14 +1,20 @@
 # Disposable CloudNativePG Integration Drill
 
-This scenario creates an isolated KinD cluster, installs a checksum-pinned
-CloudNativePG 1.26.3 manifest, starts PostgreSQL 15.17 with a disposable MinIO
-repository, takes a real CNPG backup, commits a post-backup WAL sentinel, and
-runs `pgdrill target verify` against the temporary cluster.
+This directory contains two isolated KinD scenarios:
+
+- CloudNativePG 1.26.3 using the native `barmanObjectStore` recovery API
+- CloudNativePG 1.29.2 using Barman Cloud Plugin 0.13.0 and cert-manager 1.21.0
+
+Both start PostgreSQL 15.17 with a disposable MinIO repository, take a real
+CNPG backup, commit a post-backup WAL sentinel, and run
+`pgdrill target verify` against the temporary cluster.
 
 The drill proves, within this exact local topology:
 
 - discovery of the latest completed CNPG `Backup` and source image
-- operator-managed recovery through `barmanObjectStore`
+- operator-managed recovery through the selected native or plugin protocol
+- exact Barman `status.backupId` binding and source-plugin discovery in plugin
+  mode
 - replay of a transaction committed after the base backup
 - structured CloudNativePG operator-version evidence
 - in-pod PostgreSQL and probe-client version checks
@@ -17,14 +23,13 @@ The drill proves, within this exact local topology:
 - ownership-scoped Cluster and PVC cleanup
 - persisted ordered history with a matching passed report and terminal event
 
-This exact CNPG 1.26.3 scenario uses the native `barmanObjectStore` API. The
-operator reports that path as deprecated and scheduled for removal in CNPG
-1.29. pgdrill therefore makes no adjacent-version claim: Barman Cloud Plugin
-discovery, recovery manifest generation, and cleanup require a separate
-implementation and compatibility gate before newer CNPG versions are
-advertised.
+The CNPG 1.26.3 scenario uses the native `barmanObjectStore` API. The operator
+reports that path as deprecated and scheduled for removal in CNPG 1.31 as of
+CNPG 1.29.2. The plugin scenario is a separate pinned gate; neither result is
+silently extended to adjacent versions.
 
-It requires Docker with Linux containers, `curl`, `git`, Go, and `jq`.
+It requires Docker with BuildKit and Linux containers, `curl`, `git`, Go, and
+`jq`.
 Checksum-pinned KinD and kubectl binaries are downloaded into the ignored
 `.cache/integration/cnpg` tree when absent. Container-image inputs use immutable
 multi-platform digests. The harness verifies the selected platform image and
@@ -34,16 +39,17 @@ with network pulls disabled. This avoids Docker Desktop exporting an
 incomplete multi-platform index through KinD's default all-platform import
 while retaining the digest-to-runtime-image mapping in `runtime.txt`.
 
-Run it with:
+Run the native or plugin protocol with:
 
 ```sh
 make test-integration-cnpg
+make test-integration-cnpg-plugin
 ```
 
 Set `PGDRILL_INTEGRATION_VERSION` to bind a clean run to a candidate version.
 Set `PGDRILL_INTEGRATION_REQUIRE_CLEAN=true` to reject a dirty source tree.
 `make release-candidate-check VERSION=v0.3.0-alpha.1` applies both settings and
-runs this scenario after the release and native-provider gates.
+runs both scenarios after the release and native-provider gates.
 
 The script never uses the host's active Kubernetes context for mutations.
 KinD receives a dedicated kubeconfig, the generated cluster name is unique, and
@@ -57,6 +63,7 @@ artifacts are retained under:
 
 ```text
 .cache/integration/cnpg/runs/<timestamp>/
+.cache/integration/cnpg/plugin/runs/<timestamp>/
 ```
 
 The retained set includes full and text history views, a bounded history list,

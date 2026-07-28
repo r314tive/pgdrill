@@ -577,6 +577,9 @@ target:
 	if cfg.Target.CNPG.SourceCluster != "altbox" || cfg.Target.CNPG.BackupName != "altbox-backup-20260707" {
 		t.Fatalf("unexpected cnpg config %#v", cfg.Target.CNPG)
 	}
+	if cfg.Target.CNPG.RecoveryMethod != CNPGRecoveryBackupResource {
+		t.Fatalf("unexpected CNPG recovery method %q", cfg.Target.CNPG.RecoveryMethod)
+	}
 	if cfg.Target.CNPG.VerifyClusterName != "verify-altbox-manual" {
 		t.Fatalf("unexpected verify cluster name %q", cfg.Target.CNPG.VerifyClusterName)
 	}
@@ -591,6 +594,93 @@ target:
 	}
 	if cfg.Target.CNPG.NodeLabelKey != "node-role.kubernetes.io/database" || cfg.Target.CNPG.NodeLabelValue != "true" {
 		t.Fatalf("unexpected cnpg node selector %#v", cfg.Target.CNPG)
+	}
+}
+
+func TestLoadKubernetesCNPGPluginRecoveryConfig(t *testing.T) {
+	cfg, err := LoadTarget(strings.NewReader(`
+target:
+  type: kubernetes
+  kubernetes:
+    namespace: d003-db
+  cnpg:
+    source_cluster: altbox
+    recovery_method: plugin
+    backup_name: altbox-backup-20260707
+    backup_id: 20260707T010203
+    image_name: ghcr.io/cloudnative-pg/postgresql:18
+    plugin:
+      object_store: altbox-backups
+      server_name: altbox
+recovery:
+  target: latest
+`), "yaml")
+	if err != nil {
+		t.Fatalf("load plugin config: %v", err)
+	}
+
+	cnpg := cfg.Target.CNPG
+	if cnpg.RecoveryMethod != CNPGRecoveryPlugin {
+		t.Fatalf("recovery method = %q, want plugin", cnpg.RecoveryMethod)
+	}
+	if cnpg.BackupID != "20260707T010203" {
+		t.Fatalf("backup id = %q", cnpg.BackupID)
+	}
+	if cnpg.Plugin.Name != DefaultCNPGPluginName {
+		t.Fatalf("plugin name = %q", cnpg.Plugin.Name)
+	}
+	if cnpg.Plugin.RecoverySource != DefaultCNPGRecoverySource {
+		t.Fatalf("recovery source = %q", cnpg.Plugin.RecoverySource)
+	}
+	if cnpg.Plugin.ObjectStore != "altbox-backups" || cnpg.Plugin.ServerName != "altbox" {
+		t.Fatalf("plugin config = %#v", cnpg.Plugin)
+	}
+}
+
+func TestLoadKubernetesCNPGRecoveryMethodValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "unknown method",
+			body: "recovery_method: future",
+			want: "recovery_method",
+		},
+		{
+			name: "backup id without name",
+			body: "recovery_method: plugin\n    backup_id: 20260707T010203",
+			want: "backup_id requires",
+		},
+		{
+			name: "plugin fields in backup resource mode",
+			body: "recovery_method: backup_resource\n    plugin:\n      object_store: backups",
+			want: "valid only for plugin",
+		},
+		{
+			name: "backup id in backup resource mode",
+			body: "recovery_method: backup_resource\n    backup_name: backup\n    backup_id: 20260707T010203",
+			want: "backup_id is valid only",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := LoadTarget(strings.NewReader(`
+target:
+  type: kubernetes
+  kubernetes:
+    namespace: d003-db
+  cnpg:
+    source_cluster: altbox
+    `+test.body+`
+recovery:
+  target: latest
+`), "yaml")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("LoadTarget() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

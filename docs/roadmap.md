@@ -108,8 +108,8 @@ Status: implemented and field-exercised in disposable CNPG 1.26.0 /
 PostgreSQL 15.13 and CNPG 1.26.3 / PostgreSQL 15.17 environments. Both exact
 observations are recorded in the versioned evidence matrix; broader field
 coverage remains pending. The current path is the native `barmanObjectStore`
-API; CNPG reports it as deprecated for removal in 1.29, so Barman Cloud Plugin
-support is a separate required implementation/evidence cell rather than an
+API; CNPG deprecates it and currently schedules removal for 1.31, so Barman
+Cloud Plugin support is a separate implementation/evidence cell rather than an
 inferred continuation of the 1.26 result.
 
 - CNPG verify-cluster name generation and manifest primitives.
@@ -118,6 +118,11 @@ inferred continuation of the 1.26 result.
   semantics.
 - `kubectl` compatibility client behind the CNPG lifecycle interface.
 - CNPG `kubectl` discovery for latest completed `Backup` and source image.
+- Typed Barman Cloud Plugin recovery manifests with exact Barman backup-ID
+  selection, source-plugin parameter discovery, and mismatch rejection.
+- A checksum- and digest-pinned CNPG 1.29.2 / Barman Cloud Plugin 0.13.0 live
+  KinD gate with real object storage, post-backup WAL replay, probes, history,
+  artifact verification, and cleanup.
 - Source-image fallback through the source pod's `postgres` container.
 - Read-only CNPG manifest discovery through `pgdrill target manifest -discover`.
 - Guarded CNPG target verification through `pgdrill target verify`.
@@ -147,8 +152,11 @@ inferred continuation of the 1.26 result.
 
 Remaining compatibility extension:
 
-- Barman Cloud Plugin discovery and recovery-manifest support before claiming
-  CNPG versions where native `barmanObjectStore` is removed.
+- Bind the Barman Cloud Plugin drill to an exact clean release candidate,
+  review its retained evidence, and deliberately promote supported cells before
+  advertising the CNPG 1.29.x path. CNPG 1.29.2 schedules native in-tree
+  Barman Cloud removal for 1.31.0, but implementation or a dirty developer run
+  is not compatibility evidence.
 
 ## Phase 4: More Providers And Probes
 
@@ -237,14 +245,15 @@ Completed foundation:
 - Shared host-side integration mechanics for deterministic release archives,
   explicit dirty builds, rootless network-isolated Docker execution, and
   recursive artifact checksums, while provider semantics remain separate.
-- A checksum-pinned KinD/Kubernetes/CNPG/PostgreSQL/MinIO integration drill
-  that uses an isolated kubeconfig, loads digest-validated platform images,
-  creates a real object-store backup, requires post-backup WAL replay and
-  in-pod server/client checks, verifies owned cleanup, removes ephemeral
-  kubeconfig state, and retains checksummed artifacts.
+- Separate checksum-pinned native and Barman Cloud Plugin
+  KinD/Kubernetes/CNPG/PostgreSQL/MinIO integration drills that use isolated
+  kubeconfigs, load digest-validated platform images, create real object-store
+  backups, require post-backup WAL replay and in-pod server/client checks,
+  verify owned cleanup, remove ephemeral kubeconfig state, and retain
+  checksummed artifacts.
 - A clean-tree `release-candidate-check` that runs the deterministic release
-  gate, ShellCheck, all four native-provider drills, and the disposable CNPG
-  drill with one version and full Git commit.
+  gate, ShellCheck, all four native-provider drills, and both disposable CNPG
+  protocol drills with one version and full Git commit.
 - A deterministic real WAL-G executor-loss gate that sends `SIGKILL` to the
   complete drill process group after durable restore intent, preserves
   incomplete history, applies digest-confirmed observation-only recovery,
@@ -435,8 +444,8 @@ verification. Every future release requires the same gates.
 - Cross-host checksum parity between all four local release archives and the
   corresponding published `v0.2.0-rc.2` assets.
 - One clean-tree aggregate candidate command binding release archives, the
-  verified multi-architecture OCI layout, all four native drills, and
-  disposable CNPG to the same version and commit.
+  verified multi-architecture OCI layout, all four native drills, and both
+  disposable CNPG protocol drills to the same version and commit.
 - Dependabot, contribution, security, compatibility, issue, and pull request
   policies.
 
