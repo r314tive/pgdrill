@@ -1,0 +1,278 @@
+{
+  "schema_version": "pgdrill.doctor/v1",
+  "pgdrill_version": "pgdrill v0.3.0-alpha.14 (7b074550c5b96b7565a3dc4285d7006bb04de135, 2026-07-28T03:56:25Z)",
+  "cluster": "integration-pgprobackup-postgresql-pitr",
+  "provider": "pg_probackup",
+  "target": "local",
+  "status": "passed",
+  "started_at": "2026-07-28T04:00:29.117657426Z",
+  "finished_at": "2026-07-28T04:00:29.124359384Z",
+  "checks": [
+    {
+      "name": "tool.pg_probackup",
+      "status": "passed",
+      "message": "pg_probackup 2.5.16 (PostgreSQL 17.10)",
+      "evidence_ids": [
+        "doctor:pg_probackup:0:2026-07-28T04:00:29.118789676Z"
+      ],
+      "attributes": {
+        "binary": "pg_probackup",
+        "components": "provider.pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "tool": "pg_probackup",
+        "version": "pg_probackup 2.5.16 (PostgreSQL 17.10)"
+      }
+    },
+    {
+      "name": "tool.postgres",
+      "status": "passed",
+      "message": "postgres (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:postgres:1:2026-07-28T04:00:29.120263509Z"
+      ],
+      "attributes": {
+        "binary": "postgres",
+        "components": "target.local",
+        "resolved_path": "/opt/postgresql/bin/postgres",
+        "tool": "postgres",
+        "version": "postgres (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.pg_isready",
+      "status": "passed",
+      "message": "pg_isready (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:pg_isready:2:2026-07-28T04:00:29.120984926Z"
+      ],
+      "attributes": {
+        "binary": "pg_isready",
+        "components": "probe.pg_isready",
+        "resolved_path": "/opt/postgresql/bin/pg_isready",
+        "tool": "pg_isready",
+        "version": "pg_isready (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.psql",
+      "status": "passed",
+      "message": "psql (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:psql:3:2026-07-28T04:00:29.122142926Z"
+      ],
+      "attributes": {
+        "binary": "psql",
+        "components": "probe.timestamp_boundary_replayed",
+        "resolved_path": "/opt/postgresql/bin/psql",
+        "tool": "psql",
+        "version": "psql (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.pg_amcheck",
+      "status": "passed",
+      "message": "pg_amcheck (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:pg_amcheck:4:2026-07-28T04:00:29.123363926Z"
+      ],
+      "attributes": {
+        "binary": "pg_amcheck",
+        "components": "probe.structural_amcheck",
+        "resolved_path": "/opt/postgresql/bin/pg_amcheck",
+        "tool": "pg_amcheck",
+        "version": "pg_amcheck (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.pg_dump",
+      "status": "passed",
+      "message": "pg_dump (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:pg_dump:5:2026-07-28T04:00:29.124345801Z"
+      ],
+      "attributes": {
+        "binary": "pg_dump",
+        "components": "probe.schema_dump",
+        "resolved_path": "/opt/postgresql/bin/pg_dump",
+        "tool": "pg_dump",
+        "version": "pg_dump (PostgreSQL) 17.10"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "doctor:pg_probackup:0:2026-07-28T04:00:29.118789676Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:29.118789676Z",
+      "command": {
+        "path": "pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "args": [
+          "version"
+        ],
+        "started_at": "2026-07-28T04:00:29.117713801Z",
+        "finished_at": "2026-07-28T04:00:29.118789676Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_probackup 2.5.16 (PostgreSQL 17.10)\n",
+        "stdout_bytes": 39
+      },
+      "attributes": {
+        "components": "provider.pg_probackup",
+        "operation": "version",
+        "tool": "pg_probackup"
+      }
+    },
+    {
+      "id": "doctor:postgres:1:2026-07-28T04:00:29.120263509Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:29.120263509Z",
+      "command": {
+        "path": "postgres",
+        "resolved_path": "/opt/postgresql/bin/postgres",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:29.118818843Z",
+        "finished_at": "2026-07-28T04:00:29.120263509Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "postgres (PostgreSQL) 17.10\n",
+        "stdout_bytes": 28
+      },
+      "attributes": {
+        "components": "target.local",
+        "operation": "version",
+        "tool": "postgres"
+      }
+    },
+    {
+      "id": "doctor:pg_isready:2:2026-07-28T04:00:29.120984926Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:29.120984926Z",
+      "command": {
+        "path": "pg_isready",
+        "resolved_path": "/opt/postgresql/bin/pg_isready",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:29.120288759Z",
+        "finished_at": "2026-07-28T04:00:29.120984926Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_isready (PostgreSQL) 17.10\n",
+        "stdout_bytes": 30
+      },
+      "attributes": {
+        "components": "probe.pg_isready",
+        "operation": "version",
+        "tool": "pg_isready"
+      }
+    },
+    {
+      "id": "doctor:psql:3:2026-07-28T04:00:29.122142926Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:29.122142926Z",
+      "command": {
+        "path": "psql",
+        "resolved_path": "/opt/postgresql/bin/psql",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:29.121001676Z",
+        "finished_at": "2026-07-28T04:00:29.122142926Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "psql (PostgreSQL) 17.10\n",
+        "stdout_bytes": 24
+      },
+      "attributes": {
+        "components": "probe.timestamp_boundary_replayed",
+        "operation": "version",
+        "tool": "psql"
+      }
+    },
+    {
+      "id": "doctor:pg_amcheck:4:2026-07-28T04:00:29.123363926Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:29.123363926Z",
+      "command": {
+        "path": "pg_amcheck",
+        "resolved_path": "/opt/postgresql/bin/pg_amcheck",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:29.122171176Z",
+        "finished_at": "2026-07-28T04:00:29.123363926Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_amcheck (PostgreSQL) 17.10\n",
+        "stdout_bytes": 30
+      },
+      "attributes": {
+        "components": "probe.structural_amcheck",
+        "operation": "version",
+        "tool": "pg_amcheck"
+      }
+    },
+    {
+      "id": "doctor:pg_dump:5:2026-07-28T04:00:29.124345801Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:29.124345801Z",
+      "command": {
+        "path": "pg_dump",
+        "resolved_path": "/opt/postgresql/bin/pg_dump",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:29.123431801Z",
+        "finished_at": "2026-07-28T04:00:29.124345801Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_dump (PostgreSQL) 17.10\n",
+        "stdout_bytes": 27
+      },
+      "attributes": {
+        "components": "probe.schema_dump",
+        "operation": "version",
+        "tool": "pg_dump"
+      }
+    }
+  ]
+}

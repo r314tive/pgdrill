@@ -1,0 +1,282 @@
+{
+  "schema_version": "pgdrill.doctor/v1",
+  "pgdrill_version": "pgdrill v0.3.0-alpha.14 (7b074550c5b96b7565a3dc4285d7006bb04de135, 2026-07-28T03:56:25Z)",
+  "cluster": "integration-walg-postgresql",
+  "provider": "wal-g",
+  "target": "local",
+  "status": "passed",
+  "started_at": "2026-07-28T03:59:21.990832631Z",
+  "finished_at": "2026-07-28T03:59:22.058499673Z",
+  "checks": [
+    {
+      "name": "tool.wal-g",
+      "status": "passed",
+      "message": "wal-g version v3.0.8 f81943e 2026.01.21_14:32:41 PostgreSQL",
+      "evidence_ids": [
+        "doctor:wal-g:0:2026-07-28T03:59:22.048701673Z"
+      ],
+      "attributes": {
+        "binary": "/opt/pgdrill/bin/wal-g",
+        "components": "provider.wal-g",
+        "resolved_path": "/opt/pgdrill/bin/wal-g",
+        "tool": "wal-g",
+        "version": "wal-g version v3.0.8 f81943e 2026.01.21_14:32:41 PostgreSQL"
+      }
+    },
+    {
+      "name": "tool.postgres",
+      "status": "passed",
+      "message": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:postgres:1:2026-07-28T03:59:22.052224464Z"
+      ],
+      "attributes": {
+        "binary": "postgres",
+        "components": "target.local",
+        "resolved_path": "/usr/lib/postgresql/17/bin/postgres",
+        "tool": "postgres",
+        "version": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_isready",
+      "status": "passed",
+      "message": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_isready:2:2026-07-28T03:59:22.053746006Z"
+      ],
+      "attributes": {
+        "binary": "pg_isready",
+        "components": "probe.pg_isready",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_isready",
+        "tool": "pg_isready",
+        "version": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.psql",
+      "status": "passed",
+      "message": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:psql:3:2026-07-28T03:59:22.055303131Z"
+      ],
+      "attributes": {
+        "binary": "psql",
+        "components": "probe.post_backup_wal_replayed",
+        "resolved_path": "/usr/lib/postgresql/17/bin/psql",
+        "tool": "psql",
+        "version": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_amcheck",
+      "status": "passed",
+      "message": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_amcheck:4:2026-07-28T03:59:22.056768048Z"
+      ],
+      "attributes": {
+        "binary": "pg_amcheck",
+        "components": "probe.structural_amcheck",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_amcheck",
+        "tool": "pg_amcheck",
+        "version": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_dump",
+      "status": "passed",
+      "message": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_dump:5:2026-07-28T03:59:22.058490089Z"
+      ],
+      "attributes": {
+        "binary": "pg_dump",
+        "components": "probe.schema_dump",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_dump",
+        "tool": "pg_dump",
+        "version": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "doctor:wal-g:0:2026-07-28T03:59:22.048701673Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:22.048701673Z",
+      "command": {
+        "path": "/opt/pgdrill/bin/wal-g",
+        "resolved_path": "/opt/pgdrill/bin/wal-g",
+        "args": [
+          "--version"
+        ],
+        "env": {
+          "WALG_COMPRESSION_METHOD": "lz4",
+          "WALG_FILE_PREFIX": "/validation/repository"
+        },
+        "started_at": "2026-07-28T03:59:21.990846756Z",
+        "finished_at": "2026-07-28T03:59:22.048701673Z",
+        "duration_millis": 57,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "wal-g version v3.0.8\tf81943e\t2026.01.21_14:32:41\tPostgreSQL\n",
+        "stdout_bytes": 60
+      },
+      "attributes": {
+        "components": "provider.wal-g",
+        "operation": "version",
+        "tool": "wal-g"
+      }
+    },
+    {
+      "id": "doctor:postgres:1:2026-07-28T03:59:22.052224464Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:22.052224464Z",
+      "command": {
+        "path": "postgres",
+        "resolved_path": "/usr/lib/postgresql/17/bin/postgres",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:22.048766256Z",
+        "finished_at": "2026-07-28T03:59:22.052224464Z",
+        "duration_millis": 3,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 54
+      },
+      "attributes": {
+        "components": "target.local",
+        "operation": "version",
+        "tool": "postgres"
+      }
+    },
+    {
+      "id": "doctor:pg_isready:2:2026-07-28T03:59:22.053746006Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:22.053746006Z",
+      "command": {
+        "path": "pg_isready",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_isready",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:22.052274214Z",
+        "finished_at": "2026-07-28T03:59:22.053746006Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 56
+      },
+      "attributes": {
+        "components": "probe.pg_isready",
+        "operation": "version",
+        "tool": "pg_isready"
+      }
+    },
+    {
+      "id": "doctor:psql:3:2026-07-28T03:59:22.055303131Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:22.055303131Z",
+      "command": {
+        "path": "psql",
+        "resolved_path": "/usr/lib/postgresql/17/bin/psql",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:22.053765089Z",
+        "finished_at": "2026-07-28T03:59:22.055303131Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 50
+      },
+      "attributes": {
+        "components": "probe.post_backup_wal_replayed",
+        "operation": "version",
+        "tool": "psql"
+      }
+    },
+    {
+      "id": "doctor:pg_amcheck:4:2026-07-28T03:59:22.056768048Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:22.056768048Z",
+      "command": {
+        "path": "pg_amcheck",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_amcheck",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:22.055341214Z",
+        "finished_at": "2026-07-28T03:59:22.056768048Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 56
+      },
+      "attributes": {
+        "components": "probe.structural_amcheck",
+        "operation": "version",
+        "tool": "pg_amcheck"
+      }
+    },
+    {
+      "id": "doctor:pg_dump:5:2026-07-28T03:59:22.058490089Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:22.058490089Z",
+      "command": {
+        "path": "pg_dump",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_dump",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:22.056825589Z",
+        "finished_at": "2026-07-28T03:59:22.058490089Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 53
+      },
+      "attributes": {
+        "components": "probe.schema_dump",
+        "operation": "version",
+        "tool": "pg_dump"
+      }
+    }
+  ]
+}

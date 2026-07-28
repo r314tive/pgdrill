@@ -203,6 +203,38 @@ This closes one S3-compatible object-storage observation, not a support claim
 for Amazon S3, Yandex Object Storage, other implementations, TLS/IAM modes,
 Linux amd64, or production RTO. The candidate was not published or signed.
 
+### v0.3.0-alpha.14 PostgreSQL 17.10 Gate
+
+On 2026-07-28, the exact clean commit
+`7b074550c5b96b7565a3dc4285d7006bb04de135` completed latest and inclusive
+timestamp drills with WAL-G 3.0.8, Barman 3.19.1, pgBackRest 2.58.0, and
+pg_probackup 2.5.16 against PostgreSQL 17.10 on native Linux arm64. All eight
+restore points used the deterministic Go 1.26.5-built
+`v0.3.0-alpha.14` candidate archive with SHA-256
+`f8dc6a2fffd5b9254006ab1b0a48e2f8f51229faa8f8a8598979d48963d5649f`.
+
+Every latest drill recovered row 101 committed and archived after the full
+backup. Every timestamp drill retained that transaction and excluded archived
+row 102 committed after the requested target. Provider-native backup,
+catalog, repository, manifest, archive, or WAL validation as applicable,
+PostgreSQL startup, the exact SQL boundary, `pg_amcheck`, schema-only
+`pg_dump`, all required policy verdicts, durable history verification, and
+owned cleanup passed. The WAL-G run also proved interrupted-attempt
+reconciliation and a clean retry.
+
+The exact reports, configurations, runtime and source inventories,
+provider-native logs, limitations, and checksums are retained under:
+
+- [`compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14`](../compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md)
+- [`compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14`](../compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md)
+- [`compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14`](../compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md)
+- [`compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14`](../compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md)
+
+This closes one second-PostgreSQL-major evidence point for each native
+provider. It does not establish a PostgreSQL version range, another 17.x
+patch release, native Linux amd64, remote repositories, production RTO, or a
+published-artifact claim. The candidate archive was not published or signed.
+
 ### WAL-G Field Validation
 
 On 2026-07-21, pgdrill `v0.1.0-dev` at commit

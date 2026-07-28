@@ -60,8 +60,12 @@ PostgreSQL 18.3 on Linux arm64, plus CNPG 1.26.3 / PostgreSQL 15.17 in a
 disposable KinD environment. Current `main` exercises timestamp PITR for all
 four native providers and retains exact clean-candidate latest/timestamp field
 evidence for each. The matrix also records one WAL-G S3-compatible MinIO point
-from `v0.3.0-alpha.12` on Linux arm64. Other versions, object stores,
-platforms, and recovery targets remain unclaimed until separately exercised.
+from `v0.3.0-alpha.12` on Linux arm64. A clean `v0.3.0-alpha.14` candidate
+additionally passed latest and timestamp recovery with all four native
+providers against PostgreSQL 17.10 on Linux arm64. These are exact
+version/platform points, not a blanket PostgreSQL support range. Other
+versions, object stores, platforms, and recovery targets remain unclaimed
+until separately exercised.
 
 The exact `v0.2.0-rc.2` commit
 `97ad852ecb2c9493c1c4a1e7718f61bf496efa17` passed the clean aggregate

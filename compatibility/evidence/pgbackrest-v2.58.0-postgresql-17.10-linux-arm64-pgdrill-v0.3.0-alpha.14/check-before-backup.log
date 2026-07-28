@@ -1,0 +1,5 @@
+2026-07-28 04:00:00.563 P00   INFO: check command begin 2.58.0: --config=/opt/pgdrill/test/pgbackrest.conf --exec-id=56-cbbe7a8b --log-level-console=info --log-level-file=off --log-path=/validation/log --pg1-path=/validation/source-data --pg1-port=55431 --pg1-socket-path=/validation/source-socket --repo1-path=/validation/repository --stanza=integration
+2026-07-28 04:00:00.566 P00   INFO: check repo1 configuration (primary)
+2026-07-28 04:00:00.568 P00   INFO: check repo1 archive for WAL (primary)
+2026-07-28 04:00:00.670 P00   INFO: WAL segment 000000010000000000000001 successfully archived to '/validation/repository/archive/integration/17-1/0000000100000000/000000010000000000000001-d6e5160bb41c7309055276eb47da8a493e233993.gz' on repo1
+2026-07-28 04:00:00.670 P00   INFO: check command end: completed successfully (109ms)

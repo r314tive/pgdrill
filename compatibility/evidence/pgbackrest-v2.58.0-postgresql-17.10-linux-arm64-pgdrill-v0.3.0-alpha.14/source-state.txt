@@ -1,0 +1,10 @@
+pgdrill=pgdrill v0.3.0-alpha.14 (7b074550c5b96b7565a3dc4285d7006bb04de135, 2026-07-28T03:56:25Z)
+pgbackrest=pgBackRest 2.58.0
+postgresql=postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)
+latest_recovery_source_rows=101
+timestamp_recovery_target=2026-07-28T04:00:01.679833Z
+source_rows_after_target=102
+backup_label=20260728-040000F
+sentinel_wal=000000010000000000000004
+post_target_wal=000000010000000000000007
+[{"archive":[{"database":{"id":1,"repo-key":1},"id":"17-1","max":"000000010000000000000009","min":"000000010000000000000001"}],"backup":[{"archive":{"start":"000000010000000000000003","stop":"000000010000000000000003"},"backrest":{"format":5,"version":"2.58.0"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":23266419,"repository":{"delta":3012018,"size":3012018},"size":23266419},"label":"20260728-040000F","lsn":{"start":"0/3000028","stop":"0/3000120"},"prior":null,"reference":null,"timestamp":{"start":1785211200,"stop":1785211201},"type":"full"}],"cipher":"none","db":[{"id":1,"repo-key":1,"system-id":7667423721480896543,"version":"17"}],"name":"integration","repo":[{"cipher":"none","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]

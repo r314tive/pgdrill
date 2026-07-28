@@ -1,0 +1,54 @@
+{
+  "cluster": "integration-barman-postgresql",
+  "provider": "barman",
+  "backup_count": 1,
+  "backups": [
+    {
+      "id": "barman:integration/20260728T035944",
+      "provider": "barman",
+      "provider_id": "integration/20260728T035944",
+      "cluster_name": "integration",
+      "kind": "full",
+      "status": "available",
+      "finished_at": "2026-07-28T03:59:44Z",
+      "wal_range": {}
+    }
+  ],
+  "evidence": [
+    {
+      "id": "barman:list-backups:2026-07-28T03:59:46.264854878Z",
+      "kind": "command",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.264854878Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "--format",
+          "json",
+          "list-backups",
+          "integration"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.19977267Z",
+        "finished_at": "2026-07-28T03:59:46.264854878Z",
+        "duration_millis": 65,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "{\"integration\": [{\"backup_id\": \"20260728T035944\", \"backup_type\": \"rsync\", \"end_time\": \"Tue Jul 28 03:59:44 2026\", \"end_time_timestamp\": \"1785211184\", \"retention_status\": \"-\", \"size\": \"38.2 MiB\", \"size_bytes\": 40043623, \"status\": \"DONE\", \"wal_size\": \"16.0 MiB\", \"wal_size_bytes\": 16777216}]}",
+        "stdout_bytes": 290
+      },
+      "attributes": {
+        "operation": "list-backups"
+      }
+    }
+  ]
+}

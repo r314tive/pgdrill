@@ -1,0 +1,281 @@
+{
+  "schema_version": "pgdrill.doctor/v1",
+  "pgdrill_version": "pgdrill v0.3.0-alpha.14 (7b074550c5b96b7565a3dc4285d7006bb04de135, 2026-07-28T03:56:25Z)",
+  "cluster": "integration-pgbackrest-postgresql",
+  "provider": "pgbackrest",
+  "target": "local",
+  "status": "passed",
+  "started_at": "2026-07-28T04:00:01.685657094Z",
+  "finished_at": "2026-07-28T04:00:01.699012427Z",
+  "checks": [
+    {
+      "name": "tool.pgbackrest",
+      "status": "passed",
+      "message": "pgBackRest 2.58.0",
+      "evidence_ids": [
+        "doctor:pgbackrest:0:2026-07-28T04:00:01.688090344Z"
+      ],
+      "attributes": {
+        "binary": "/usr/bin/pgbackrest",
+        "components": "provider.pgbackrest",
+        "resolved_path": "/usr/bin/pgbackrest",
+        "tool": "pgbackrest",
+        "version": "pgBackRest 2.58.0"
+      }
+    },
+    {
+      "name": "tool.postgres",
+      "status": "passed",
+      "message": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:postgres:1:2026-07-28T04:00:01.691974261Z"
+      ],
+      "attributes": {
+        "binary": "postgres",
+        "components": "target.local",
+        "resolved_path": "/usr/lib/postgresql/17/bin/postgres",
+        "tool": "postgres",
+        "version": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_isready",
+      "status": "passed",
+      "message": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_isready:2:2026-07-28T04:00:01.693810886Z"
+      ],
+      "attributes": {
+        "binary": "pg_isready",
+        "components": "probe.pg_isready",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_isready",
+        "tool": "pg_isready",
+        "version": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.psql",
+      "status": "passed",
+      "message": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:psql:3:2026-07-28T04:00:01.695756761Z"
+      ],
+      "attributes": {
+        "binary": "psql",
+        "components": "probe.post_backup_wal_replayed",
+        "resolved_path": "/usr/lib/postgresql/17/bin/psql",
+        "tool": "psql",
+        "version": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_amcheck",
+      "status": "passed",
+      "message": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_amcheck:4:2026-07-28T04:00:01.697242011Z"
+      ],
+      "attributes": {
+        "binary": "pg_amcheck",
+        "components": "probe.structural_amcheck",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_amcheck",
+        "tool": "pg_amcheck",
+        "version": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_dump",
+      "status": "passed",
+      "message": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_dump:5:2026-07-28T04:00:01.699000594Z"
+      ],
+      "attributes": {
+        "binary": "pg_dump",
+        "components": "probe.schema_dump",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_dump",
+        "tool": "pg_dump",
+        "version": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "doctor:pgbackrest:0:2026-07-28T04:00:01.688090344Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:01.688090344Z",
+      "command": {
+        "path": "/usr/bin/pgbackrest",
+        "resolved_path": "/usr/bin/pgbackrest",
+        "args": [
+          "version"
+        ],
+        "env": {
+          "PGBACKREST_CONFIG": "/opt/pgdrill/test/pgbackrest.conf"
+        },
+        "started_at": "2026-07-28T04:00:01.685668469Z",
+        "finished_at": "2026-07-28T04:00:01.688090344Z",
+        "duration_millis": 2,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pgBackRest 2.58.0\n",
+        "stdout_bytes": 18
+      },
+      "attributes": {
+        "components": "provider.pgbackrest",
+        "operation": "version",
+        "tool": "pgbackrest"
+      }
+    },
+    {
+      "id": "doctor:postgres:1:2026-07-28T04:00:01.691974261Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:01.691974261Z",
+      "command": {
+        "path": "postgres",
+        "resolved_path": "/usr/lib/postgresql/17/bin/postgres",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:01.688130011Z",
+        "finished_at": "2026-07-28T04:00:01.691974261Z",
+        "duration_millis": 3,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 54
+      },
+      "attributes": {
+        "components": "target.local",
+        "operation": "version",
+        "tool": "postgres"
+      }
+    },
+    {
+      "id": "doctor:pg_isready:2:2026-07-28T04:00:01.693810886Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:01.693810886Z",
+      "command": {
+        "path": "pg_isready",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_isready",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:01.692034094Z",
+        "finished_at": "2026-07-28T04:00:01.693810886Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 56
+      },
+      "attributes": {
+        "components": "probe.pg_isready",
+        "operation": "version",
+        "tool": "pg_isready"
+      }
+    },
+    {
+      "id": "doctor:psql:3:2026-07-28T04:00:01.695756761Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:01.695756761Z",
+      "command": {
+        "path": "psql",
+        "resolved_path": "/usr/lib/postgresql/17/bin/psql",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:01.693841052Z",
+        "finished_at": "2026-07-28T04:00:01.695756761Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 50
+      },
+      "attributes": {
+        "components": "probe.post_backup_wal_replayed",
+        "operation": "version",
+        "tool": "psql"
+      }
+    },
+    {
+      "id": "doctor:pg_amcheck:4:2026-07-28T04:00:01.697242011Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:01.697242011Z",
+      "command": {
+        "path": "pg_amcheck",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_amcheck",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:01.695792177Z",
+        "finished_at": "2026-07-28T04:00:01.697242011Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 56
+      },
+      "attributes": {
+        "components": "probe.structural_amcheck",
+        "operation": "version",
+        "tool": "pg_amcheck"
+      }
+    },
+    {
+      "id": "doctor:pg_dump:5:2026-07-28T04:00:01.699000594Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:01.699000594Z",
+      "command": {
+        "path": "pg_dump",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_dump",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:01.697303552Z",
+        "finished_at": "2026-07-28T04:00:01.699000594Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 53
+      },
+      "attributes": {
+        "components": "probe.schema_dump",
+        "operation": "version",
+        "tool": "pg_dump"
+      }
+    }
+  ]
+}

@@ -150,6 +150,83 @@ entries:
       - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
       - Linux amd64 ran through Docker emulation on an arm64 daemon, so this is functional evidence rather than native-hardware performance or RTO evidence.
       - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.barman.field.v0-3-0-alpha-14-postgresql-17-linux-arm64
+    component: provider
+    implementation: barman
+    evidence_level: field
+    capabilities:
+      - backup_manifest_generation
+      - backup_manifest_verification
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "3.19.1"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One same-host local-rsync repository does not establish SSH, streaming-backup, or cloud-storage compatibility.
+      - Only latest recovery from one full backup with post-backup WAL replay was exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
+      - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.barman.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr
+    component: provider
+    implementation: barman
+    evidence_level: field
+    capabilities:
+      - backup_manifest_generation
+      - backup_manifest_verification
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - timestamp_pitr
+      - wal_replay
+    recovery_targets:
+      - timestamp
+    implementation_versions:
+      - "3.19.1"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/pitr-report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/barman-v3.19.1-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One same-host local-rsync repository does not establish SSH, streaming-backup, or cloud-storage compatibility.
+      - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
+      - The pgdrill candidate archive was not a published or signed release asset.
   - id: provider.barman.field.v0-3-0-alpha-8-pitr
     component: provider
     implementation: barman
@@ -359,6 +436,81 @@ entries:
       - Only one full backup and one inclusive whole-second timestamp boundary on timeline 1 were exercised.
       - Linux amd64 ran through Docker emulation on an arm64 daemon, so this is functional evidence rather than native-hardware performance or RTO evidence.
       - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.pg-probackup.field.v0-3-0-alpha-14-postgresql-17-linux-arm64
+    component: provider
+    implementation: pg_probackup
+    evidence_level: field
+    capabilities:
+      - backup_validation
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "2.5.16"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One same-host local filesystem catalog does not establish remote SSH compatibility.
+      - Only latest recovery from one compressed full STREAM backup with post-backup WAL replay was exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
+      - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.pg-probackup.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr
+    component: provider
+    implementation: pg_probackup
+    evidence_level: field
+    capabilities:
+      - backup_validation
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - timestamp_pitr
+      - wal_replay
+    recovery_targets:
+      - timestamp
+    implementation_versions:
+      - "2.5.16"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/pitr-report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/pg-probackup-v2.5.16-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One same-host local filesystem catalog does not establish remote SSH compatibility.
+      - Only one full STREAM backup and one inclusive whole-second timestamp boundary on timeline 1 were exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
+      - The pgdrill candidate archive was not a published or signed release asset.
   - id: provider.pg-probackup.field.v0-3-0-alpha-8-pitr
     component: provider
     implementation: pg_probackup
@@ -566,6 +718,83 @@ entries:
       - One same-host local filesystem repository does not establish remote or object-storage compatibility.
       - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
       - Linux amd64 ran through Docker emulation on an arm64 daemon, so this is functional evidence rather than native-hardware performance or RTO evidence.
+      - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.pgbackrest.field.v0-3-0-alpha-14-postgresql-17-linux-arm64
+    component: provider
+    implementation: pgbackrest
+    evidence_level: field
+    capabilities:
+      - archive_configuration_validation
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - repository_verification
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "2.58.0"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One same-host local filesystem repository does not establish remote or object-storage compatibility.
+      - Only latest recovery from one full backup with post-backup WAL replay was exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
+      - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.pgbackrest.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr
+    component: provider
+    implementation: pgbackrest
+    evidence_level: field
+    capabilities:
+      - archive_configuration_validation
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - repository_verification
+      - timestamp_pitr
+      - wal_replay
+    recovery_targets:
+      - timestamp
+    implementation_versions:
+      - "2.58.0"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/pitr-report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/pgbackrest-v2.58.0-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One same-host local filesystem repository does not establish remote or object-storage compatibility.
+      - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
       - The pgdrill candidate archive was not a published or signed release asset.
   - id: provider.pgbackrest.field.v0-3-0-alpha-8-pitr
     component: provider
@@ -876,6 +1105,79 @@ entries:
       - One disposable single-node MinIO observation does not establish compatibility with Amazon S3, Yandex Object Storage, or another S3 implementation.
       - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
       - TLS, encryption, IAM or workload identity, network failures, incremental backups, and production RTO remain untested.
+      - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.wal-g.field.v0-3-0-alpha-14-postgresql-17-linux-arm64
+    component: provider
+    implementation: wal-g
+    evidence_level: field
+    capabilities:
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "3.0.8"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One disposable local file repository does not establish remote object-storage compatibility.
+      - Only latest recovery from one full backup with post-backup WAL replay was exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
+      - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.wal-g.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr
+    component: provider
+    implementation: wal-g
+    evidence_level: field
+    capabilities:
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - timestamp_pitr
+      - wal_replay
+    recovery_targets:
+      - timestamp
+    implementation_versions:
+      - "3.0.8"
+    pgdrill_versions:
+      - v0.3.0-alpha.14
+    pgdrill_commits:
+      - 7b074550c5b96b7565a3dc4285d7006bb04de135
+    postgresql_versions:
+      - "17.10"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/pitr-report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-17.10-linux-arm64-pgdrill-v0.3.0-alpha.14/README.md#validated-scope
+    limitations:
+      - One disposable local file repository does not establish remote object-storage compatibility.
+      - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
+      - Native Linux amd64, another PostgreSQL patch release, and production RTO remain untested at this point.
       - The pgdrill candidate archive was not a published or signed release asset.
   - id: provider.wal-g.fixture
     component: provider

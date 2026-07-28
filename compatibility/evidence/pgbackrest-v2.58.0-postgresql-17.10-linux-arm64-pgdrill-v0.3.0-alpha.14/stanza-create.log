@@ -1,0 +1,3 @@
+2026-07-28 04:00:00.544 P00   INFO: stanza-create command begin 2.58.0: --config=/opt/pgdrill/test/pgbackrest.conf --exec-id=50-d62d8d32 --lock-path=/validation/lock --log-level-console=info --log-level-file=off --log-path=/validation/log --pg1-path=/validation/source-data --pg1-port=55431 --pg1-socket-path=/validation/source-socket --repo1-path=/validation/repository --stanza=integration
+2026-07-28 04:00:00.550 P00   INFO: stanza-create for stanza 'integration' on repo1
+2026-07-28 04:00:00.550 P00   INFO: stanza-create command end: completed successfully (7ms)

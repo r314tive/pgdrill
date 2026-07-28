@@ -1,0 +1,12 @@
+2026-07-28 04:00:00.674 P00   INFO: backup command begin 2.58.0: --config=/opt/pgdrill/test/pgbackrest.conf --exec-id=62-2c36ce67 --lock-path=/validation/lock --log-level-console=info --log-level-file=off --log-path=/validation/log --pg1-path=/validation/source-data --pg1-port=55431 --pg1-socket-path=/validation/source-socket --process-max=2 --repo1-path=/validation/repository --repo1-retention-full=2 --stanza=integration --start-fast --type=full
+2026-07-28 04:00:00.678 P00   INFO: execute backup start: backup begins after the requested immediate checkpoint completes
+2026-07-28 04:00:00.689 P00   INFO: backup start archive = 000000010000000000000003, lsn = 0/3000028
+2026-07-28 04:00:00.689 P00   INFO: check archive for prior segment 000000010000000000000002
+2026-07-28 04:00:01.400 P00   INFO: execute backup stop and wait for all WAL segments to archive
+2026-07-28 04:00:01.405 P00   INFO: backup stop archive = 000000010000000000000003, lsn = 0/3000120
+2026-07-28 04:00:01.405 P00   INFO: check archive for segment(s) 000000010000000000000003:000000010000000000000003
+2026-07-28 04:00:01.509 P00   INFO: new backup label = 20260728-040000F
+2026-07-28 04:00:01.515 P00   INFO: full backup size = 22.2MB, file total = 970
+2026-07-28 04:00:01.515 P00   INFO: backup command end: completed successfully (842ms)
+2026-07-28 04:00:01.515 P00   INFO: expire command begin 2.58.0: --config=/opt/pgdrill/test/pgbackrest.conf --exec-id=62-2c36ce67 --lock-path=/validation/lock --log-level-console=info --log-level-file=off --log-path=/validation/log --repo1-path=/validation/repository --repo1-retention-full=2 --stanza=integration
+2026-07-28 04:00:01.515 P00   INFO: expire command end: completed successfully (0ms)

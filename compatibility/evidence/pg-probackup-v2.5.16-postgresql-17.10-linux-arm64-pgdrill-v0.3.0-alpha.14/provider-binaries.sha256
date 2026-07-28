@@ -1,0 +1,4 @@
+571b4a708e3d2336f14bdd986aae96dc03d2116f0c849df0cc6c097fe2d17413  /opt/postgresql/bin/pg_probackup
+9587de212c5c2cc9f95b6050dacd2703a9e341cf07534b163f39eb2009489414  /opt/postgresql/bin/postgres
+c21b61e79b28b804fdc15918a04376ce15a848bfa3c295e020768ab7b82fa463  /opt/postgresql/bin/pg_amcheck
+9464929bc7906e6965b536d43b033e4904c1cc2bc7ed386621ef5172b9acaa27  /opt/postgresql/bin/pg_dump

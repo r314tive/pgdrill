@@ -279,9 +279,10 @@ Remaining external engine gate:
 
 1. Broaden beyond one single-node MinIO point and extend the other providers
    beyond local repositories across appropriate remote storage.
-2. Exercise a second PostgreSQL major, native Linux amd64 hardware, additional
-   backup modes, and non-timestamp PITR targets where the provider contract
-   supports them.
+2. Repeat both advertised PostgreSQL majors from the exact final candidate on
+   native Linux amd64 hardware; extend additional patch releases, backup
+   modes, and non-timestamp PITR targets where the provider contract supports
+   them.
 
 `pgdrill.report/v1` is now the durable terminal contract. Readers preserve the
 documented `v1alpha1` compatibility floor. The CLI remains journal-free by

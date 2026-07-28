@@ -1,0 +1,61 @@
+{
+  "cluster": "integration-walg-postgresql",
+  "provider": "wal-g",
+  "backup_count": 1,
+  "backups": [
+    {
+      "id": "wal-g:base_000000010000000000000002",
+      "provider": "wal-g",
+      "provider_id": "base_000000010000000000000002",
+      "kind": "full",
+      "status": "available",
+      "started_at": "2026-07-28T03:59:20.809083Z",
+      "finished_at": "2026-07-28T03:59:20.910729Z",
+      "last_modified_at": "2026-07-28T03:59:20.919761005Z",
+      "wal_range": {
+        "start_lsn": "0/2000028",
+        "end_lsn": "0/2000120"
+      },
+      "postgresql_version": "170010",
+      "data_directory": "/validation/source-data",
+      "hostname": "38054dc4ea0a"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "wal-g:backup-list:2026-07-28T03:59:22.122275506Z",
+      "kind": "command",
+      "source": "wal-g",
+      "collected_at": "2026-07-28T03:59:22.122275506Z",
+      "command": {
+        "path": "/opt/pgdrill/bin/wal-g",
+        "resolved_path": "/opt/pgdrill/bin/wal-g",
+        "args": [
+          "backup-list",
+          "--detail",
+          "--json"
+        ],
+        "env": {
+          "WALG_COMPRESSION_METHOD": "lz4",
+          "WALG_FILE_PREFIX": "/validation/repository"
+        },
+        "started_at": "2026-07-28T03:59:22.064372631Z",
+        "finished_at": "2026-07-28T03:59:22.122275506Z",
+        "duration_millis": 57,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "[{\"backup_name\":\"base_000000010000000000000002\",\"time\":\"2026-07-28T03:59:20.919761005Z\",\"wal_file_name\":\"000000010000000000000002\",\"storage_name\":\"default\",\"start_time\":\"2026-07-28T03:59:20.809083Z\",\"finish_time\":\"2026-07-28T03:59:20.910729Z\",\"date_fmt\":\"%Y-%m-%dT%H:%M:%S.%fZ\",\"hostname\":\"38054dc4ea0a\",\"data_dir\":\"/validation/source-data\",\"pg_version\":170010,\"start_lsn\":33554472,\"finish_lsn\":33554720,\"is_permanent\":false,\"system_identifier\":7667423550434684971,\"uncompressed_size\":23456003,\"compressed_size\":4295821}]\n",
+        "stdout_bytes": 522,
+        "stderr": "INFO: 2026/07/28 03:59:22.120726 List backups from storages: [default]\n",
+        "stderr_bytes": 71
+      },
+      "attributes": {
+        "operation": "backup-list"
+      }
+    }
+  ]
+}

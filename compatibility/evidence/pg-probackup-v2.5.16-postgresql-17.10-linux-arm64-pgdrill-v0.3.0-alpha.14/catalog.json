@@ -1,0 +1,75 @@
+{
+  "cluster": "integration-pgprobackup-postgresql",
+  "provider": "pg_probackup",
+  "backup_count": 1,
+  "backups": [
+    {
+      "id": "pg_probackup:integration/TIV9SG",
+      "provider": "pg_probackup",
+      "provider_id": "integration/TIV9SG",
+      "cluster_name": "integration",
+      "kind": "full",
+      "status": "available",
+      "started_at": "2026-07-28T04:00:16Z",
+      "finished_at": "2026-07-28T04:00:26Z",
+      "last_modified_at": "2026-07-28T04:00:26Z",
+      "wal_range": {
+        "start_lsn": "0/2000028",
+        "end_lsn": "0/2000188",
+        "timeline": "1"
+      },
+      "postgresql_version": "17",
+      "metadata": {
+        "backup-mode": "FULL",
+        "checksum-version": "1",
+        "compress-alg": "zlib",
+        "compress-level": "1",
+        "content-crc": "163268782",
+        "data-bytes": "7737878",
+        "from-replica": "false",
+        "parent-tli": "0",
+        "pgdata-bytes": "22553426",
+        "program-version": "2.5.16",
+        "recovery-time": "2026-07-28 04:00:17+00",
+        "recovery-xid": "741",
+        "status": "OK",
+        "uncompressed-bytes": "22553702",
+        "wal": "STREAM",
+        "wal-bytes": "16777216"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "pg_probackup:show:2026-07-28T04:00:27.461204259Z",
+      "kind": "command",
+      "source": "pg_probackup",
+      "collected_at": "2026-07-28T04:00:27.461204259Z",
+      "command": {
+        "path": "pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "args": [
+          "show",
+          "-B",
+          "/validation/backup",
+          "--instance=integration",
+          "--format=json"
+        ],
+        "started_at": "2026-07-28T04:00:27.460480509Z",
+        "finished_at": "2026-07-28T04:00:27.461204259Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "[\n    {\n        \"instance\": \"integration\",\n        \"backups\": [\n            {\n                \"id\": \"TIV9SG\",\n                \"backup-mode\": \"FULL\",\n                \"wal\": \"STREAM\",\n                \"compress-alg\": \"zlib\",\n                \"compress-level\": 1,\n                \"from-replica\": \"false\",\n                \"block-size\": 8192,\n                \"xlog-block-size\": 8192,\n                \"checksum-version\": 1,\n                \"program-version\": \"2.5.16\",\n                \"server-version\": \"17\",\n                \"current-tli\": 1,\n                \"parent-tli\": 0,\n                \"start-lsn\": \"0/2000028\",\n                \"stop-lsn\": \"0/2000188\",\n                \"start-time\": \"2026-07-28 04:00:16+00\",\n                \"end-time\": \"2026-07-28 04:00:26+00\",\n                \"recovery-xid\": 741,\n                \"recovery-time\": \"2026-07-28 04:00:17+00\",\n                \"data-bytes\": 7737878,\n                \"wal-bytes\": 16777216,\n                \"uncompressed-bytes\": 22553702,\n                \"pgdata-bytes\": 22553426,\n                \"primary_conninfo\": \"user=postgres channel_binding=disable host=/validation/source-socket port=55431 sslmode=disable sslnegotiation=postgres sslcompression=0 sslcertmode=disable sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=disable krbsrvname=postgres gssdelegation=0 target_session_attrs=any load_balance_hosts=disable\",\n                \"status\": \"OK\",\n                \"content-crc\": 163268782\n            }\n        ]\n    }\n]\n",
+        "stdout_bytes": 1475
+      },
+      "attributes": {
+        "operation": "show"
+      }
+    }
+  ]
+}

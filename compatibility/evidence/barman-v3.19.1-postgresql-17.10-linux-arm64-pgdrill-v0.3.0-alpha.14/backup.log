@@ -1,0 +1,16 @@
+Starting backup using rsync-concurrent method for server integration in /validation/barman/integration/base/20260728T035944
+Backup start at LSN: 0/3000028 (000000010000000000000003, 00000028)
+This is the first backup for server integration
+WAL segments preceding the current backup have been found:
+	000000010000000000000001 from server integration has been removed
+Starting backup copy via local rsync for 20260728T035944
+Copy done (time: less than one second)
+This is the first backup for server integration
+Asking PostgreSQL server to finalize the backup.
+Backup size: 22.2 MiB
+Backup end at LSN: 0/3000120 (000000010000000000000003, 00000120)
+Backup completed (start time: 2026-07-28 03:59:44.350064, elapsed time: 1 second)
+Processing xlog segments from file archival for integration
+	000000010000000000000002
+	000000010000000000000003
+	000000010000000000000003.00000028.backup

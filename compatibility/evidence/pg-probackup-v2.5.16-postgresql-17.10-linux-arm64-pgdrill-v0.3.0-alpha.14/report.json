@@ -1,0 +1,831 @@
+{
+  "schema_version": "pgdrill.report/v1",
+  "pgdrill_version": "pgdrill v0.3.0-alpha.14 (7b074550c5b96b7565a3dc4285d7006bb04de135, 2026-07-28T03:56:25Z)",
+  "id": "integration-pgprobackup-latest-20260728T040027Z",
+  "attempt_id": "attempt-1",
+  "spec_digest": "sha256:3fc9f264a57090697a9fc06ee02dbffdb2a9f7cff6ba65443f5843c554aa113c",
+  "spec": {
+    "schema_version": "pgdrill.drill-spec/v1",
+    "mode": "native",
+    "cluster": "integration-pgprobackup-postgresql",
+    "source": {
+      "ref": {
+        "id": "integration-pgprobackup-postgresql",
+        "driver": "pg_probackup",
+        "revision": "sha256:967c747e3067a12ab96f6d115c3a6b54beafef151122ee1098a5804621896ed8"
+      },
+      "provider": "pg_probackup"
+    },
+    "backup_selection": {
+      "type": "latest_available"
+    },
+    "target": {
+      "ref": {
+        "id": "/validation/work/restore",
+        "driver": "local",
+        "revision": "sha256:0db2b3b38ddcb983afad7a286cbcd2c6a0ff21084c34dcb716945bed9c7f3064"
+      },
+      "spec": {
+        "type": "local",
+        "work_dir": "/validation/work/restore"
+      }
+    },
+    "recovery_target": {
+      "type": "latest"
+    },
+    "policy": {
+      "maximum_rto": "5m0s",
+      "maximum_rpo": "10m0s",
+      "maximum_backup_age": "10m0s",
+      "require_recovery_target": true,
+      "require_cleanup": true
+    },
+    "probe_profile": {
+      "ref": {
+        "id": "integration-pgprobackup-postgresql/inline",
+        "driver": "inline",
+        "revision": "sha256:2b027244432cea05cfb3bfb6000435a3f15d3a6397f4ef15eddd3a3dc92670b7"
+      },
+      "probes": [
+        {
+          "type": "pg_isready",
+          "name": "pg_isready"
+        },
+        {
+          "type": "sql",
+          "name": "post_backup_wal_replayed"
+        },
+        {
+          "type": "amcheck",
+          "name": "structural_amcheck"
+        },
+        {
+          "type": "pg_dump",
+          "name": "schema_dump"
+        }
+      ]
+    }
+  },
+  "cluster": "integration-pgprobackup-postgresql",
+  "provider": "pg_probackup",
+  "backup": {
+    "id": "pg_probackup:integration/TIV9SG",
+    "provider": "pg_probackup",
+    "provider_id": "integration/TIV9SG",
+    "cluster_name": "integration",
+    "kind": "full",
+    "status": "available",
+    "started_at": "2026-07-28T04:00:16Z",
+    "finished_at": "2026-07-28T04:00:26Z",
+    "last_modified_at": "2026-07-28T04:00:26Z",
+    "wal_range": {
+      "start_lsn": "0/2000028",
+      "end_lsn": "0/2000188",
+      "timeline": "1"
+    },
+    "postgresql_version": "17",
+    "metadata": {
+      "backup-mode": "FULL",
+      "checksum-version": "1",
+      "compress-alg": "zlib",
+      "compress-level": "1",
+      "content-crc": "163268782",
+      "data-bytes": "7737878",
+      "from-replica": "false",
+      "parent-tli": "0",
+      "pgdata-bytes": "22553426",
+      "program-version": "2.5.16",
+      "recovery-time": "2026-07-28 04:00:17+00",
+      "recovery-xid": "741",
+      "status": "OK",
+      "uncompressed-bytes": "22553702",
+      "wal": "STREAM",
+      "wal-bytes": "16777216"
+    }
+  },
+  "target": {
+    "type": "local",
+    "work_dir": "/validation/work/restore"
+  },
+  "recovery_target": {
+    "type": "latest"
+  },
+  "started_at": "2026-07-28T04:00:27.4667293Z",
+  "finished_at": "2026-07-28T04:00:27.695259675Z",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "tool.pg_probackup",
+      "status": "passed",
+      "message": "pg_probackup 2.5.16 (PostgreSQL 17.10)",
+      "evidence_ids": [
+        "doctor:pg_probackup:0:2026-07-28T04:00:27.467856842Z"
+      ],
+      "attributes": {
+        "binary": "pg_probackup",
+        "components": "provider.pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "tool": "pg_probackup",
+        "version": "pg_probackup 2.5.16 (PostgreSQL 17.10)"
+      }
+    },
+    {
+      "name": "tool.postgres",
+      "status": "passed",
+      "message": "postgres (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:postgres:1:2026-07-28T04:00:27.468385259Z"
+      ],
+      "attributes": {
+        "binary": "postgres",
+        "components": "target.local",
+        "resolved_path": "/opt/postgresql/bin/postgres",
+        "tool": "postgres",
+        "version": "postgres (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.pg_isready",
+      "status": "passed",
+      "message": "pg_isready (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:pg_isready:2:2026-07-28T04:00:27.468764467Z"
+      ],
+      "attributes": {
+        "binary": "pg_isready",
+        "components": "probe.pg_isready",
+        "resolved_path": "/opt/postgresql/bin/pg_isready",
+        "tool": "pg_isready",
+        "version": "pg_isready (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.psql",
+      "status": "passed",
+      "message": "psql (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:psql:3:2026-07-28T04:00:27.469165009Z"
+      ],
+      "attributes": {
+        "binary": "psql",
+        "components": "probe.post_backup_wal_replayed",
+        "resolved_path": "/opt/postgresql/bin/psql",
+        "tool": "psql",
+        "version": "psql (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.pg_amcheck",
+      "status": "passed",
+      "message": "pg_amcheck (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:pg_amcheck:4:2026-07-28T04:00:27.469491384Z"
+      ],
+      "attributes": {
+        "binary": "pg_amcheck",
+        "components": "probe.structural_amcheck",
+        "resolved_path": "/opt/postgresql/bin/pg_amcheck",
+        "tool": "pg_amcheck",
+        "version": "pg_amcheck (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "tool.pg_dump",
+      "status": "passed",
+      "message": "pg_dump (PostgreSQL) 17.10",
+      "evidence_ids": [
+        "doctor:pg_dump:5:2026-07-28T04:00:27.469832092Z"
+      ],
+      "attributes": {
+        "binary": "pg_dump",
+        "components": "probe.schema_dump",
+        "resolved_path": "/opt/postgresql/bin/pg_dump",
+        "tool": "pg_dump",
+        "version": "pg_dump (PostgreSQL) 17.10"
+      }
+    },
+    {
+      "name": "pg-probackup-validate",
+      "status": "passed",
+      "evidence_ids": [
+        "pg_probackup:validate:2026-07-28T04:00:27.496987342Z"
+      ],
+      "attributes": {
+        "operation": "validate"
+      }
+    },
+    {
+      "name": "pg_isready",
+      "probe": "pg_isready",
+      "status": "passed",
+      "message": "pg_isready reported accepting connections",
+      "evidence_ids": [
+        "pg_isready:attempt:1:2026-07-28T04:00:27.630549967Z"
+      ]
+    },
+    {
+      "name": "post_backup_wal_replayed",
+      "probe": "sql",
+      "status": "passed",
+      "message": "SQL probe passed",
+      "evidence_ids": [
+        "sql:run:2026-07-28T04:00:27.633447675Z"
+      ]
+    },
+    {
+      "name": "structural_amcheck",
+      "probe": "amcheck",
+      "status": "passed",
+      "message": "pg_amcheck completed without reported corruption",
+      "evidence_ids": [
+        "pg_amcheck:run:2026-07-28T04:00:27.666480759Z"
+      ]
+    },
+    {
+      "name": "schema_dump",
+      "probe": "pg_dump",
+      "status": "passed",
+      "message": "pg_dump completed successfully",
+      "evidence_ids": [
+        "pg_dump:run:2026-07-28T04:00:27.686910384Z"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "doctor:pg_probackup:0:2026-07-28T04:00:27.467856842Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:27.467856842Z",
+      "command": {
+        "path": "pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "args": [
+          "version"
+        ],
+        "started_at": "2026-07-28T04:00:27.467291384Z",
+        "finished_at": "2026-07-28T04:00:27.467856842Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_probackup 2.5.16 (PostgreSQL 17.10)\n",
+        "stdout_bytes": 39
+      },
+      "attributes": {
+        "components": "provider.pg_probackup",
+        "operation": "version",
+        "tool": "pg_probackup"
+      }
+    },
+    {
+      "id": "doctor:postgres:1:2026-07-28T04:00:27.468385259Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:27.468385259Z",
+      "command": {
+        "path": "postgres",
+        "resolved_path": "/opt/postgresql/bin/postgres",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:27.467872675Z",
+        "finished_at": "2026-07-28T04:00:27.468385259Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "postgres (PostgreSQL) 17.10\n",
+        "stdout_bytes": 28
+      },
+      "attributes": {
+        "components": "target.local",
+        "operation": "version",
+        "tool": "postgres"
+      }
+    },
+    {
+      "id": "doctor:pg_isready:2:2026-07-28T04:00:27.468764467Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:27.468764467Z",
+      "command": {
+        "path": "pg_isready",
+        "resolved_path": "/opt/postgresql/bin/pg_isready",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:27.46841405Z",
+        "finished_at": "2026-07-28T04:00:27.468764467Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_isready (PostgreSQL) 17.10\n",
+        "stdout_bytes": 30
+      },
+      "attributes": {
+        "components": "probe.pg_isready",
+        "operation": "version",
+        "tool": "pg_isready"
+      }
+    },
+    {
+      "id": "doctor:psql:3:2026-07-28T04:00:27.469165009Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:27.469165009Z",
+      "command": {
+        "path": "psql",
+        "resolved_path": "/opt/postgresql/bin/psql",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:27.468777259Z",
+        "finished_at": "2026-07-28T04:00:27.469165009Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "psql (PostgreSQL) 17.10\n",
+        "stdout_bytes": 24
+      },
+      "attributes": {
+        "components": "probe.post_backup_wal_replayed",
+        "operation": "version",
+        "tool": "psql"
+      }
+    },
+    {
+      "id": "doctor:pg_amcheck:4:2026-07-28T04:00:27.469491384Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:27.469491384Z",
+      "command": {
+        "path": "pg_amcheck",
+        "resolved_path": "/opt/postgresql/bin/pg_amcheck",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:27.46917955Z",
+        "finished_at": "2026-07-28T04:00:27.469491384Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_amcheck (PostgreSQL) 17.10\n",
+        "stdout_bytes": 30
+      },
+      "attributes": {
+        "components": "probe.structural_amcheck",
+        "operation": "version",
+        "tool": "pg_amcheck"
+      }
+    },
+    {
+      "id": "doctor:pg_dump:5:2026-07-28T04:00:27.469832092Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T04:00:27.469832092Z",
+      "command": {
+        "path": "pg_dump",
+        "resolved_path": "/opt/postgresql/bin/pg_dump",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T04:00:27.4695003Z",
+        "finished_at": "2026-07-28T04:00:27.469832092Z",
+        "duration_millis": 0,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_dump (PostgreSQL) 17.10\n",
+        "stdout_bytes": 27
+      },
+      "attributes": {
+        "components": "probe.schema_dump",
+        "operation": "version",
+        "tool": "pg_dump"
+      }
+    },
+    {
+      "id": "pg_probackup:show:2026-07-28T04:00:27.471274259Z",
+      "kind": "command",
+      "source": "pg_probackup",
+      "collected_at": "2026-07-28T04:00:27.471274259Z",
+      "command": {
+        "path": "pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "args": [
+          "show",
+          "-B",
+          "/validation/backup",
+          "--instance=integration",
+          "--format=json"
+        ],
+        "started_at": "2026-07-28T04:00:27.470071342Z",
+        "finished_at": "2026-07-28T04:00:27.471274259Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "[\n    {\n        \"instance\": \"integration\",\n        \"backups\": [\n            {\n                \"id\": \"TIV9SG\",\n                \"backup-mode\": \"FULL\",\n                \"wal\": \"STREAM\",\n                \"compress-alg\": \"zlib\",\n                \"compress-level\": 1,\n                \"from-replica\": \"false\",\n                \"block-size\": 8192,\n                \"xlog-block-size\": 8192,\n                \"checksum-version\": 1,\n                \"program-version\": \"2.5.16\",\n                \"server-version\": \"17\",\n                \"current-tli\": 1,\n                \"parent-tli\": 0,\n                \"start-lsn\": \"0/2000028\",\n                \"stop-lsn\": \"0/2000188\",\n                \"start-time\": \"2026-07-28 04:00:16+00\",\n                \"end-time\": \"2026-07-28 04:00:26+00\",\n                \"recovery-xid\": 741,\n                \"recovery-time\": \"2026-07-28 04:00:17+00\",\n                \"data-bytes\": 7737878,\n                \"wal-bytes\": 16777216,\n                \"uncompressed-bytes\": 22553702,\n                \"pgdata-bytes\": 22553426,\n                \"primary_conninfo\": \"user=postgres channel_binding=disable host=/validation/source-socket port=55431 sslmode=disable sslnegotiation=postgres sslcompression=0 sslcertmode=disable sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=disable krbsrvname=postgres gssdelegation=0 target_session_attrs=any load_balance_hosts=disable\",\n                \"status\": \"OK\",\n                \"content-crc\": 163268782\n            }\n        ]\n    }\n]\n",
+        "stdout_bytes": 1475
+      },
+      "attributes": {
+        "operation": "show"
+      }
+    },
+    {
+      "id": "pg_probackup:validate:2026-07-28T04:00:27.496987342Z",
+      "kind": "command",
+      "source": "pg_probackup",
+      "collected_at": "2026-07-28T04:00:27.496987342Z",
+      "command": {
+        "path": "pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "args": [
+          "validate",
+          "-B",
+          "/validation/backup",
+          "--instance=integration",
+          "-i",
+          "TIV9SG",
+          "-j",
+          "2",
+          "--wal",
+          "--recovery-target=latest"
+        ],
+        "started_at": "2026-07-28T04:00:27.472008217Z",
+        "finished_at": "2026-07-28T04:00:27.496987342Z",
+        "duration_millis": 24,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stderr": "INFO: Validating backup TIV9SG\nINFO: Backup TIV9SG data files are valid\nINFO: Backup TIV9SG WAL segments are valid\nINFO: Backup TIV9SG is valid.\nINFO: Validate of backup TIV9SG completed.\n",
+        "stderr_bytes": 188
+      },
+      "attributes": {
+        "operation": "validate"
+      }
+    },
+    {
+      "id": "pg_probackup:restore-plan:2026-07-28T04:00:27.497257384Z",
+      "kind": "plan",
+      "source": "pg_probackup",
+      "collected_at": "2026-07-28T04:00:27.497257384Z",
+      "attributes": {
+        "operation": "restore-plan"
+      }
+    },
+    {
+      "id": "local:execute:pg-probackup-restore:2026-07-28T04:00:27.594867384Z",
+      "kind": "command",
+      "source": "local",
+      "collected_at": "2026-07-28T04:00:27.594867384Z",
+      "command": {
+        "path": "pg_probackup",
+        "resolved_path": "/opt/postgresql/bin/pg_probackup",
+        "args": [
+          "restore",
+          "-B",
+          "/validation/backup",
+          "--instance=integration",
+          "-i",
+          "TIV9SG",
+          "-D",
+          "/validation/work/restore/data",
+          "--recovery-target=latest",
+          "--recovery-target-action=promote"
+        ],
+        "work_dir": "/validation/work/restore",
+        "started_at": "2026-07-28T04:00:27.50178805Z",
+        "finished_at": "2026-07-28T04:00:27.594867384Z",
+        "duration_millis": 93,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stderr": "INFO: Validating backup TIV9SG\nINFO: Backup TIV9SG data files are valid\nINFO: Backup TIV9SG WAL segments are valid\nINFO: Backup TIV9SG is valid.\nINFO: Restoring the database from backup TIV9SG\nINFO: Start restoring backup files. PGDATA size: 38MB\nINFO: Backup files are restored. Transfered bytes: 38MB, time elapsed: 0\nINFO: Restore incremental ratio (less is better): 100% (38MB/38MB)\nINFO: Syncing restored files to disk\nINFO: Restored backup files are synced, time elapsed: 0\nINFO: Restore of backup TIV9SG completed.\n",
+        "stderr_bytes": 522
+      },
+      "attributes": {
+        "operation": "execute:pg-probackup-restore"
+      }
+    },
+    {
+      "id": "local:postgres-start:2026-07-28T04:00:27.597950717Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T04:00:27.597950717Z",
+      "attributes": {
+        "archive_mode": "off",
+        "binary": "postgres",
+        "data_directory": "/validation/work/restore/data",
+        "host": "127.0.0.1",
+        "log_path": "/validation/work/restore/postgres.log",
+        "operation": "postgres-start",
+        "pid": "160",
+        "port": "55435",
+        "startup_status": "ready",
+        "startup_wait_millis": "26"
+      }
+    },
+    {
+      "id": "pg_isready:attempt:1:2026-07-28T04:00:27.630549967Z",
+      "kind": "command",
+      "source": "pg_isready",
+      "collected_at": "2026-07-28T04:00:27.630549967Z",
+      "command": {
+        "path": "pg_isready",
+        "resolved_path": "/opt/postgresql/bin/pg_isready",
+        "args": [
+          "-d",
+          "[REDACTED]",
+          "-t",
+          "3"
+        ],
+        "started_at": "2026-07-28T04:00:27.6271828Z",
+        "finished_at": "2026-07-28T04:00:27.630549967Z",
+        "duration_millis": 3,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "127.0.0.1:55435 - accepting connections\n",
+        "stdout_bytes": 40
+      },
+      "attributes": {
+        "attempt": "1",
+        "operation": "run"
+      }
+    },
+    {
+      "id": "sql:run:2026-07-28T04:00:27.633447675Z",
+      "kind": "command",
+      "source": "sql",
+      "collected_at": "2026-07-28T04:00:27.633447675Z",
+      "command": {
+        "path": "psql",
+        "resolved_path": "/opt/postgresql/bin/psql",
+        "args": [
+          "-X",
+          "-v",
+          "ON_ERROR_STOP=1",
+          "-d",
+          "[REDACTED]",
+          "-c",
+          "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_integration_probe"
+        ],
+        "started_at": "2026-07-28T04:00:27.630589384Z",
+        "finished_at": "2026-07-28T04:00:27.633447675Z",
+        "duration_millis": 2,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": " ?column? \n----------\n        1\n(1 row)\n\n",
+        "stdout_bytes": 41
+      },
+      "attributes": {
+        "operation": "run"
+      }
+    },
+    {
+      "id": "pg_amcheck:run:2026-07-28T04:00:27.666480759Z",
+      "kind": "command",
+      "source": "amcheck",
+      "collected_at": "2026-07-28T04:00:27.666480759Z",
+      "command": {
+        "path": "pg_amcheck",
+        "resolved_path": "/opt/postgresql/bin/pg_amcheck",
+        "args": [
+          "[REDACTED]",
+          "--on-error-stop"
+        ],
+        "started_at": "2026-07-28T04:00:27.633481884Z",
+        "finished_at": "2026-07-28T04:00:27.666480759Z",
+        "duration_millis": 32,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        }
+      },
+      "attributes": {
+        "operation": "run"
+      }
+    },
+    {
+      "id": "pg_dump:run:2026-07-28T04:00:27.686910384Z",
+      "kind": "command",
+      "source": "pg_dump",
+      "collected_at": "2026-07-28T04:00:27.686910384Z",
+      "command": {
+        "path": "pg_dump",
+        "resolved_path": "/opt/postgresql/bin/pg_dump",
+        "args": [
+          "--dbname",
+          "[REDACTED]",
+          "--file",
+          "/dev/null",
+          "--no-owner",
+          "--no-privileges",
+          "--schema-only"
+        ],
+        "started_at": "2026-07-28T04:00:27.666526092Z",
+        "finished_at": "2026-07-28T04:00:27.686910384Z",
+        "duration_millis": 20,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        }
+      },
+      "attributes": {
+        "operation": "run"
+      }
+    },
+    {
+      "id": "local:postgres-stop:2026-07-28T04:00:27.690336592Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T04:00:27.690336592Z",
+      "attributes": {
+        "exit_error": "",
+        "log_path": "/validation/work/restore/postgres.log",
+        "operation": "postgres-stop",
+        "pid": "160",
+        "port": "55435",
+        "postgres_shutdown": "terminated"
+      }
+    },
+    {
+      "id": "local:destroy:2026-07-28T04:00:27.693578425Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T04:00:27.693578425Z",
+      "attributes": {
+        "cleanup": "removed",
+        "operation": "destroy",
+        "work_dir": "/validation/work/restore"
+      }
+    }
+  ],
+  "operations": [
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:6f20e876852dc5ab245a6922b92f35deda7238e07eb6b87dfea7e01835a1af05",
+        "identity": {
+          "run_id": "integration-pgprobackup-latest-20260728T040027Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:3fc9f264a57090697a9fc06ee02dbffdb2a9f7cff6ba65443f5843c554aa113c"
+        },
+        "stage": "target_preparation",
+        "kind": "target_prepare",
+        "name": "prepare-target",
+        "ordinal": 0
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T04:00:27.497642342Z",
+      "updated_at": "2026-07-28T04:00:27.499840342Z"
+    },
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:f6fbb1e08e97e03b7119a2b5480cc6391757bb1ec1affdc6df61059fcfb80973",
+        "identity": {
+          "run_id": "integration-pgprobackup-latest-20260728T040027Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:3fc9f264a57090697a9fc06ee02dbffdb2a9f7cff6ba65443f5843c554aa113c"
+        },
+        "stage": "restore_execution",
+        "kind": "restore_step",
+        "name": "pg-probackup-restore",
+        "ordinal": 1
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T04:00:27.501173009Z",
+      "updated_at": "2026-07-28T04:00:27.594938509Z"
+    },
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:63ce5a4091f2fb116217f85de518ab41dd4b3acb2f5aa8f07cecb2cccf8af13c",
+        "identity": {
+          "run_id": "integration-pgprobackup-latest-20260728T040027Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:3fc9f264a57090697a9fc06ee02dbffdb2a9f7cff6ba65443f5843c554aa113c"
+        },
+        "stage": "postgres_start",
+        "kind": "postgres_start",
+        "name": "start-postgres",
+        "ordinal": 2
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T04:00:27.597039259Z",
+      "updated_at": "2026-07-28T04:00:27.62479455Z"
+    },
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:f32604445bc5b6a8202ef9ecf249c03e41ac02319255676535067a150e350570",
+        "identity": {
+          "run_id": "integration-pgprobackup-latest-20260728T040027Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:3fc9f264a57090697a9fc06ee02dbffdb2a9f7cff6ba65443f5843c554aa113c"
+        },
+        "stage": "target_cleanup",
+        "kind": "target_cleanup",
+        "name": "cleanup-target",
+        "ordinal": 3
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T04:00:27.687595967Z",
+      "updated_at": "2026-07-28T04:00:27.6935803Z"
+    }
+  ],
+  "policy_evaluation": {
+    "schema_version": "pgdrill.recovery-policy-evaluation/v1",
+    "evaluated_at": "2026-07-28T04:00:27.695105217Z",
+    "recovery_proven_at": "2026-07-28T04:00:27.686934509Z",
+    "verdicts": [
+      {
+        "assertion": "rto",
+        "required": true,
+        "status": "passed",
+        "basis": "drill_start_to_recovery_proof",
+        "limit_millis": 300000,
+        "observed_millis": 220,
+        "message": "recovery proof completed within the maximum RTO"
+      },
+      {
+        "assertion": "rpo",
+        "required": true,
+        "status": "passed",
+        "basis": "backup_finish_lower_bound",
+        "limit_millis": 600000,
+        "observed_millis": 1466,
+        "message": "selected backup finish proves a recoverable point within the maximum RPO"
+      },
+      {
+        "assertion": "backup_age",
+        "required": true,
+        "status": "passed",
+        "basis": "drill_start_to_backup_finish",
+        "limit_millis": 600000,
+        "observed_millis": 1466,
+        "message": "selected backup is within the maximum backup age"
+      },
+      {
+        "assertion": "recovery_target",
+        "required": true,
+        "status": "passed",
+        "basis": "post_restore_probes",
+        "satisfied": true,
+        "message": "PostgreSQL started and all required post-restore probes passed after applying the requested target"
+      },
+      {
+        "assertion": "cleanup",
+        "required": true,
+        "status": "passed",
+        "basis": "target_cleanup_checkpoint",
+        "satisfied": true,
+        "message": "owned target cleanup completed successfully"
+      }
+    ]
+  }
+}

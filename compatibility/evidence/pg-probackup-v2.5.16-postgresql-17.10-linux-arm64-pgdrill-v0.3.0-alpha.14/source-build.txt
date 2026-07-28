@@ -1,0 +1,4 @@
+pg_probackup_source_commit=79b986494ecea8bbd67f97a62ba8ae4a00703586
+postgresql_major=17
+postgresql_source_sha256=078a03516dcdbdb705fecaf415ea3d13a956c589e46f09fed68a06fb00598c90
+pg_configure= '--prefix=/opt/postgresql' '--with-zlib' '--without-icu' '--without-readline'

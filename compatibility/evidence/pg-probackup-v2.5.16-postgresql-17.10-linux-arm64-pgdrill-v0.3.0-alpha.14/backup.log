@@ -1,0 +1,20 @@
+INFO: Backup start, pg_probackup version: 2.5.16, instance: integration, backup ID: TIV9SG, backup mode: FULL, wal mode: STREAM, remote: false, compress-algorithm: zlib, compress-level: 1
+INFO: This PostgreSQL instance was initialized with data block checksums. Data block corruption will be detected
+WARNING: Current PostgreSQL role is superuser. It is not recommended to run pg_probackup under superuser.
+INFO: Database backup start
+INFO: wait for pg_backup_start()
+INFO: Wait for WAL segment /validation/backup/backups/integration/TIV9SG/database/pg_wal/000000010000000000000002 to be streamed
+INFO: PGDATA size: 22MB
+INFO: Current Start LSN: 0/2000028, TLI: 1
+INFO: Start transferring data files
+INFO: Data files are transferred, time elapsed: 0
+INFO: wait for pg_stop_backup()
+INFO: pg_stop backup() successfully executed
+INFO: stop_lsn: 0/2000188
+INFO: Getting the Recovery Time from WAL
+INFO: Syncing backup files to disk
+INFO: Backup files are synced, time elapsed: 0
+INFO: Validating backup TIV9SG
+INFO: Backup TIV9SG data files are valid
+INFO: Backup TIV9SG resident size: 23MB
+INFO: Backup TIV9SG completed

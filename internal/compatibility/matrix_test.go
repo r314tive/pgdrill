@@ -23,8 +23,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 31 {
-		t.Fatalf("matrix entry count = %d, want 31", len(matrix.Entries))
+	if len(matrix.Entries) != 39 {
+		t.Fatalf("matrix entry count = %d, want 39", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -82,6 +82,14 @@ func TestCommittedMatrix(t *testing.T) {
 		"provider.wal-g.field.v0-3-0-alpha-10-linux-amd64-pitr",
 		"provider.wal-g.field.v0-3-0-alpha-12-linux-arm64-s3",
 		"provider.wal-g.field.v0-3-0-alpha-12-linux-arm64-s3-pitr",
+		"provider.barman.field.v0-3-0-alpha-14-postgresql-17-linux-arm64",
+		"provider.barman.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr",
+		"provider.pg-probackup.field.v0-3-0-alpha-14-postgresql-17-linux-arm64",
+		"provider.pg-probackup.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr",
+		"provider.pgbackrest.field.v0-3-0-alpha-14-postgresql-17-linux-arm64",
+		"provider.pgbackrest.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr",
+		"provider.wal-g.field.v0-3-0-alpha-14-postgresql-17-linux-arm64",
+		"provider.wal-g.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr",
 	} {
 		if levels[id] != EvidenceLevelField {
 			t.Fatalf("%s level = %q, want field", id, levels[id])

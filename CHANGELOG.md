@@ -17,6 +17,12 @@ called out explicitly even while the major version is `0`.
   `test-integration-postgresql-17` gate. The pg_probackup profile additionally
   verifies the official PostgreSQL 17.10 source digest and applies its
   PostgreSQL 18 compatibility patch only to the PostgreSQL 18 build.
+- Retained exact `v0.3.0-alpha.14` Linux arm64 field evidence for WAL-G 3.0.8,
+  Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 latest and
+  timestamp recovery against PostgreSQL 17.10. All eight matrix points bind
+  passed reports to one clean commit, a Go 1.26.5-built candidate archive,
+  provider-native validation, SQL recovery boundaries, and checksummed raw
+  evidence.
 - A second real WAL-G 3.0.8 integration profile backed by pinned MinIO and
   MinIO Client platform manifests on a private Docker network, with
   execution-bound S3 credentials, latest and timestamp recovery, WAL

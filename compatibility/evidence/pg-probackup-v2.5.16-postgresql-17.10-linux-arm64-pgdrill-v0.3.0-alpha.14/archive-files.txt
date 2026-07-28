@@ -1,0 +1,5 @@
+/validation/backup/wal/integration/000000010000000000000001
+/validation/backup/wal/integration/000000010000000000000002
+/validation/backup/wal/integration/000000010000000000000002.00000028.backup
+/validation/backup/wal/integration/000000010000000000000003
+/validation/backup/wal/integration/000000010000000000000004

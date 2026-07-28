@@ -1,0 +1,990 @@
+{
+  "schema_version": "pgdrill.report/v1",
+  "pgdrill_version": "pgdrill v0.3.0-alpha.14 (7b074550c5b96b7565a3dc4285d7006bb04de135, 2026-07-28T03:56:25Z)",
+  "id": "integration-barman-latest-20260728T035946Z",
+  "attempt_id": "attempt-1",
+  "spec_digest": "sha256:e7abb6cc588d20b1411588aee891c808d90b051e1859342dc2ee776219367107",
+  "spec": {
+    "schema_version": "pgdrill.drill-spec/v1",
+    "mode": "native",
+    "cluster": "integration-barman-postgresql",
+    "source": {
+      "ref": {
+        "id": "integration-barman-postgresql",
+        "driver": "barman",
+        "revision": "sha256:d13f1462301d659f2e36e696c8f023a4c36fe7258deb02897b8e09deebe65b39"
+      },
+      "provider": "barman"
+    },
+    "backup_selection": {
+      "type": "latest_available"
+    },
+    "target": {
+      "ref": {
+        "id": "/validation/work/restore",
+        "driver": "local",
+        "revision": "sha256:a60bc928f505fd90db426d8f77ea090f7247172bba9d48b9337ba314899af708"
+      },
+      "spec": {
+        "type": "local",
+        "work_dir": "/validation/work/restore"
+      }
+    },
+    "recovery_target": {
+      "type": "latest"
+    },
+    "policy": {
+      "maximum_rto": "5m0s",
+      "maximum_rpo": "10m0s",
+      "maximum_backup_age": "10m0s",
+      "require_recovery_target": true,
+      "require_cleanup": true
+    },
+    "probe_profile": {
+      "ref": {
+        "id": "integration-barman-postgresql/inline",
+        "driver": "inline",
+        "revision": "sha256:2b027244432cea05cfb3bfb6000435a3f15d3a6397f4ef15eddd3a3dc92670b7"
+      },
+      "probes": [
+        {
+          "type": "pg_isready",
+          "name": "pg_isready"
+        },
+        {
+          "type": "sql",
+          "name": "post_backup_wal_replayed"
+        },
+        {
+          "type": "amcheck",
+          "name": "structural_amcheck"
+        },
+        {
+          "type": "pg_dump",
+          "name": "schema_dump"
+        }
+      ]
+    }
+  },
+  "cluster": "integration-barman-postgresql",
+  "provider": "barman",
+  "backup": {
+    "id": "barman:integration/20260728T035944",
+    "provider": "barman",
+    "provider_id": "integration/20260728T035944",
+    "cluster_name": "integration",
+    "kind": "full",
+    "status": "available",
+    "finished_at": "2026-07-28T03:59:44Z",
+    "wal_range": {}
+  },
+  "target": {
+    "type": "local",
+    "work_dir": "/validation/work/restore"
+  },
+  "recovery_target": {
+    "type": "latest"
+  },
+  "started_at": "2026-07-28T03:59:46.270497503Z",
+  "finished_at": "2026-07-28T03:59:47.540207462Z",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "tool.barman",
+      "status": "passed",
+      "message": "3.19.1 Barman by EnterpriseDB (www.enterprisedb.com)",
+      "evidence_ids": [
+        "doctor:barman:0:2026-07-28T03:59:46.330993837Z"
+      ],
+      "attributes": {
+        "binary": "/usr/bin/barman",
+        "components": "provider.barman",
+        "resolved_path": "/usr/bin/barman",
+        "tool": "barman",
+        "version": "3.19.1 Barman by EnterpriseDB (www.enterprisedb.com)"
+      }
+    },
+    {
+      "name": "tool.postgres",
+      "status": "passed",
+      "message": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:postgres:1:2026-07-28T03:59:46.334690295Z"
+      ],
+      "attributes": {
+        "binary": "postgres",
+        "components": "target.local",
+        "resolved_path": "/usr/lib/postgresql/17/bin/postgres",
+        "tool": "postgres",
+        "version": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_isready",
+      "status": "passed",
+      "message": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_isready:2:2026-07-28T03:59:46.336301212Z"
+      ],
+      "attributes": {
+        "binary": "pg_isready",
+        "components": "probe.pg_isready",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_isready",
+        "tool": "pg_isready",
+        "version": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.psql",
+      "status": "passed",
+      "message": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:psql:3:2026-07-28T03:59:46.33785417Z"
+      ],
+      "attributes": {
+        "binary": "psql",
+        "components": "probe.post_backup_wal_replayed",
+        "resolved_path": "/usr/lib/postgresql/17/bin/psql",
+        "tool": "psql",
+        "version": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_amcheck",
+      "status": "passed",
+      "message": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_amcheck:4:2026-07-28T03:59:46.339410462Z"
+      ],
+      "attributes": {
+        "binary": "pg_amcheck",
+        "components": "probe.structural_amcheck",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_amcheck",
+        "tool": "pg_amcheck",
+        "version": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "tool.pg_dump",
+      "status": "passed",
+      "message": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)",
+      "evidence_ids": [
+        "doctor:pg_dump:5:2026-07-28T03:59:46.341008503Z"
+      ],
+      "attributes": {
+        "binary": "pg_dump",
+        "components": "probe.schema_dump",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_dump",
+        "tool": "pg_dump",
+        "version": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)"
+      }
+    },
+    {
+      "name": "barman-check",
+      "status": "passed",
+      "evidence_ids": [
+        "barman:barman-check:2026-07-28T03:59:46.481318295Z"
+      ],
+      "attributes": {
+        "operation": "barman-check"
+      }
+    },
+    {
+      "name": "barman-check-backup",
+      "status": "passed",
+      "evidence_ids": [
+        "barman:barman-check-backup:2026-07-28T03:59:46.555332337Z"
+      ],
+      "attributes": {
+        "operation": "barman-check-backup"
+      }
+    },
+    {
+      "name": "barman-show-backup",
+      "status": "passed",
+      "evidence_ids": [
+        "barman:barman-show-backup:2026-07-28T03:59:46.619264003Z"
+      ],
+      "attributes": {
+        "backup_id": "20260728T035944",
+        "backup_type": "rsync",
+        "operation": "barman-show-backup",
+        "server": "integration",
+        "status": "DONE"
+      }
+    },
+    {
+      "name": "barman-generate-manifest",
+      "status": "passed",
+      "evidence_ids": [
+        "barman:barman-generate-manifest:2026-07-28T03:59:46.70799067Z"
+      ],
+      "attributes": {
+        "operation": "barman-generate-manifest"
+      }
+    },
+    {
+      "name": "barman-verify-backup",
+      "status": "passed",
+      "evidence_ids": [
+        "barman:barman-verify-backup:2026-07-28T03:59:46.807698212Z"
+      ],
+      "attributes": {
+        "operation": "barman-verify-backup"
+      }
+    },
+    {
+      "name": "pg_isready",
+      "probe": "pg_isready",
+      "status": "passed",
+      "message": "pg_isready reported accepting connections",
+      "evidence_ids": [
+        "pg_isready:attempt:1:2026-07-28T03:59:47.46687767Z"
+      ]
+    },
+    {
+      "name": "post_backup_wal_replayed",
+      "probe": "sql",
+      "status": "passed",
+      "message": "SQL probe passed",
+      "evidence_ids": [
+        "sql:run:2026-07-28T03:59:47.47060092Z"
+      ]
+    },
+    {
+      "name": "structural_amcheck",
+      "probe": "amcheck",
+      "status": "passed",
+      "message": "pg_amcheck completed without reported corruption",
+      "evidence_ids": [
+        "pg_amcheck:run:2026-07-28T03:59:47.504835129Z"
+      ]
+    },
+    {
+      "name": "schema_dump",
+      "probe": "pg_dump",
+      "status": "passed",
+      "message": "pg_dump completed successfully",
+      "evidence_ids": [
+        "pg_dump:run:2026-07-28T03:59:47.530201587Z"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "doctor:barman:0:2026-07-28T03:59:46.330993837Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:46.330993837Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--version"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.271003045Z",
+        "finished_at": "2026-07-28T03:59:46.330993837Z",
+        "duration_millis": 59,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "3.19.1 Barman by EnterpriseDB (www.enterprisedb.com)\n",
+        "stdout_bytes": 53
+      },
+      "attributes": {
+        "components": "provider.barman",
+        "operation": "version",
+        "tool": "barman"
+      }
+    },
+    {
+      "id": "doctor:postgres:1:2026-07-28T03:59:46.334690295Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:46.334690295Z",
+      "command": {
+        "path": "postgres",
+        "resolved_path": "/usr/lib/postgresql/17/bin/postgres",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:46.331059337Z",
+        "finished_at": "2026-07-28T03:59:46.334690295Z",
+        "duration_millis": 3,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "postgres (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 54
+      },
+      "attributes": {
+        "components": "target.local",
+        "operation": "version",
+        "tool": "postgres"
+      }
+    },
+    {
+      "id": "doctor:pg_isready:2:2026-07-28T03:59:46.336301212Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:46.336301212Z",
+      "command": {
+        "path": "pg_isready",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_isready",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:46.334731212Z",
+        "finished_at": "2026-07-28T03:59:46.336301212Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_isready (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 56
+      },
+      "attributes": {
+        "components": "probe.pg_isready",
+        "operation": "version",
+        "tool": "pg_isready"
+      }
+    },
+    {
+      "id": "doctor:psql:3:2026-07-28T03:59:46.33785417Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:46.33785417Z",
+      "command": {
+        "path": "psql",
+        "resolved_path": "/usr/lib/postgresql/17/bin/psql",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:46.336321962Z",
+        "finished_at": "2026-07-28T03:59:46.33785417Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "psql (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 50
+      },
+      "attributes": {
+        "components": "probe.post_backup_wal_replayed",
+        "operation": "version",
+        "tool": "psql"
+      }
+    },
+    {
+      "id": "doctor:pg_amcheck:4:2026-07-28T03:59:46.339410462Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:46.339410462Z",
+      "command": {
+        "path": "pg_amcheck",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_amcheck",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:46.337866045Z",
+        "finished_at": "2026-07-28T03:59:46.339410462Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_amcheck (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 56
+      },
+      "attributes": {
+        "components": "probe.structural_amcheck",
+        "operation": "version",
+        "tool": "pg_amcheck"
+      }
+    },
+    {
+      "id": "doctor:pg_dump:5:2026-07-28T03:59:46.341008503Z",
+      "kind": "command",
+      "source": "doctor",
+      "collected_at": "2026-07-28T03:59:46.341008503Z",
+      "command": {
+        "path": "pg_dump",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_dump",
+        "args": [
+          "--version"
+        ],
+        "started_at": "2026-07-28T03:59:46.339422087Z",
+        "finished_at": "2026-07-28T03:59:46.341008503Z",
+        "duration_millis": 1,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "pg_dump (PostgreSQL) 17.10 (Debian 17.10-1.pgdg13+1)\n",
+        "stdout_bytes": 53
+      },
+      "attributes": {
+        "components": "probe.schema_dump",
+        "operation": "version",
+        "tool": "pg_dump"
+      }
+    },
+    {
+      "id": "barman:list-backups:2026-07-28T03:59:46.402329962Z",
+      "kind": "command",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.402329962Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "--format",
+          "json",
+          "list-backups",
+          "integration"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.341294003Z",
+        "finished_at": "2026-07-28T03:59:46.402329962Z",
+        "duration_millis": 61,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "{\"integration\": [{\"backup_id\": \"20260728T035944\", \"backup_type\": \"rsync\", \"end_time\": \"Tue Jul 28 03:59:44 2026\", \"end_time_timestamp\": \"1785211184\", \"retention_status\": \"-\", \"size\": \"38.2 MiB\", \"size_bytes\": 40043623, \"status\": \"DONE\", \"wal_size\": \"16.0 MiB\", \"wal_size_bytes\": 16777216}]}",
+        "stdout_bytes": 290
+      },
+      "attributes": {
+        "operation": "list-backups"
+      }
+    },
+    {
+      "id": "barman:barman-check:2026-07-28T03:59:46.481318295Z",
+      "kind": "command",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.481318295Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "check",
+          "integration"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.402763295Z",
+        "finished_at": "2026-07-28T03:59:46.481318295Z",
+        "duration_millis": 78,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "Server integration:\n\tPostgreSQL: OK\n\tsuperuser or standard user with backup privileges: OK\n\twal_level: OK\n\tdirectories: OK\n\tretention policy settings: OK\n\tbackup maximum age: OK (no last_backup_maximum_age provided)\n\tbackup minimum size: OK (22.2 MiB)\n\twal maximum age: OK (no last_wal_maximum_age provided)\n\twal size: OK (16.0 MiB)\n\tcompression settings: OK\n\tfailed backups: OK (there are 0 failed backups)\n\tminimum redundancy requirements: OK (have 1 non-incremental backups, expected at least 1)\n\tlocal PGDATA: OK (Access to local PGDATA)\n\tsystemid coherence: OK\n\tarchive_mode: OK\n\tarchive_command: OK\n\tcontinuous archiving: OK\n\tarchiver errors: OK\n",
+        "stdout_bytes": 652
+      },
+      "attributes": {
+        "operation": "barman-check"
+      }
+    },
+    {
+      "id": "barman:barman-check-backup:2026-07-28T03:59:46.555332337Z",
+      "kind": "command",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.555332337Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "check-backup",
+          "integration",
+          "20260728T035944"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.481336962Z",
+        "finished_at": "2026-07-28T03:59:46.555332337Z",
+        "duration_millis": 73,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        }
+      },
+      "attributes": {
+        "operation": "barman-check-backup"
+      }
+    },
+    {
+      "id": "barman:barman-show-backup:2026-07-28T03:59:46.619264003Z",
+      "kind": "command",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.619264003Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "--format",
+          "json",
+          "show-backup",
+          "integration",
+          "20260728T035944"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.555367212Z",
+        "finished_at": "2026-07-28T03:59:46.619264003Z",
+        "duration_millis": 63,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "{\"integration\": {\"backup_id\": \"20260728T035944\", \"backup_type\": \"rsync\", \"base_backup_information\": {\"backup_method\": \"rsync-concurrent\", \"backup_size\": \"22.2 MiB\", \"backup_size_bytes\": 23266407, \"backup_size_with_wals\": \"38.2 MiB\", \"backup_size_with_wals_bytes\": 40043623, \"begin_lsn\": \"0/3000028\", \"begin_offset\": 40, \"begin_time\": \"2026-07-28 03:59:44.337907+00:00\", \"begin_time_timestamp\": \"1785211184\", \"begin_wal\": \"000000010000000000000003\", \"compression\": null, \"copy_time\": \"less than one second\", \"copy_time_seconds\": 0.112627, \"encryption\": null, \"end_lsn\": \"0/3000120\", \"end_offset\": 288, \"end_time\": \"2026-07-28 03:59:44.611898+00:00\", \"end_time_timestamp\": \"1785211184\", \"end_wal\": \"000000010000000000000003\", \"number_of_workers\": 1, \"resources_saved\": \"0 B\", \"resources_saved_bytes\": 0, \"resources_saved_percentage\": \"0.00%\", \"throughput\": \"197.0 MiB/s\", \"throughput_bytes\": 206579301, \"timeline\": 1, \"wal_num\": 1, \"wal_size\": \"16.0 MiB\", \"wal_size_bytes\": 16777216}, \"catalog_information\": {\"next_backup\": \"- (this is the latest base backup)\", \"previous_backup\": \"- (this is the oldest base backup)\", \"retention_policy\": \"not enforced\"}, \"cluster_size\": \"22.3 MiB\", \"cluster_size_bytes\": 23409605, \"pgdata_directory\": \"/validation/source-data\", \"postgresql_version\": 170010, \"server_information\": {\"data_checksums\": \"on\", \"summarize_wal\": \"off\"}, \"status\": \"DONE\", \"system_id\": \"7667423650988187679\", \"tablespaces\": [], \"wal_information\": {\"compression_ratio\": 0, \"disk_usage\": \"16.0 MiB\", \"disk_usage_bytes\": 16777216, \"last_available\": \"000000010000000000000004\", \"no_of_files\": 1, \"timelines\": [], \"wal_rate\": \"5317.58/hour\", \"wal_rate_per_second\": 1.477105034664903}}}",
+        "stdout_bytes": 1688
+      },
+      "attributes": {
+        "operation": "barman-show-backup"
+      }
+    },
+    {
+      "id": "barman:barman-generate-manifest:2026-07-28T03:59:46.70799067Z",
+      "kind": "command",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.70799067Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "generate-manifest",
+          "integration",
+          "20260728T035944"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.619319462Z",
+        "finished_at": "2026-07-28T03:59:46.70799067Z",
+        "duration_millis": 88,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "Backup manifest for backup '20260728T035944' successfully generated for server ['integration']\n",
+        "stdout_bytes": 95
+      },
+      "attributes": {
+        "operation": "barman-generate-manifest"
+      }
+    },
+    {
+      "id": "barman:barman-verify-backup:2026-07-28T03:59:46.807698212Z",
+      "kind": "command",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.807698212Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "verify-backup",
+          "integration",
+          "20260728T035944"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "started_at": "2026-07-28T03:59:46.70801417Z",
+        "finished_at": "2026-07-28T03:59:46.807698212Z",
+        "duration_millis": 99,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "Verifying backup '20260728T035944' on server ['integration']\nCalling pg_verifybackup\nbackup successfully verified\n",
+        "stdout_bytes": 114
+      },
+      "attributes": {
+        "operation": "barman-verify-backup"
+      }
+    },
+    {
+      "id": "barman:restore-plan:2026-07-28T03:59:46.808021753Z",
+      "kind": "plan",
+      "source": "barman",
+      "collected_at": "2026-07-28T03:59:46.808021753Z",
+      "attributes": {
+        "operation": "restore-plan"
+      }
+    },
+    {
+      "id": "local:execute:barman-restore:2026-07-28T03:59:47.181048754Z",
+      "kind": "command",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:47.181048754Z",
+      "command": {
+        "path": "/usr/bin/barman",
+        "resolved_path": "/usr/bin/barman",
+        "args": [
+          "--config",
+          "/opt/pgdrill/test/barman.conf",
+          "restore",
+          "--get-wal",
+          "integration",
+          "20260728T035944",
+          "/validation/work/restore/data"
+        ],
+        "env": {
+          "BARMAN_CONFIG_FILE": "/opt/pgdrill/test/barman.conf"
+        },
+        "work_dir": "/validation/work/restore",
+        "started_at": "2026-07-28T03:59:46.814369587Z",
+        "finished_at": "2026-07-28T03:59:47.181048754Z",
+        "duration_millis": 366,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "Starting local restore for server integration using backup 20260728T035944\nDestination directory: /validation/work/restore/data\nCopying the base backup.\nGenerating recovery configuration\nIdentify dangerous settings in destination directory.\n\nIMPORTANT\nThese settings have been modified to prevent data losses\n\npostgresql.conf line 853: archive_command = false\n\nWARNING\nYou are required to review the following options as potentially dangerous\n\npostgresql.conf line 851: unix_socket_directories = '/validation/source-socket'\n\nWARNING: 'get-wal' is in the specified 'recovery_options'.\nBefore you start up the PostgreSQL server, please review the postgresql.auto.conf file\ninside the target directory. Make sure that 'restore_command' can be executed by the PostgreSQL user.\n\nRestore operation completed (start time: 2026-07-28 03:59:46.869437+00:00, elapsed time: less than one second)\nYour PostgreSQL server has been successfully prepared for recovery!\n",
+        "stdout_bytes": 953
+      },
+      "attributes": {
+        "operation": "execute:barman-restore"
+      }
+    },
+    {
+      "id": "local:postgres-start:2026-07-28T03:59:47.184002004Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:47.184002004Z",
+      "attributes": {
+        "archive_mode": "off",
+        "binary": "postgres",
+        "data_directory": "/validation/work/restore/data",
+        "host": "127.0.0.1",
+        "log_path": "/validation/work/restore/postgres.log",
+        "operation": "postgres-start",
+        "pid": "219",
+        "port": "55433",
+        "startup_status": "ready",
+        "startup_wait_millis": "276"
+      }
+    },
+    {
+      "id": "pg_isready:attempt:1:2026-07-28T03:59:47.46687767Z",
+      "kind": "command",
+      "source": "pg_isready",
+      "collected_at": "2026-07-28T03:59:47.46687767Z",
+      "command": {
+        "path": "pg_isready",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_isready",
+        "args": [
+          "-d",
+          "[REDACTED]",
+          "-t",
+          "3"
+        ],
+        "started_at": "2026-07-28T03:59:47.462584254Z",
+        "finished_at": "2026-07-28T03:59:47.46687767Z",
+        "duration_millis": 4,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": "127.0.0.1:55433 - accepting connections\n",
+        "stdout_bytes": 40
+      },
+      "attributes": {
+        "attempt": "1",
+        "operation": "run"
+      }
+    },
+    {
+      "id": "sql:run:2026-07-28T03:59:47.47060092Z",
+      "kind": "command",
+      "source": "sql",
+      "collected_at": "2026-07-28T03:59:47.47060092Z",
+      "command": {
+        "path": "psql",
+        "resolved_path": "/usr/lib/postgresql/17/bin/psql",
+        "args": [
+          "-X",
+          "-v",
+          "ON_ERROR_STOP=1",
+          "-d",
+          "[REDACTED]",
+          "-c",
+          "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_integration_probe"
+        ],
+        "started_at": "2026-07-28T03:59:47.466925712Z",
+        "finished_at": "2026-07-28T03:59:47.47060092Z",
+        "duration_millis": 3,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        },
+        "stdout": " ?column? \n----------\n        1\n(1 row)\n\n",
+        "stdout_bytes": 41
+      },
+      "attributes": {
+        "operation": "run"
+      }
+    },
+    {
+      "id": "pg_amcheck:run:2026-07-28T03:59:47.504835129Z",
+      "kind": "command",
+      "source": "amcheck",
+      "collected_at": "2026-07-28T03:59:47.504835129Z",
+      "command": {
+        "path": "pg_amcheck",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_amcheck",
+        "args": [
+          "[REDACTED]",
+          "--on-error-stop"
+        ],
+        "started_at": "2026-07-28T03:59:47.47063142Z",
+        "finished_at": "2026-07-28T03:59:47.504835129Z",
+        "duration_millis": 34,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        }
+      },
+      "attributes": {
+        "operation": "run"
+      }
+    },
+    {
+      "id": "pg_dump:run:2026-07-28T03:59:47.530201587Z",
+      "kind": "command",
+      "source": "pg_dump",
+      "collected_at": "2026-07-28T03:59:47.530201587Z",
+      "command": {
+        "path": "pg_dump",
+        "resolved_path": "/usr/lib/postgresql/17/bin/pg_dump",
+        "args": [
+          "--dbname",
+          "[REDACTED]",
+          "--file",
+          "/dev/null",
+          "--no-owner",
+          "--no-privileges",
+          "--schema-only"
+        ],
+        "started_at": "2026-07-28T03:59:47.504883087Z",
+        "finished_at": "2026-07-28T03:59:47.530201587Z",
+        "duration_millis": 25,
+        "exit_status": {
+          "started": true,
+          "exited": true,
+          "success": true,
+          "exit_code": 0
+        }
+      },
+      "attributes": {
+        "operation": "run"
+      }
+    },
+    {
+      "id": "local:postgres-stop:2026-07-28T03:59:47.535287962Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:47.535287962Z",
+      "attributes": {
+        "exit_error": "",
+        "log_path": "/validation/work/restore/postgres.log",
+        "operation": "postgres-stop",
+        "pid": "219",
+        "port": "55433",
+        "postgres_shutdown": "terminated"
+      }
+    },
+    {
+      "id": "local:destroy:2026-07-28T03:59:47.53831017Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:47.53831017Z",
+      "attributes": {
+        "cleanup": "removed",
+        "operation": "destroy",
+        "work_dir": "/validation/work/restore"
+      }
+    }
+  ],
+  "operations": [
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:f4678b0f3a657a480f0c48102f75bd808a0e8ff1549b7feb91513d123ced017d",
+        "identity": {
+          "run_id": "integration-barman-latest-20260728T035946Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:e7abb6cc588d20b1411588aee891c808d90b051e1859342dc2ee776219367107"
+        },
+        "stage": "target_preparation",
+        "kind": "target_prepare",
+        "name": "prepare-target",
+        "ordinal": 0
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T03:59:46.810010295Z",
+      "updated_at": "2026-07-28T03:59:46.812133337Z"
+    },
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:c48f162b91f6a537876653cc17f1afa258f1768fbaf0866441c194e6905e5793",
+        "identity": {
+          "run_id": "integration-barman-latest-20260728T035946Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:e7abb6cc588d20b1411588aee891c808d90b051e1859342dc2ee776219367107"
+        },
+        "stage": "restore_execution",
+        "kind": "restore_step",
+        "name": "barman-restore",
+        "ordinal": 1
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T03:59:46.813432503Z",
+      "updated_at": "2026-07-28T03:59:47.181182587Z"
+    },
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:6b78030753f0039c616be8728738bcb9f5a819dc981f2b3dd1540660ece004c1",
+        "identity": {
+          "run_id": "integration-barman-latest-20260728T035946Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:e7abb6cc588d20b1411588aee891c808d90b051e1859342dc2ee776219367107"
+        },
+        "stage": "postgres_start",
+        "kind": "postgres_start",
+        "name": "start-postgres",
+        "ordinal": 2
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T03:59:47.18330342Z",
+      "updated_at": "2026-07-28T03:59:47.460684045Z"
+    },
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:0e7eea5b39e77eb4253233431798528d2751880a94e96d57da5c50acb2617136",
+        "identity": {
+          "run_id": "integration-barman-latest-20260728T035946Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:e7abb6cc588d20b1411588aee891c808d90b051e1859342dc2ee776219367107"
+        },
+        "stage": "target_cleanup",
+        "kind": "target_cleanup",
+        "name": "cleanup-target",
+        "ordinal": 3
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T03:59:47.530983629Z",
+      "updated_at": "2026-07-28T03:59:47.538312837Z"
+    }
+  ],
+  "policy_evaluation": {
+    "schema_version": "pgdrill.recovery-policy-evaluation/v1",
+    "evaluated_at": "2026-07-28T03:59:47.540084879Z",
+    "recovery_proven_at": "2026-07-28T03:59:47.530226879Z",
+    "verdicts": [
+      {
+        "assertion": "rto",
+        "required": true,
+        "status": "passed",
+        "basis": "drill_start_to_recovery_proof",
+        "limit_millis": 300000,
+        "observed_millis": 1259,
+        "message": "recovery proof completed within the maximum RTO"
+      },
+      {
+        "assertion": "rpo",
+        "required": true,
+        "status": "passed",
+        "basis": "backup_finish_lower_bound",
+        "limit_millis": 600000,
+        "observed_millis": 2270,
+        "message": "selected backup finish proves a recoverable point within the maximum RPO"
+      },
+      {
+        "assertion": "backup_age",
+        "required": true,
+        "status": "passed",
+        "basis": "drill_start_to_backup_finish",
+        "limit_millis": 600000,
+        "observed_millis": 2270,
+        "message": "selected backup is within the maximum backup age"
+      },
+      {
+        "assertion": "recovery_target",
+        "required": true,
+        "status": "passed",
+        "basis": "post_restore_probes",
+        "satisfied": true,
+        "message": "PostgreSQL started and all required post-restore probes passed after applying the requested target"
+      },
+      {
+        "assertion": "cleanup",
+        "required": true,
+        "status": "passed",
+        "basis": "target_cleanup_checkpoint",
+        "satisfied": true,
+        "message": "owned target cleanup completed successfully"
+      }
+    ]
+  }
+}

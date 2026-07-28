@@ -1,0 +1,144 @@
+{
+  "schema_version": "pgdrill.attempt-recovery-result/v1",
+  "plan_digest": "sha256:70ec6e8c80676e53e599a1a4b203665233820d23eeeb5a418bd9407a6be9736a",
+  "attempt": {
+    "run_id": "integration-walg-killed-20260728T035925Z",
+    "attempt_id": "attempt-1",
+    "spec_digest": "sha256:97d15494cfe842f243b54001cb0f99dd4767c658faed2dfc86bb214027182bf4"
+  },
+  "checkpoints": [
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:4965a13ac7c5e49a76109bfe39672b15d6b66a1a5b8ca34b277eedf6e4ac1162",
+        "identity": {
+          "run_id": "integration-walg-killed-20260728T035925Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:97d15494cfe842f243b54001cb0f99dd4767c658faed2dfc86bb214027182bf4"
+        },
+        "stage": "target_preparation",
+        "kind": "target_prepare",
+        "name": "prepare-target",
+        "ordinal": 0
+      },
+      "state": "succeeded",
+      "started_at": "2026-07-28T03:59:25.712703633Z",
+      "updated_at": "2026-07-28T03:59:25.714888258Z"
+    },
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:f8853ad0a8f598643d087f4aed73de2c10f70485bed6b2b69940ccd9da7fa276",
+        "identity": {
+          "run_id": "integration-walg-killed-20260728T035925Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:97d15494cfe842f243b54001cb0f99dd4767c658faed2dfc86bb214027182bf4"
+        },
+        "stage": "restore_execution",
+        "kind": "restore_step",
+        "name": "wal-g-backup-fetch",
+        "ordinal": 1
+      },
+      "state": "unknown",
+      "started_at": "2026-07-28T03:59:25.716649591Z",
+      "updated_at": "2026-07-28T03:59:25.768835758Z",
+      "reconciled": true,
+      "message": "operation receipt is absent; mutation outcome cannot be proven"
+    }
+  ],
+  "cleanup_checkpoint": {
+    "schema_version": "pgdrill.operation-checkpoint/v1",
+    "operation": {
+      "key": "sha256:073486eae29a198956d2be16fbc2d826158b79d68cc5374de8dad911a34db3f8",
+      "identity": {
+        "run_id": "integration-walg-killed-20260728T035925Z",
+        "attempt_id": "attempt-1",
+        "spec_digest": "sha256:97d15494cfe842f243b54001cb0f99dd4767c658faed2dfc86bb214027182bf4"
+      },
+      "stage": "target_cleanup",
+      "kind": "target_cleanup",
+      "name": "recover-cleanup-target",
+      "ordinal": 1073741824
+    },
+    "state": "succeeded",
+    "started_at": "2026-07-28T03:59:25.769835883Z",
+    "updated_at": "2026-07-28T03:59:25.770483716Z",
+    "reconciled": true,
+    "message": "local target work_dir is absent"
+  },
+  "evidence": [
+    {
+      "id": "local:operation-reconcile:2026-07-28T03:59:25.768835174Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:25.768835174Z",
+      "attributes": {
+        "disposition": "unknown",
+        "operation": "operation-reconcile",
+        "operation_key": "sha256:f8853ad0a8f598643d087f4aed73de2c10f70485bed6b2b69940ccd9da7fa276",
+        "work_dir": "/validation/work/restore"
+      }
+    },
+    {
+      "id": "local:operation-reconcile:2026-07-28T03:59:25.770461591Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:25.770461591Z",
+      "attributes": {
+        "disposition": "not_applied",
+        "operation": "operation-reconcile",
+        "operation_key": "sha256:073486eae29a198956d2be16fbc2d826158b79d68cc5374de8dad911a34db3f8",
+        "work_dir": "/validation/work/restore"
+      }
+    },
+    {
+      "id": "local:destroy:2026-07-28T03:59:25.770480258Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:25.770480258Z",
+      "attributes": {
+        "cleanup": "removed",
+        "operation": "destroy",
+        "work_dir": "/validation/work/restore"
+      }
+    },
+    {
+      "id": "local:operation-reconcile:2026-07-28T03:59:25.770483049Z",
+      "kind": "runtime",
+      "source": "local",
+      "collected_at": "2026-07-28T03:59:25.770483049Z",
+      "attributes": {
+        "disposition": "completed",
+        "operation": "operation-reconcile",
+        "operation_key": "sha256:073486eae29a198956d2be16fbc2d826158b79d68cc5374de8dad911a34db3f8",
+        "work_dir": "/validation/work/restore"
+      }
+    }
+  ],
+  "unresolved_operations": [
+    {
+      "schema_version": "pgdrill.operation-checkpoint/v1",
+      "operation": {
+        "key": "sha256:f8853ad0a8f598643d087f4aed73de2c10f70485bed6b2b69940ccd9da7fa276",
+        "identity": {
+          "run_id": "integration-walg-killed-20260728T035925Z",
+          "attempt_id": "attempt-1",
+          "spec_digest": "sha256:97d15494cfe842f243b54001cb0f99dd4767c658faed2dfc86bb214027182bf4"
+        },
+        "stage": "restore_execution",
+        "kind": "restore_step",
+        "name": "wal-g-backup-fetch",
+        "ordinal": 1
+      },
+      "state": "unknown",
+      "started_at": "2026-07-28T03:59:25.716649591Z",
+      "updated_at": "2026-07-28T03:59:25.768835758Z",
+      "reconciled": true,
+      "message": "operation receipt is absent; mutation outcome cannot be proven"
+    }
+  ],
+  "source_reconciliation_complete": false,
+  "target_ready_for_retry": true,
+  "history_preserved": true,
+  "already_clean": false
+}
