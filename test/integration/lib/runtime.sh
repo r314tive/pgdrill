@@ -64,6 +64,60 @@ pgdrill_integration_docker_arch() {
   esac
 }
 
+pgdrill_integration_target_arch() {
+  local configured_arch="${PGDRILL_INTEGRATION_TARGET_ARCH:-}"
+  if [[ -z "${configured_arch}" ]]; then
+    pgdrill_integration_docker_arch
+    return
+  fi
+  case "${configured_arch}" in
+    amd64 | arm64)
+      printf '%s\n' "${configured_arch}"
+      ;;
+    *)
+      pgdrill_integration_die \
+        "unsupported PGDRILL_INTEGRATION_TARGET_ARCH: ${configured_arch}; expected amd64 or arm64"
+      ;;
+  esac
+}
+
+pgdrill_integration_ensure_image_platform() {
+  local image="$1"
+  local target_arch="$2"
+  local description="$3"
+  local image_arch
+
+  image_arch="$(docker image inspect --format '{{.Architecture}}' "${image}" 2>/dev/null || true)"
+  if [[ "${image_arch}" != "${target_arch}" ]]; then
+    pgdrill_integration_log "pulling immutable ${description} image for linux/${target_arch}"
+    docker pull --platform "linux/${target_arch}" "${image}" >/dev/null
+    image_arch="$(docker image inspect --format '{{.Architecture}}' "${image}" 2>/dev/null || true)"
+  else
+    pgdrill_integration_log "using cached immutable ${description} image for linux/${target_arch}"
+  fi
+  [[ "${image_arch}" == "${target_arch}" ]] ||
+    pgdrill_integration_die \
+      "${description} image architecture ${image_arch:-unknown} does not match linux/${target_arch}"
+}
+
+pgdrill_integration_postgres_18_3_image() {
+  local target_arch="$1"
+  case "${target_arch}" in
+    amd64)
+      printf '%s\n' \
+        "postgres@sha256:a145910d7079e9fbf73e6df19d5fcca0ce59d747cf7d97ac772bff28c3759c32"
+      ;;
+    arm64)
+      printf '%s\n' \
+        "postgres@sha256:0c24d31b13a9801233f136bc80e908bda9577ab7e9c622e572eebc13c186ed4d"
+      ;;
+    *)
+      pgdrill_integration_die \
+        "PostgreSQL 18.3 image is not pinned for linux/${target_arch}"
+      ;;
+  esac
+}
+
 pgdrill_integration_host_os() {
   case "$(uname -s)" in
     Darwin)
@@ -322,7 +376,7 @@ pgdrill_integration_prepare_image() {
   local dockerfile="$6"
   local build_context="$7"
   local target_arch="$8"
-  local cached_definition
+  local cached_arch cached_base_image cached_definition
 
   PGDRILL_INT_IMAGE_DEFINITION_SHA256="$(pgdrill_integration_sha256_file "${dockerfile}")"
   PGDRILL_INT_IMAGE_SOURCE="pinned_build"
@@ -334,17 +388,20 @@ pgdrill_integration_prepare_image() {
   else
     PGDRILL_INT_CONTAINER_IMAGE="${default_image}"
     cached_definition="$(docker image inspect --format '{{ index .Config.Labels "org.pgdrill.integration.definition-sha" }}' "${PGDRILL_INT_CONTAINER_IMAGE}" 2>/dev/null || true)"
-    if [[ "${cached_definition}" != "${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" ]]; then
-      if docker image inspect "${base_image}" >/dev/null 2>&1; then
-        pgdrill_integration_log "using cached immutable PostgreSQL ${postgres_version} base image for linux/${target_arch}"
-      else
-        pgdrill_integration_log "pulling immutable PostgreSQL ${postgres_version} base image for linux/${target_arch}"
-        docker pull --platform "linux/${target_arch}" "${base_image}" >/dev/null
-      fi
+    cached_base_image="$(docker image inspect --format '{{ index .Config.Labels "org.pgdrill.integration.base-image" }}' "${PGDRILL_INT_CONTAINER_IMAGE}" 2>/dev/null || true)"
+    cached_arch="$(docker image inspect --format '{{.Architecture}}' "${PGDRILL_INT_CONTAINER_IMAGE}" 2>/dev/null || true)"
+    if [[ "${cached_definition}" != "${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" ||
+      "${cached_base_image}" != "${base_image}" ||
+      "${cached_arch}" != "${target_arch}" ]]; then
+      pgdrill_integration_ensure_image_platform \
+        "${base_image}" \
+        "${target_arch}" \
+        "PostgreSQL ${postgres_version} base"
       pgdrill_integration_log "building pinned ${runtime_name} runtime for linux/${target_arch}"
       docker build \
         --pull=false \
         --platform "linux/${target_arch}" \
+        --build-arg "POSTGRES_IMAGE=${base_image}" \
         --build-arg "PGDRILL_INTEGRATION_DEFINITION_SHA=${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" \
         --tag "${PGDRILL_INT_CONTAINER_IMAGE}" \
         --file "${dockerfile}" \
@@ -354,9 +411,18 @@ pgdrill_integration_prepare_image() {
     fi
   fi
   PGDRILL_INT_CONTAINER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${PGDRILL_INT_CONTAINER_IMAGE}")"
+  PGDRILL_INT_CONTAINER_IMAGE_ARCH="$(docker image inspect --format '{{.Architecture}}' "${PGDRILL_INT_CONTAINER_IMAGE}")"
   PGDRILL_INT_IMAGE_DEFINITION_LABEL="$(docker image inspect --format '{{ index .Config.Labels "org.pgdrill.integration.definition-sha" }}' "${PGDRILL_INT_CONTAINER_IMAGE}")"
+  PGDRILL_INT_IMAGE_BASE_LABEL="$(docker image inspect --format '{{ index .Config.Labels "org.pgdrill.integration.base-image" }}' "${PGDRILL_INT_CONTAINER_IMAGE}")"
+  if [[ "${PGDRILL_INT_CONTAINER_IMAGE_ARCH}" != "${target_arch}" ]]; then
+    pgdrill_integration_die \
+      "${runtime_name} image architecture ${PGDRILL_INT_CONTAINER_IMAGE_ARCH} does not match linux/${target_arch}"
+  fi
   if [[ "${PGDRILL_INT_IMAGE_SOURCE}" == "pinned_build" && "${PGDRILL_INT_IMAGE_DEFINITION_LABEL}" != "${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" ]]; then
     pgdrill_integration_die "built ${runtime_name} image definition label does not match ${PGDRILL_INT_IMAGE_DEFINITION_SHA256}"
+  fi
+  if [[ "${PGDRILL_INT_IMAGE_SOURCE}" == "pinned_build" && "${PGDRILL_INT_IMAGE_BASE_LABEL}" != "${base_image}" ]]; then
+    pgdrill_integration_die "built ${runtime_name} image base label does not match ${base_image}"
   fi
 }
 
@@ -365,9 +431,11 @@ pgdrill_integration_print_image_inventory() {
 
   printf 'container_image=%s\n' "${PGDRILL_INT_CONTAINER_IMAGE}"
   printf 'container_image_id=%s\n' "${PGDRILL_INT_CONTAINER_IMAGE_ID}"
+  printf 'container_image_architecture=%s\n' "${PGDRILL_INT_CONTAINER_IMAGE_ARCH}"
   printf 'container_image_source=%s\n' "${PGDRILL_INT_IMAGE_SOURCE}"
   printf 'container_expected_definition_sha256=%s\n' "${PGDRILL_INT_IMAGE_DEFINITION_SHA256}"
   printf 'container_image_definition_sha256=%s\n' "${PGDRILL_INT_IMAGE_DEFINITION_LABEL}"
+  printf 'container_image_base_label=%s\n' "${PGDRILL_INT_IMAGE_BASE_LABEL}"
   printf 'container_base_image=%s\n' "${base_image}"
 }
 

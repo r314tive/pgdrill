@@ -43,6 +43,17 @@ The runtime rejects an archive whose filename, architecture, checksum, version,
 or full commit binding is inconsistent. The operator-facing wrapper for this
 mode is documented under [demo/local](../../demo/local/README.md).
 
+Native scenarios target the Docker daemon architecture by default. Set
+`PGDRILL_INTEGRATION_TARGET_ARCH=amd64` or `arm64` to exercise another
+architecture when the daemon has the corresponding emulation support. The
+harness builds and runs every binary and provider image for that exact target
+and records both the daemon architecture and `build_target` in `runtime.txt`.
+An immutable platform-specific base-image manifest is selected and locally
+verified before `--pull never` execution.
+An emulated observation proves functional interoperability at that
+Linux/architecture point; it is not native-hardware performance or RTO
+evidence.
+
 Current scenarios:
 
 - [WAL-G to a local PostgreSQL target](walg/README.md)

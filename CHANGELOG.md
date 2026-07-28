@@ -18,6 +18,9 @@ called out explicitly even while the major version is `0`.
   timestamp-PITR paths, plus capability-specific matrix validation that
   requires a passed SQL boundary probe, attached evidence, recovery proof,
   and all five required policy verdicts.
+- An explicit `PGDRILL_INTEGRATION_TARGET_ARCH` override for native-provider
+  gates, with strict architecture validation and separate Docker-daemon versus
+  Linux build-target inventory for reviewed cross-architecture observations.
 - Typed CNPG Barman Cloud Plugin recovery with exact Barman backup-ID binding,
   read-only `externalClusters[].plugin` manifests, source plugin/ObjectStore
   discovery, selected-Backup method and plugin validation, fixture-driven JSON

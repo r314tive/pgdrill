@@ -165,9 +165,8 @@ Status: initial four-provider surface and semantic config validation
 implemented. WAL-G, Barman, pgBackRest, and pg_probackup now have one exact
 native field point each; broader storage, version, and PITR coverage remains
 in progress. Disposable local gates now prove latest plus inclusive timestamp
-PITR boundaries for all four providers; exact clean-candidate Barman,
-pgBackRest, and pg_probackup PITR evidence still needs promotion into the
-compatibility matrix.
+PITR boundaries for all four providers. Exact clean-candidate timestamp
+evidence for all four providers is retained in the compatibility matrix.
 
 - pg_probackup catalog discovery through `show --format=json`.
 - Optional pg_probackup selected-backup and recovery-target validation.

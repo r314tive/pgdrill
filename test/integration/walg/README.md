@@ -66,7 +66,9 @@ inventory records both archive and binary SHA-256 values. Dirty trees use a
 direct developer build because they cannot truthfully produce commit-bound
 release evidence.
 
-Supported Docker daemon architectures are `linux/amd64` and `linux/arm64`.
+Supported target architectures are `linux/amd64` and `linux/arm64`. By
+default the target matches the Docker daemon; `PGDRILL_INTEGRATION_TARGET_ARCH`
+selects an explicit architecture when Docker emulation is available.
 `PGDRILL_INTEGRATION_VERSION` can bind a clean candidate version, while
 `PGDRILL_INTEGRATION_POSTGRES_IMAGE` is an explicit image override for
 diagnostics. Any override changes the observed compatibility point and must be

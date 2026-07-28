@@ -11,7 +11,6 @@ readonly CACHE_ROOT="${PGDRILL_INTEGRATION_CACHE:-${ROOT}/.cache/integration/pgp
 readonly RUNS_DIR="${CACHE_ROOT}/runs"
 readonly PGPROBACKUP_VERSION="2.5.16"
 readonly POSTGRES_VERSION="18.3"
-readonly POSTGRES_IMAGE="postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db"
 readonly VERSION_BASE="${PGDRILL_INTEGRATION_VERSION:-v0.0.0-integration}"
 readonly PGDRILL_INTEGRATION_LOG_PREFIX="integration/pgprobackup-host"
 
@@ -33,8 +32,10 @@ git -C "${ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
   die "integration test must run from a Git checkout"
 
 docker_arch="$(docker info --format '{{.Architecture}}')"
-arch="$(pgdrill_integration_docker_arch)"
+arch="$(pgdrill_integration_target_arch)"
 readonly arch
+POSTGRES_IMAGE="$(pgdrill_integration_postgres_18_3_image "${arch}")"
+readonly POSTGRES_IMAGE
 
 pgdrill_integration_prepare_pgdrill "${ROOT}" "${CACHE_ROOT}" "${arch}" "${VERSION_BASE}"
 readonly PGDRILL_BINARY="${PGDRILL_INT_BINARY}"

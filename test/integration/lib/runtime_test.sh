@@ -31,6 +31,16 @@ tar -czf "${ARCHIVE}" -C "${STAGING}" "${ARCHIVE_ROOT}/pgdrill"
 ARCHIVE_SHA256="$(pgdrill_integration_sha256_file "${ARCHIVE}")"
 readonly ARCHIVE_SHA256
 
+target_arch="$(PGDRILL_INTEGRATION_TARGET_ARCH=amd64 pgdrill_integration_target_arch)"
+[[ "${target_arch}" == "amd64" ]] ||
+  fail "explicit target architecture was not retained"
+if (
+  export PGDRILL_INTEGRATION_TARGET_ARCH=x86_64
+  pgdrill_integration_target_arch
+) >/dev/null 2>&1; then
+  fail "unsupported target architecture was accepted"
+fi
+
 PGDRILL_INT_VERSION="${VERSION}"
 PGDRILL_INT_COMMIT="${COMMIT}"
 PGDRILL_INT_BUILD_DATE=""

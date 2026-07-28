@@ -10,8 +10,6 @@ readonly ROOT
 readonly CACHE_ROOT="${PGDRILL_INTEGRATION_CACHE:-${ROOT}/.cache/integration/walg}"
 readonly RUNS_DIR="${CACHE_ROOT}/runs"
 readonly WALG_VERSION="3.0.8"
-readonly POSTGRES_IMAGE_DEFAULT="postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db"
-readonly POSTGRES_IMAGE="${PGDRILL_INTEGRATION_POSTGRES_IMAGE:-${POSTGRES_IMAGE_DEFAULT}}"
 readonly VERSION_BASE="${PGDRILL_INTEGRATION_VERSION:-v0.0.0-integration}"
 readonly PGDRILL_INTEGRATION_LOG_PREFIX="integration/walg-host"
 
@@ -33,7 +31,7 @@ git -C "${ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
   die "integration test must run from a Git checkout"
 
 docker_arch="$(docker info --format '{{.Architecture}}')"
-arch="$(pgdrill_integration_docker_arch)"
+arch="$(pgdrill_integration_target_arch)"
 case "${arch}" in
   amd64)
     arch="amd64"
@@ -47,6 +45,9 @@ case "${arch}" in
     ;;
 esac
 readonly arch walg_asset walg_sha256
+postgres_image_default="$(pgdrill_integration_postgres_18_3_image "${arch}")"
+readonly postgres_image_default
+readonly POSTGRES_IMAGE="${PGDRILL_INTEGRATION_POSTGRES_IMAGE:-${postgres_image_default}}"
 
 pgdrill_integration_prepare_pgdrill "${ROOT}" "${CACHE_ROOT}" "${arch}" "${VERSION_BASE}"
 readonly RUNTIME_DIR="${PGDRILL_INT_RUNTIME_DIR}"
@@ -80,17 +81,14 @@ readonly CONTAINER_NAME="pgdrill-walg-integration-${run_stamp}"
 mkdir -p "${OUTPUT_DIR}"
 chmod 0777 "${OUTPUT_DIR}"
 
-if docker image inspect "${POSTGRES_IMAGE}" >/dev/null 2>&1; then
-  log "using cached immutable PostgreSQL 18.3 image for linux/${arch}"
-else
-  log "pulling immutable PostgreSQL 18.3 image for linux/${arch}"
-  docker pull --platform "linux/${arch}" "${POSTGRES_IMAGE}" >/dev/null
-fi
+pgdrill_integration_ensure_image_platform "${POSTGRES_IMAGE}" "${arch}" "PostgreSQL 18.3"
 image_id="$(docker image inspect --format '{{.Id}}' "${POSTGRES_IMAGE}")"
+image_arch="$(docker image inspect --format '{{.Architecture}}' "${POSTGRES_IMAGE}")"
 
 {
   printf 'container_image=%s\n' "${POSTGRES_IMAGE}"
   printf 'container_image_id=%s\n' "${image_id}"
+  printf 'container_image_architecture=%s\n' "${image_arch}"
   pgdrill_integration_print_runtime_inventory "${docker_arch}"
   printf 'wal_g_sha256=%s\n' "$(pgdrill_integration_sha256_file "${WALG_BINARY}")"
 } >"${OUTPUT_DIR}/runtime.txt"

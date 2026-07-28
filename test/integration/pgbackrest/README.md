@@ -51,7 +51,9 @@ extracts the exact archived binary, and records both archive and binary
 SHA-256 values. Only a reviewed clean-candidate run can be promoted into
 `compatibility/evidence`.
 
-Supported Docker daemon architectures are `linux/amd64` and `linux/arm64`.
+Supported target architectures are `linux/amd64` and `linux/arm64`. By
+default the target matches the Docker daemon; `PGDRILL_INTEGRATION_TARGET_ARCH`
+selects an explicit architecture when Docker emulation is available.
 `PGDRILL_INTEGRATION_VERSION` binds a clean candidate version.
 
 ## Scope Boundary

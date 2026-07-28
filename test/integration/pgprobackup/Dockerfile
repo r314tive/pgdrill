@@ -1,5 +1,7 @@
-FROM postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db AS builder
+ARG POSTGRES_IMAGE=postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db
+FROM ${POSTGRES_IMAGE} AS builder
 
+ARG POSTGRES_IMAGE
 ARG PGDRILL_INTEGRATION_DEFINITION_SHA
 
 RUN apt-get update \
@@ -52,8 +54,9 @@ RUN cp --archive pg_probackup postgresql-18.3/contrib/pg_probackup \
     && make --directory=contrib/amcheck DESTDIR=/stage install \
     && make --directory=contrib/pg_probackup DESTDIR=/stage install
 
-FROM postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db
+FROM ${POSTGRES_IMAGE}
 
+ARG POSTGRES_IMAGE
 ARG PGDRILL_INTEGRATION_DEFINITION_SHA
 
 LABEL org.pgdrill.integration.provider="pg_probackup" \
@@ -61,6 +64,7 @@ LABEL org.pgdrill.integration.provider="pg_probackup" \
       org.pgdrill.integration.pg-probackup-commit="79b986494ecea8bbd67f97a62ba8ae4a00703586" \
       org.pgdrill.integration.postgresql-version="18.3" \
       org.pgdrill.integration.postgresql-source-sha256="d95663fbbf3a80f81a9d98d895266bdcb74ba274bcc04ef6d76630a72dee016f" \
+      org.pgdrill.integration.base-image="${POSTGRES_IMAGE}" \
       org.pgdrill.integration.definition-sha="${PGDRILL_INTEGRATION_DEFINITION_SHA}"
 
 COPY --from=builder /stage/opt/postgresql-18.3 /opt/postgresql-18.3
