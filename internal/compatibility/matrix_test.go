@@ -23,8 +23,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 21 {
-		t.Fatalf("matrix entry count = %d, want 21", len(matrix.Entries))
+	if len(matrix.Entries) != 29 {
+		t.Fatalf("matrix entry count = %d, want 29", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -72,6 +72,14 @@ func TestCommittedMatrix(t *testing.T) {
 		"provider.barman.field.v0-3-0-alpha-8-pitr",
 		"provider.pg-probackup.field.v0-3-0-alpha-8-pitr",
 		"provider.pgbackrest.field.v0-3-0-alpha-8-pitr",
+		"provider.barman.field.v0-3-0-alpha-10-linux-amd64",
+		"provider.barman.field.v0-3-0-alpha-10-linux-amd64-pitr",
+		"provider.pg-probackup.field.v0-3-0-alpha-10-linux-amd64",
+		"provider.pg-probackup.field.v0-3-0-alpha-10-linux-amd64-pitr",
+		"provider.pgbackrest.field.v0-3-0-alpha-10-linux-amd64",
+		"provider.pgbackrest.field.v0-3-0-alpha-10-linux-amd64-pitr",
+		"provider.wal-g.field.v0-3-0-alpha-10-linux-amd64",
+		"provider.wal-g.field.v0-3-0-alpha-10-linux-amd64-pitr",
 	} {
 		if levels[id] != EvidenceLevelField {
 			t.Fatalf("%s level = %q, want field", id, levels[id])
@@ -150,6 +158,61 @@ func TestValidateTimestampPITREvidenceRequiresBoundaryAndPolicy(t *testing.T) {
 	result.PolicyEvaluation.Verdicts[1].Status = model.PolicyVerdictFailed
 	if err := validateTimestampPITREvidence(result); err == nil || !strings.Contains(err.Error(), "rpo") {
 		t.Fatalf("failed-RPO error = %v", err)
+	}
+}
+
+func TestValidateRuntimeInventoryBindsCrossArchitectureCandidate(t *testing.T) {
+	entry := Entry{
+		PGDrillVersions: []string{"v0.3.0-alpha.10"},
+		PGDrillCommits: []string{
+			"2f6b72ac8e94911f1c6b70ec1ecdcd50ca8e35ae",
+		},
+		Platforms:    []string{"linux/amd64"},
+		Capabilities: []string{"cross_architecture_functional"},
+	}
+	payload := strings.Join([]string{
+		"container_image_id=sha256:" + strings.Repeat("1", 64),
+		"container_image_architecture=amd64",
+		"docker_arch=aarch64",
+		"build_target=linux/amd64",
+		"go=go version go1.26.5 darwin/arm64",
+		"build_source=release_archive",
+		"version=v0.3.0-alpha.10",
+		"commit=2f6b72ac8e94911f1c6b70ec1ecdcd50ca8e35ae",
+		"build_date=2026-07-28T07:38:06+05:00",
+		"pgdrill_sha256=" + strings.Repeat("2", 64),
+		"release_archive=pgdrill_0.3.0-alpha.10_linux_amd64.tar.gz",
+		"release_archive_sha256=" + strings.Repeat("3", 64),
+	}, "\n") + "\n"
+	path := filepath.Join(t.TempDir(), "runtime.txt")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write runtime inventory: %v", err)
+	}
+	if err := validateRuntimeInventory(entry, path); err != nil {
+		t.Fatalf("valid runtime inventory rejected: %v", err)
+	}
+
+	sameArchitecture := strings.Replace(payload, "docker_arch=aarch64", "docker_arch=amd64", 1)
+	if err := os.WriteFile(path, []byte(sameArchitecture), 0o600); err != nil {
+		t.Fatalf("write same-architecture runtime inventory: %v", err)
+	}
+	if err := validateRuntimeInventory(entry, path); err == nil ||
+		!strings.Contains(err.Error(), "does not prove cross-architecture") {
+		t.Fatalf("same-architecture error = %v", err)
+	}
+
+	wrongArchive := strings.Replace(
+		payload,
+		"pgdrill_0.3.0-alpha.10_linux_amd64.tar.gz",
+		"pgdrill_0.3.0-alpha.10_linux_arm64.tar.gz",
+		1,
+	)
+	if err := os.WriteFile(path, []byte(wrongArchive), 0o600); err != nil {
+		t.Fatalf("write wrong-archive runtime inventory: %v", err)
+	}
+	if err := validateRuntimeInventory(entry, path); err == nil ||
+		!strings.Contains(err.Error(), "release_archive") {
+		t.Fatalf("wrong-archive error = %v", err)
 	}
 }
 

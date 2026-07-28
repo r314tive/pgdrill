@@ -74,8 +74,9 @@ repeatable native path through the same engine lifecycle.
 
 Status: usable for local-target smoke drills and field-exercised at exact WAL-G
 3.0.8, Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 /
-PostgreSQL 18.3 Linux arm64 points. All four also passed from one
-`v0.1.0-alpha.10` commit and deterministic release archive.
+PostgreSQL 18.3 Linux arm64 points. All four also passed latest and timestamp
+recovery from one `v0.3.0-alpha.10` deterministic Linux amd64 archive through
+Docker emulation; that is functional rather than performance evidence.
 
 - JSON evidence sink wired into `pgdrill run`.
 - JSON evidence report written to disk.
@@ -162,11 +163,12 @@ Remaining compatibility extension:
 ## Phase 4: More Providers And Probes
 
 Status: initial four-provider surface and semantic config validation
-implemented. WAL-G, Barman, pgBackRest, and pg_probackup now have one exact
-native field point each; broader storage, version, and PITR coverage remains
-in progress. Disposable local gates now prove latest plus inclusive timestamp
-PITR boundaries for all four providers. Exact clean-candidate timestamp
-evidence for all four providers is retained in the compatibility matrix.
+implemented. WAL-G, Barman, pgBackRest, and pg_probackup have exact Linux
+arm64 observations plus retained Linux amd64 emulated functional observations;
+broader storage, version, native-hardware, and PITR coverage remains in
+progress. Disposable local gates prove latest plus inclusive timestamp PITR
+boundaries for all four providers, with exact clean-candidate evidence retained
+in the compatibility matrix.
 
 - pg_probackup catalog discovery through `show --format=json`.
 - Optional pg_probackup selected-backup and recovery-target validation.
@@ -268,8 +270,10 @@ Completed foundation:
 
 Remaining external engine gate:
 
-1. Broaden every provider beyond its first local latest-recovery point across
-   storage backends, versions, platforms, backup modes, and PITR targets.
+1. Broaden every provider beyond local filesystem repositories and one
+   PostgreSQL/tool version across real object or remote storage, a second
+   PostgreSQL major, native Linux amd64 hardware, additional backup modes, and
+   non-timestamp PITR targets where the provider contract supports them.
 
 `pgdrill.report/v1` is now the durable terminal contract. Readers preserve the
 documented `v1alpha1` compatibility floor. The CLI remains journal-free by

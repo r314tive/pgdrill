@@ -50,14 +50,19 @@ func (l EvidenceLevel) IsKnown() bool {
 type EvidenceKind string
 
 const (
-	EvidenceKindFixture         EvidenceKind = "fixture"
-	EvidenceKindConformanceTest EvidenceKind = "conformance_test"
-	EvidenceKindDrillReport     EvidenceKind = "drill_report"
-	EvidenceKindFieldNote       EvidenceKind = "field_note"
+	EvidenceKindFixture          EvidenceKind = "fixture"
+	EvidenceKindConformanceTest  EvidenceKind = "conformance_test"
+	EvidenceKindDrillReport      EvidenceKind = "drill_report"
+	EvidenceKindFieldNote        EvidenceKind = "field_note"
+	EvidenceKindRuntimeInventory EvidenceKind = "runtime_inventory"
 )
 
 func (k EvidenceKind) IsKnown() bool {
-	return k == EvidenceKindFixture || k == EvidenceKindConformanceTest || k == EvidenceKindDrillReport || k == EvidenceKindFieldNote
+	return k == EvidenceKindFixture ||
+		k == EvidenceKindConformanceTest ||
+		k == EvidenceKindDrillReport ||
+		k == EvidenceKindFieldNote ||
+		k == EvidenceKindRuntimeInventory
 }
 
 type Matrix struct {
@@ -204,6 +209,9 @@ func (e Entry) validate(updatedAt time.Time) error {
 		if evidence.Kind == EvidenceKindDrillReport && e.EvidenceLevel != EvidenceLevelField {
 			return fmt.Errorf("evidence %d drill_report is allowed only for field evidence", index)
 		}
+		if evidence.Kind == EvidenceKindRuntimeInventory && e.EvidenceLevel != EvidenceLevelField {
+			return fmt.Errorf("evidence %d runtime_inventory is allowed only for field evidence", index)
+		}
 	}
 
 	switch e.EvidenceLevel {
@@ -236,10 +244,14 @@ func (e Entry) validate(updatedAt time.Time) error {
 		}
 		foundFieldNote := false
 		drillReports := 0
+		runtimeInventories := 0
 		for _, evidence := range e.Evidence {
 			foundFieldNote = foundFieldNote || evidence.Kind == EvidenceKindFieldNote
 			if evidence.Kind == EvidenceKindDrillReport {
 				drillReports++
+			}
+			if evidence.Kind == EvidenceKindRuntimeInventory {
+				runtimeInventories++
 			}
 		}
 		if !foundFieldNote {
@@ -247,6 +259,12 @@ func (e Entry) validate(updatedAt time.Time) error {
 		}
 		if e.Component == ComponentProvider && drillReports != 1 {
 			return fmt.Errorf("provider field evidence requires exactly one drill_report reference")
+		}
+		if runtimeInventories > 1 {
+			return fmt.Errorf("field evidence permits at most one runtime_inventory reference")
+		}
+		if hasCapability(e, "cross_architecture_functional") && runtimeInventories != 1 {
+			return fmt.Errorf("cross-architecture field evidence requires exactly one runtime_inventory reference")
 		}
 	}
 	return nil
@@ -271,9 +289,151 @@ func (m Matrix) ValidateReferences(root string) error {
 					return fmt.Errorf("entry %q evidence %q: %w", entry.ID, evidence.Ref, err)
 				}
 			}
+			if evidence.Kind == EvidenceKindRuntimeInventory {
+				if err := validateRuntimeInventory(entry, path); err != nil {
+					return fmt.Errorf("entry %q evidence %q: %w", entry.ID, evidence.Ref, err)
+				}
+			}
 		}
 	}
 	return nil
+}
+
+var runtimeKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func validateRuntimeInventory(entry Entry, path string) error {
+	values, err := readRuntimeInventory(path)
+	if err != nil {
+		return err
+	}
+	required := func(key string) (string, error) {
+		value := values[key]
+		if value == "" {
+			return "", fmt.Errorf("runtime inventory key %q is required", key)
+		}
+		return value, nil
+	}
+	requireEqual := func(key, expected string) error {
+		actual, err := required(key)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return fmt.Errorf("runtime inventory %s %q does not match %q", key, actual, expected)
+		}
+		return nil
+	}
+
+	platform := entry.Platforms[0]
+	operatingSystem, architecture, found := strings.Cut(platform, "/")
+	if !found || operatingSystem != "linux" || architecture == "" {
+		return fmt.Errorf("runtime inventory validation requires a linux/<architecture> platform, got %q", platform)
+	}
+	for key, expected := range map[string]string{
+		"build_source":                 "release_archive",
+		"build_target":                 platform,
+		"commit":                       entry.PGDrillCommits[0],
+		"container_image_architecture": architecture,
+		"version":                      entry.PGDrillVersions[0],
+	} {
+		if err := requireEqual(key, expected); err != nil {
+			return err
+		}
+	}
+
+	archive, err := required("release_archive")
+	if err != nil {
+		return err
+	}
+	expectedArchive := fmt.Sprintf(
+		"pgdrill_%s_%s_%s.tar.gz",
+		strings.TrimPrefix(entry.PGDrillVersions[0], "v"),
+		operatingSystem,
+		architecture,
+	)
+	if archive != expectedArchive {
+		return fmt.Errorf("runtime inventory release_archive %q does not match %q", archive, expectedArchive)
+	}
+	for _, key := range []string{
+		"container_image_id",
+		"pgdrill_sha256",
+		"release_archive_sha256",
+	} {
+		value, err := required(key)
+		if err != nil {
+			return err
+		}
+		value = strings.TrimPrefix(value, "sha256:")
+		if !sha256Pattern.MatchString(value) {
+			return fmt.Errorf("runtime inventory %s is not a SHA-256 digest", key)
+		}
+	}
+	if _, err := required("go"); err != nil {
+		return err
+	}
+	buildDate, err := required("build_date")
+	if err != nil {
+		return err
+	}
+	if _, err := time.Parse(time.RFC3339, buildDate); err != nil {
+		return fmt.Errorf("runtime inventory build_date is not RFC3339: %w", err)
+	}
+
+	dockerArchitecture, err := required("docker_arch")
+	if err != nil {
+		return err
+	}
+	if hasCapability(entry, "cross_architecture_functional") {
+		normalized, ok := normalizeArchitecture(dockerArchitecture)
+		if !ok {
+			return fmt.Errorf("runtime inventory docker_arch %q is unsupported", dockerArchitecture)
+		}
+		if normalized == architecture {
+			return fmt.Errorf("runtime inventory does not prove cross-architecture execution")
+		}
+	}
+	return nil
+}
+
+func readRuntimeInventory(path string) (map[string]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open runtime inventory: %w", err)
+	}
+	defer file.Close()
+
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(file)
+	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found || !runtimeKeyPattern.MatchString(key) || value == "" {
+			return nil, fmt.Errorf("runtime inventory line %d must be a nonempty key=value record", lineNumber)
+		}
+		if _, exists := values[key]; exists {
+			return nil, fmt.Errorf("runtime inventory line %d duplicates key %q", lineNumber, key)
+		}
+		values[key] = value
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read runtime inventory: %w", err)
+	}
+	return values, nil
+}
+
+func normalizeArchitecture(value string) (string, bool) {
+	switch value {
+	case "amd64", "x86_64":
+		return "amd64", true
+	case "arm64", "aarch64":
+		return "arm64", true
+	default:
+		return "", false
+	}
 }
 
 func validateReference(root, reference string) (string, error) {

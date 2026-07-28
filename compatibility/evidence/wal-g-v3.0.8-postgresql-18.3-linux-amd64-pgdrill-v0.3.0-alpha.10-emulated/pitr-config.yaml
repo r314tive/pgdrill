@@ -1,0 +1,68 @@
+cluster:
+  name: integration-walg-postgresql-18-pitr
+
+provider:
+  type: wal-g
+  binary: /opt/pgdrill/bin/wal-g
+  timeout: 5m
+  wal_verify:
+    enabled: true
+    checks:
+      - integrity
+    timeout: 5m
+  env:
+    WALG_FILE_PREFIX: /validation/repository
+    WALG_COMPRESSION_METHOD: lz4
+
+target:
+  type: local
+  work_dir: /validation/work/restore
+  postgres_binary: /usr/lib/postgresql/18/bin/postgres
+  postgres_port: 55432
+  startup_timeout: 30s
+  shutdown_timeout: 30s
+  remove_work_dir: true
+
+restore:
+  timeout: 10m
+  verify_backup:
+    enabled: false
+
+recovery:
+  target: timestamp
+  value: "2026-07-28T02:38:24.574751Z"
+  timeline: latest
+  inclusive: true
+
+policy:
+  maximum_rto: 5m
+  maximum_rpo: 10m
+  maximum_backup_age: 10m
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: pg_isready
+    binary: /usr/lib/postgresql/18/bin/pg_isready
+    timeout: 30s
+  - type: sql
+    name: timestamp_boundary_replayed
+    binary: /usr/lib/postgresql/18/bin/psql
+    query: "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') and not bool_or(payload = 'post-target-wal-sentinel') then 1 else 0 end from public.pgdrill_integration_probe"
+    timeout: 30s
+  - type: amcheck
+    name: structural_amcheck
+    binary: /usr/lib/postgresql/18/bin/pg_amcheck
+    mode: database
+    args:
+      on_error_stop: "true"
+    timeout: 2m
+  - type: pg_dump
+    name: schema_dump
+    binary: /usr/lib/postgresql/18/bin/pg_dump
+    mode: schema
+    timeout: 2m
+
+report:
+  format: json
+  path: /output/pitr-report.json

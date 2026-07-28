@@ -32,7 +32,10 @@ operator version when applicable, pgdrill version, and full commit. Release
 packaging validates and includes the matrix and this document. A field entry
 that claims `timestamp_pitr` must additionally contain a passed SQL boundary
 probe with evidence, a recovery proof timestamp, and passed required verdicts
-for all five recovery-policy assertions.
+for all five recovery-policy assertions. A field entry may also reference a
+typed runtime inventory. Cross-architecture claims require it and are checked
+against the container architecture, Linux build target, exact candidate
+archive, checksum, version, and full commit.
 
 ## Release Platforms
 
@@ -152,6 +155,31 @@ not published or signed, and the results do not establish remote storage,
 other backup modes or recovery targets, cross-version behavior, performance,
 production RTO, or a support range.
 
+### v0.3.0-alpha.10 Linux amd64 Functional Gate
+
+On 2026-07-28, the exact clean commit
+`2f6b72ac8e94911f1c6b70ec1ecdcd50ca8e35ae` completed latest and inclusive
+timestamp drills with WAL-G 3.0.8, Barman 3.19.1, pgBackRest 2.58.0, and
+pg_probackup 2.5.16 against PostgreSQL 18.3 on Linux amd64. All eight restore
+points used the same deterministic `v0.3.0-alpha.10` candidate archive, whose
+SHA-256 was
+`5ef7ca808c26eacba7afc079a3ac4af16159c75f0296dac15e2a2e43756a0a38`.
+
+Each provider recovered row 101 committed and archived after the full backup.
+Each timestamp drill excluded archived row 102 committed after the requested
+target. Provider-native catalog, backup, repository, manifest, or WAL checks
+as applicable, PostgreSQL startup, SQL boundary assertions, `pg_amcheck`,
+schema-only `pg_dump`, all five required policy verdicts, and owned cleanup
+passed.
+
+The Linux amd64 containers ran through Docker emulation on an arm64 daemon.
+The retained typed runtime inventories bind that execution architecture to the
+candidate version, full commit, archive name, and checksums. These are
+functional Linux amd64 observations, not native-hardware performance or RTO
+evidence. The repositories were local, the candidate was not published or
+signed, and broader storage, version, backup-mode, and recovery-target claims
+remain external gates.
+
 ### WAL-G Field Validation
 
 On 2026-07-21, pgdrill `v0.1.0-dev` at commit
@@ -243,7 +271,7 @@ continuity; retain the provider check and completed restore evidence.
 ## Restore Targets
 
 The local target is covered by process, filesystem-boundary, cleanup, and probe
-tests using controlled executables. The four native-provider field points
+tests using controlled executables. The retained native-provider field points
 above additionally exercise real PostgreSQL startup and native repositories;
 other version, storage, and recovery-target combinations remain external
 gates.

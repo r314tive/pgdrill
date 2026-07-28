@@ -21,6 +21,9 @@ called out explicitly even while the major version is `0`.
 - An explicit `PGDRILL_INTEGRATION_TARGET_ARCH` override for native-provider
   gates, with strict architecture validation and separate Docker-daemon versus
   Linux build-target inventory for reviewed cross-architecture observations.
+- Typed compatibility `runtime_inventory` evidence that binds cross-architecture
+  claims to the executed platform, container architecture, exact candidate
+  archive, checksum, version, and commit.
 - Typed CNPG Barman Cloud Plugin recovery with exact Barman backup-ID binding,
   read-only `externalClusters[].plugin` manifests, source plugin/ObjectStore
   discovery, selected-Backup method and plugin validation, fixture-driven JSON

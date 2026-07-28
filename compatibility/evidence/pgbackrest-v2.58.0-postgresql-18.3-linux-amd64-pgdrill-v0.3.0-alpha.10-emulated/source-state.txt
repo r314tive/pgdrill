@@ -1,0 +1,10 @@
+pgdrill=pgdrill v0.3.0-alpha.10 (2f6b72ac8e94911f1c6b70ec1ecdcd50ca8e35ae, 2026-07-28T02:38:06Z)
+pgbackrest=pgBackRest 2.58.0
+postgresql=postgres (PostgreSQL) 18.3 (Debian 18.3-1.pgdg13+1)
+latest_recovery_source_rows=101
+timestamp_recovery_target=2026-07-28T02:39:04.745627Z
+source_rows_after_target=102
+backup_label=20260728-023901F
+sentinel_wal=000000010000000000000004
+post_target_wal=000000010000000000000007
+[{"archive":[{"database":{"id":1,"repo-key":1},"id":"18-1","max":"000000010000000000000009","min":"000000010000000000000001"}],"backup":[{"archive":{"start":"000000010000000000000003","stop":"000000010000000000000003"},"backrest":{"format":5,"version":"2.58.0"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":23759582,"repository":{"delta":3079135,"size":3079135},"size":23759582},"label":"20260728-023901F","lsn":{"start":"0/3000028","stop":"0/3000120"},"prior":null,"reference":null,"timestamp":{"start":1785206341,"stop":1785206343},"type":"full"}],"cipher":"none","db":[{"id":1,"repo-key":1,"system-id":7667402849041707040,"version":"18"}],"name":"integration","repo":[{"cipher":"none","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]

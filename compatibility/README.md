@@ -22,5 +22,13 @@ identity, recovery target, date, PostgreSQL/tool versions, CNPG operator
 version when applicable, pgdrill version, and full commit. Release packaging
 repeats the same validation.
 
+Field entries may also retain a typed `runtime_inventory` reference. It binds
+the observed Linux target, container architecture, candidate archive name and
+checksums, pgdrill version, and full commit. Entries that claim
+`cross_architecture_functional` must include this evidence and prove that the
+Docker daemon architecture differs from the executed Linux architecture. Such
+an observation is functional evidence only, not native-hardware performance or
+RTO evidence.
+
 Add a native version only after retaining a completed real drill report. Add a
 new field entry rather than widening an older observation to untested versions.
