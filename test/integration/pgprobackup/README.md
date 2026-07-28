@@ -18,7 +18,10 @@ The scenario:
 6. repeats selected-backup `validate --wal`, restores with local `archive-get`,
    and starts the target on a separate port;
 7. requires readiness, the 101-row WAL sentinel, `pg_amcheck`, schema dump,
-   recovery policy, and owned cleanup to pass.
+   recovery policy, and owned cleanup to pass;
+8. records an exact timestamp, commits row 102 after it, byte-compares its
+   archived WAL, and requires a second restore to retain row 101 but not row
+   102.
 
 ## Run
 
@@ -37,11 +40,11 @@ hash and image ID are recorded. The actual drill has no network, runs as UID
 999 with all Linux capabilities dropped and a read-only root filesystem, and
 uses disposable tmpfs state.
 
-Each run writes `report.json`, doctor/catalog output, source and provider logs,
-generated catalog configuration, source/build and runtime inventories,
-operation checkpoints, the validated history attempt/list/full-verification
-views, an archive of the raw private history store, and recursive checksums
-under the ignored
+Each run writes latest and timestamp-PITR reports, doctor/catalog output,
+source and provider logs, generated catalog configuration, source/build and
+runtime inventories, operation checkpoints, the validated history
+attempt/list/full-verification views, an archive of the raw private history
+store, and recursive checksums under the ignored
 `.cache/integration/pgprobackup/runs/<timestamp>/` directory. An explicit
 `PGDRILL_INTEGRATION_PGPROBACKUP_IMAGE` override must already exist locally;
 the runtime still refuses unexpected pg_probackup or PostgreSQL versions and
@@ -59,7 +62,8 @@ Supported Docker daemon architectures are `linux/amd64` and `linux/arm64`.
 ## Scope Boundary
 
 This test covers one same-host filesystem catalog, one compressed full STREAM
-backup, continuous WAL archive push/get, latest recovery, one post-backup WAL
-segment, a superuser connection, and one container boundary. It does not
-establish remote SSH, incremental modes, other PITR targets, other versions or
-platforms, production RTO, or customer readiness.
+backup, continuous WAL archive push/get, latest recovery, inclusive timestamp
+PITR with a proved before/after transaction boundary, a superuser connection,
+and one container boundary. It does not establish remote SSH, incremental
+modes, other PITR targets, other versions or platforms, production RTO, or
+customer readiness.

@@ -132,12 +132,10 @@ Implemented provider validation:
   provider verification when `provider.barman_verify_backup.enabled` is true
 - optional `barman generate-manifest <server> <backup-id>` before
   `verify-backup` when `provider.barman_generate_manifest.enabled` is true
+- repeated validation accepts Barman's exact "backup_manifest already exists"
+  exit only when `verify-backup` is enabled and subsequently succeeds; an
+  existing but unverified manifest remains a failed provider check
 - command evidence and structured exit status for all provider checks
-
-Planned commands:
-
-- richer Barman manifest handling if real repositories expose more cases than
-  `generate-manifest`
 
 Initial value:
 
@@ -186,6 +184,8 @@ Implemented restore planning:
   `--type=lsn`, `--type=xid`, `--type=name`, `--type=immediate`,
   `--target=<value>`, `--target-timeline=<timeline>`,
   `--target-exclusive`, and `--target-action=promote`
+- canonical RFC3339 timestamps are converted to PostgreSQL's space-separated
+  UTC timestamp form before pgBackRest writes `recovery_target_time`
 - optional `pg_verifybackup` restore check when `restore.verify_backup.enabled`
   is true and the restored data directory contains a PostgreSQL backup
   manifest
@@ -238,6 +238,9 @@ Implemented restore planning:
   `--recovery-target-lsn`, `--recovery-target-xid`,
   `--recovery-target-name`, `--recovery-target-timeline`,
   `--recovery-target-inclusive`, and `--recovery-target-action=promote`
+- canonical RFC3339 timestamps are converted to PostgreSQL's space-separated
+  UTC timestamp form before validation or restore; pg_probackup 2.x accepts
+  only whole-second targets, so fractional timestamps fail before mutation
 - optional `pg_verifybackup` restore check against the restored data directory
   before PostgreSQL startup
 

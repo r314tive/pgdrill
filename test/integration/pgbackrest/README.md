@@ -17,7 +17,9 @@ The scenario:
 6. restores the selected set into an independent target and starts it on a
    separate port with the scenario config available to `archive-get`;
 7. requires readiness, the 101-row WAL sentinel, `pg_amcheck`, schema dump,
-   recovery policy, and owned cleanup to pass.
+   recovery policy, and owned cleanup to pass;
+8. records an exact timestamp, commits row 102 after it, retrieves that WAL
+   from the repository, and requires a second restore to exclude row 102.
 
 ## Run
 
@@ -34,10 +36,10 @@ recorded. The actual drill has no network, runs as UID 999 with all Linux
 capabilities dropped and a read-only root filesystem, and uses disposable
 tmpfs state.
 
-Each run writes `report.json`, doctor/catalog output, source and command logs,
-package and runtime inventories, operation checkpoints, the validated history
-attempt/list/full-verification views, an archive of the raw private history
-store, and recursive checksums under the ignored
+Each run writes latest and timestamp-PITR reports, doctor/catalog output,
+source and command logs, package and runtime inventories, operation
+checkpoints, the validated history attempt/list/full-verification views, an
+archive of the raw private history store, and recursive checksums under the ignored
 `.cache/integration/pgbackrest/runs/<timestamp>/` directory. An explicit
 `PGDRILL_INTEGRATION_PGBACKREST_IMAGE` override must already exist locally; the
 runtime still refuses unexpected pgBackRest or PostgreSQL versions and records
@@ -55,7 +57,8 @@ Supported Docker daemon architectures are `linux/amd64` and `linux/arm64`.
 ## Scope Boundary
 
 This test covers one same-host filesystem repository, one full backup, archive
-push/get, latest recovery, one post-backup WAL segment, and one container
-boundary. It does not establish remote or object-storage behavior, encryption,
-differential or incremental backups, timestamp PITR, multi-host isolation,
-production RTO, or customer readiness.
+push/get, latest recovery, inclusive timestamp PITR with a proved before/after
+transaction boundary, and one container boundary. It does not establish remote
+or object-storage behavior, encryption, differential or incremental backups,
+other PITR targets, multi-host isolation, production RTO, or customer
+readiness.

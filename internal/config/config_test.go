@@ -871,6 +871,22 @@ target:
 	}
 }
 
+func TestLoadPGProbackupRejectsFractionalRecoveryTimestamp(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+provider:
+  type: pg_probackup
+  backup_dir: /srv/pg_probackup
+target:
+  type: local
+recovery:
+  target: timestamp
+  value: "2026-07-20T01:02:03.000001Z"
+`), "yaml")
+	if err == nil || !strings.Contains(err.Error(), "whole-second precision") {
+		t.Fatalf("expected pg_probackup timestamp precision error, got %v", err)
+	}
+}
+
 func TestLoadPGProbackupExampleConfig(t *testing.T) {
 	cfg, err := LoadFile(filepath.Join("..", "..", "examples", "pgprobackup.yaml"))
 	if err != nil {

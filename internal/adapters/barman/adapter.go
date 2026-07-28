@@ -121,7 +121,8 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 	report.Evidence = append(report.Evidence, evidence)
 
 	if a.cfg.Manifest.Enabled {
-		check, evidence, _ = a.runValidationCommandWith(ctx, "barman-generate-manifest", a.generateManifestArgs(backupID), a.manifestTimeout(), a.manifestRedactions())
+		check, evidence, result = a.runValidationCommandWith(ctx, "barman-generate-manifest", a.generateManifestArgs(backupID), a.manifestTimeout(), a.manifestRedactions())
+		check = acceptExistingManifest(check, result, a.cfg.BarmanVerify.Enabled)
 		report.Checks = append(report.Checks, check)
 		report.Evidence = append(report.Evidence, evidence)
 	} else {
@@ -150,6 +151,20 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 		})
 	}
 	return report, nil
+}
+
+func acceptExistingManifest(check model.Check, result command.Result, verificationEnabled bool) model.Check {
+	if check.Status != model.CheckStatusFailed || !verificationEnabled {
+		return check
+	}
+	if result.Evidence.ExitStatus.ExitCode != 1 ||
+		!bytes.Contains(result.Raw.Stderr, []byte("backup_manifest already exists")) {
+		return check
+	}
+	check.Status = model.CheckStatusPassed
+	check.Message = "backup_manifest already exists; barman-verify-backup must validate the retained manifest"
+	check.Attributes["manifest_state"] = "existing"
+	return check
 }
 
 func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target model.RecoveryTarget, spec model.TargetSpec) (model.RestorePlan, error) {

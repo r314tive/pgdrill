@@ -75,6 +75,7 @@ pgdrill_integration_docker_run "${CONTAINER_NAME}" "${arch}" 4294967296 \
   --mount "type=bind,src=${SCRIPT_DIR}/run-in-container.sh,dst=/opt/pgdrill/test/run-in-container.sh,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/../lib/history.sh,dst=/opt/pgdrill/test/history.sh,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/pgdrill.yaml,dst=/opt/pgdrill/test/pgdrill.yaml,readonly" \
+  --mount "type=bind,src=${SCRIPT_DIR}/pgdrill-pitr.yaml.tmpl,dst=/opt/pgdrill/test/pgdrill-pitr.yaml.tmpl,readonly" \
   --mount "type=bind,src=${SCRIPT_DIR}/pgbackrest.conf,dst=/opt/pgdrill/test/pgbackrest.conf,readonly" \
   --mount "type=bind,src=${OUTPUT_DIR},dst=/output" \
   --env "PGDRILL_EXPECTED_COMMIT=${commit}" \

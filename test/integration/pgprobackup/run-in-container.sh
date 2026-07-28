@@ -10,7 +10,9 @@ readonly PGBIN="/opt/postgresql-18.3/bin"
 readonly PGDRILL="/opt/pgdrill/bin/pgdrill"
 readonly PGPROBACKUP="${PGBIN}/pg_probackup"
 readonly CONFIG="/opt/pgdrill/test/pgdrill.yaml"
+readonly PITR_CONFIG_TEMPLATE="/opt/pgdrill/test/pgdrill-pitr.yaml.tmpl"
 readonly ROOT="/validation"
+readonly PITR_CONFIG="${ROOT}/pgdrill-pitr.yaml"
 readonly SOURCE_DATA="${ROOT}/source-data"
 readonly SOURCE_SOCKET="${ROOT}/source-socket"
 readonly SOURCE_LOG="${ROOT}/source.log"
@@ -42,6 +44,39 @@ die() {
   exit 1
 }
 
+retrieve_archived_wal() {
+  local wal_name="$1"
+  local archive_get_log="$2"
+  local archive_get_wal="${ARCHIVE_GET_DATA}/pg_wal/${wal_name}"
+  local archived=false
+
+  rm -rf "${ARCHIVE_GET_DATA}"
+  mkdir -p "${ARCHIVE_GET_DATA}/global" "${ARCHIVE_GET_DATA}/pg_wal"
+  cp "${SOURCE_DATA}/global/pg_control" "${ARCHIVE_GET_DATA}/global/pg_control"
+  : >"${archive_get_log}"
+  for attempt in $(seq 1 60); do
+    rm -f "${archive_get_wal}"
+    printf 'attempt=%s wal=%s\n' "${attempt}" "${wal_name}" >>"${archive_get_log}"
+    if (
+      cd "${ARCHIVE_GET_DATA}"
+      "${PGPROBACKUP}" archive-get \
+        -B "${BACKUP_DIR}" \
+        --instance="${INSTANCE}" \
+        --wal-file-path="pg_wal/${wal_name}" \
+        --wal-file-name="${wal_name}" >>"${archive_get_log}" 2>&1
+    ); then
+      archived=true
+      break
+    fi
+    sleep 1
+  done
+  [[ "${archived}" == "true" && -s "${archive_get_wal}" ]] ||
+    die "WAL ${wal_name} was not retrievable from pg_probackup"
+  cmp -s "${BACKUP_DIR}/wal/${INSTANCE}/${wal_name}" "${archive_get_wal}" ||
+    die "retrieved WAL ${wal_name} differs from the archive"
+  rm -rf "${ARCHIVE_GET_DATA}"
+}
+
 source_running=false
 cleanup() {
   status="$?"
@@ -65,6 +100,7 @@ trap cleanup EXIT
 [[ -x "${PGDRILL}" ]] || die "pgdrill binary is not executable"
 [[ -x "${PGPROBACKUP}" ]] || die "pg_probackup binary is not executable"
 [[ -r "${CONFIG}" ]] || die "pgdrill config is not readable"
+[[ -r "${PITR_CONFIG_TEMPLATE}" ]] || die "pgdrill PITR config template is not readable"
 command -v perl >/dev/null 2>&1 || die "Perl is required for structured pg_probackup JSON parsing"
 
 mkdir -p \
@@ -174,34 +210,8 @@ log "committing and archiving the post-backup WAL sentinel"
 sentinel_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
 "${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
 
-mkdir -p "${ARCHIVE_GET_DATA}/global" "${ARCHIVE_GET_DATA}/pg_wal"
-cp "${SOURCE_DATA}/global/pg_control" "${ARCHIVE_GET_DATA}/global/pg_control"
-archive_get_wal="${ARCHIVE_GET_DATA}/pg_wal/${sentinel_wal}"
-archived=false
-archive_get_log="/output/archive-get-sentinel.log"
-: >"${archive_get_log}"
-for attempt in $(seq 1 60); do
-  rm -f "${archive_get_wal}"
-  printf 'attempt=%s wal=%s\n' "${attempt}" "${sentinel_wal}" >>"${archive_get_log}"
-  if (
-    cd "${ARCHIVE_GET_DATA}"
-    "${PGPROBACKUP}" archive-get \
-      -B "${BACKUP_DIR}" \
-      --instance="${INSTANCE}" \
-      --wal-file-path="pg_wal/${sentinel_wal}" \
-      --wal-file-name="${sentinel_wal}" >>"${archive_get_log}" 2>&1
-  ); then
-    archived=true
-    break
-  fi
-  sleep 1
-done
+retrieve_archived_wal "${sentinel_wal}" /output/archive-get-sentinel.log
 find "${BACKUP_DIR}/wal/${INSTANCE}" -type f -print | sort >/output/archive-files.txt
-[[ "${archived}" == "true" && -s "${archive_get_wal}" ]] ||
-  die "post-backup WAL ${sentinel_wal} was not retrievable from pg_probackup"
-cmp -s "${BACKUP_DIR}/wal/${INSTANCE}/${sentinel_wal}" "${archive_get_wal}" ||
-  die "retrieved post-backup WAL ${sentinel_wal} differs from the archive"
-rm -rf "${ARCHIVE_GET_DATA}"
 
 log "validating the native backup and WAL archive"
 "${PGPROBACKUP}" validate \
@@ -212,18 +222,23 @@ log "validating the native backup and WAL archive"
   --wal \
   --recovery-target=latest 2>&1 | tee /output/validate-before-drill.log
 
-row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
-[[ "${row_count}" == "101" ]] || die "source row count is ${row_count}, expected 101"
+latest_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+[[ "${latest_row_count}" == "101" ]] ||
+  die "source row count is ${latest_row_count}, expected 101 before latest recovery"
+pitr_target_time="$(
+  "${PGBIN}/psql" -Atqc \
+    "SELECT to_char((date_trunc('second', clock_timestamp()) + interval '1 second') AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');"
+)"
 
 log "capturing read-only preflight and catalog evidence"
 "${PGDRILL}" doctor -f "${CONFIG}" -format json >/output/doctor.json
 "${PGDRILL}" catalog list -f "${CONFIG}" -format json -evidence >/output/catalog.json
 
-run_id="integration-pgprobackup-$(date -u +%Y%m%dT%H%M%SZ)"
-log "running pgdrill restore attempt ${run_id}/attempt-1"
+latest_run_id="integration-pgprobackup-latest-$(date -u +%Y%m%dT%H%M%SZ)"
+log "running latest-recovery attempt ${latest_run_id}/attempt-1"
 "${PGDRILL}" run \
   -f "${CONFIG}" \
-  -run-id "${run_id}" \
+  -run-id "${latest_run_id}" \
   -attempt-id attempt-1 \
   -history-dir "${HISTORY}" 2>&1 | tee /output/run.log
 
@@ -249,19 +264,95 @@ grep -F '"archive_mode": "off"' /output/report.json >/dev/null ||
 pgdrill_integration_verify_history_attempt \
   "${PGDRILL}" \
   "${HISTORY}" \
-  "${run_id}" \
+  "${latest_run_id}" \
   attempt-1 \
-  /output/history-attempt
-pgdrill_integration_capture_history_store "${PGDRILL}" "${HISTORY}" /output 1
+  /output/latest-history
+
+log "committing and archiving a transaction after the PITR boundary"
+target_reached=false
+for _ in $(seq 1 100); do
+  if [[ "$(${PGBIN}/psql -Atqc "SELECT clock_timestamp() > '${pitr_target_time}'::timestamptz;")" == "t" ]]; then
+    target_reached=true
+    break
+  fi
+  sleep 0.1
+done
+[[ "${target_reached}" == "true" ]] ||
+  die "source clock did not pass PITR boundary ${pitr_target_time}"
+"${PGBIN}/psql" --set ON_ERROR_STOP=1 --command \
+  "INSERT INTO public.pgdrill_integration_probe (id, payload) VALUES (102, 'post-target-wal-sentinel');"
+post_target_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
+"${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
+retrieve_archived_wal "${post_target_wal}" /output/archive-get-post-target.log
+find "${BACKUP_DIR}/wal/${INSTANCE}" -type f -print | sort >/output/archive-files.txt
+
+source_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+[[ "${source_row_count}" == "102" ]] ||
+  die "source row count is ${source_row_count}, expected 102 before timestamp recovery"
+
+sed "s|__RECOVERY_TARGET_TIME__|${pitr_target_time}|g" \
+  "${PITR_CONFIG_TEMPLATE}" >"${PITR_CONFIG}"
+if grep -F '__RECOVERY_TARGET_TIME__' "${PITR_CONFIG}" >/dev/null; then
+  die "PITR recovery timestamp placeholder was not resolved"
+fi
+cp "${PITR_CONFIG}" /output/pitr-config.yaml
+"${PGDRILL}" doctor -f "${PITR_CONFIG}" -format json >/output/pitr-doctor.json
+
+pitr_run_id="integration-pgprobackup-pitr-$(date -u +%Y%m%dT%H%M%SZ)"
+log "running timestamp-PITR attempt ${pitr_run_id}/attempt-1 to ${pitr_target_time}"
+"${PGDRILL}" run \
+  -f "${PITR_CONFIG}" \
+  -run-id "${pitr_run_id}" \
+  -attempt-id attempt-1 \
+  -history-dir "${HISTORY}" 2>&1 | tee /output/pitr-run.log
+
+[[ -f /output/pitr-report.json ]] || die "pgdrill did not persist pitr-report.json"
+"${PGDRILL}" report show /output/pitr-report.json | tee /output/pitr-report.txt
+
+grep -Eq '^Status[[:space:]]+passed$' /output/pitr-report.txt ||
+  die "timestamp PITR report status is not passed"
+grep -Eq '^Policy[[:space:]]+5 passed, 0 failed, 0 unknown, 0 not configured$' \
+  /output/pitr-report.txt ||
+  die "timestamp PITR policy did not produce five passed verdicts"
+grep -Eq '^pg-probackup-validate[[:space:]]+-[[:space:]]+passed' \
+  /output/pitr-report.txt ||
+  die "timestamp PITR pg_probackup validate did not pass"
+grep -Eq '^timestamp_boundary_replayed[[:space:]]+sql[[:space:]]+passed' \
+  /output/pitr-report.txt ||
+  die "timestamp PITR did not prove the before/after transaction boundary"
+grep -Eq '^structural_amcheck[[:space:]]+amcheck[[:space:]]+passed' \
+  /output/pitr-report.txt ||
+  die "timestamp PITR pg_amcheck probe did not pass"
+grep -Eq '^schema_dump[[:space:]]+pg_dump[[:space:]]+passed' /output/pitr-report.txt ||
+  die "timestamp PITR pg_dump probe did not pass"
+grep -Eq '^cleanup[[:space:]]+true[[:space:]]+passed' /output/pitr-report.txt ||
+  die "timestamp PITR cleanup policy did not pass"
+grep -F '"type": "timestamp"' /output/pitr-report.json >/dev/null ||
+  die "timestamp PITR report does not retain the recovery target type"
+grep -F "\"value\": \"${pitr_target_time}\"" /output/pitr-report.json >/dev/null ||
+  die "timestamp PITR report does not retain the exact recovery target"
+grep -F '"inclusive": true' /output/pitr-report.json >/dev/null ||
+  die "timestamp PITR report does not retain inclusive recovery semantics"
+[[ ! -e "${WORK_DIR}" ]] || die "owned PITR restore work directory remains after cleanup"
+pgdrill_integration_verify_history_attempt \
+  "${PGDRILL}" \
+  "${HISTORY}" \
+  "${pitr_run_id}" \
+  attempt-1 \
+  /output/pitr-history
+pgdrill_integration_capture_history_store "${PGDRILL}" "${HISTORY}" /output 2
 
 {
   printf 'pgdrill=%s\n' "${pgdrill_version}"
   printf 'pg_probackup=%s\n' "${pgprobackup_version}"
   printf 'postgresql=%s\n' "${postgres_version}"
-  printf 'source_rows=%s\n' "${row_count}"
+  printf 'latest_recovery_source_rows=%s\n' "${latest_row_count}"
+  printf 'timestamp_recovery_target=%s\n' "${pitr_target_time}"
+  printf 'source_rows_after_target=%s\n' "${source_row_count}"
   printf 'backup_id=%s\n' "${backup_id}"
   printf 'sentinel_wal=%s\n' "${sentinel_wal}"
+  printf 'post_target_wal=%s\n' "${post_target_wal}"
   "${PGPROBACKUP}" show -B "${BACKUP_DIR}" --instance="${INSTANCE}" --format=json
 } >/output/source-state.txt
 
-log "PASS: real backup, WAL replay, native validation, probes, policy, and cleanup completed"
+log "PASS: latest recovery, timestamp PITR, native validation, probes, policy, and cleanup completed"

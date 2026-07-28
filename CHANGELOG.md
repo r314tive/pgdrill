@@ -10,6 +10,10 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Real Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 timestamp-PITR
+  integration paths with exact pre/post-target transactions, native WAL
+  retrieval, independent reports, durable history verification, policy
+  assertions, structural probes, and owned cleanup.
 - Typed CNPG Barman Cloud Plugin recovery with exact Barman backup-ID binding,
   read-only `externalClusters[].plugin` manifests, source plugin/ObjectStore
   discovery, selected-Backup method and plugin validation, fixture-driven JSON
@@ -119,6 +123,9 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- pg_probackup timestamp targets now fail before repository access unless they
+  use the provider's whole-second precision; accepted RFC3339 values are
+  converted to the native space-separated UTC representation.
 - CNPG documentation now reflects the current 1.29.2 deprecation schedule
   (in-tree Barman Cloud removal in 1.31.0) and keeps plugin manifest support
   separate from an unproven live compatibility claim.
@@ -190,6 +197,16 @@ called out explicitly even while the major version is `0`.
 - Development builds now default to `v0.3.0-dev`; the new planner/history
   surface will start a `v0.3.0` prerelease train instead of changing the
   published Engine v0.2 release candidate in place.
+
+### Fixed
+
+- pgBackRest timestamp recovery now converts canonical RFC3339 targets to the
+  PostgreSQL timestamp representation written by pgBackRest; the previous raw
+  `T...Z` value made PostgreSQL 18 reject `postgresql.auto.conf`.
+- Repeated Barman drills no longer fail solely because `backup_manifest`
+  already exists. The exact Barman exit is accepted only when
+  `verify-backup` is enabled and subsequently validates the retained manifest;
+  unverified reuse remains fail-closed.
 
 ### Breaking Changes
 

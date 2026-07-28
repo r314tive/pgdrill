@@ -164,7 +164,10 @@ Remaining compatibility extension:
 Status: initial four-provider surface and semantic config validation
 implemented. WAL-G, Barman, pgBackRest, and pg_probackup now have one exact
 native field point each; broader storage, version, and PITR coverage remains
-in progress.
+in progress. Disposable local gates now prove latest plus inclusive timestamp
+PITR boundaries for all four providers; exact clean-candidate Barman,
+pgBackRest, and pg_probackup PITR evidence still needs promotion into the
+compatibility matrix.
 
 - pg_probackup catalog discovery through `show --format=json`.
 - Optional pg_probackup selected-backup and recovery-target validation.
@@ -232,17 +235,20 @@ Completed foundation:
   without coupling demo infrastructure to engine packages.
 - A pinned Barman 3.19.1/PostgreSQL 18.3 companion drill that creates a real
   local-rsync backup, exercises archived WAL through Barman's generated
-  `restore_command`, requires manifest verification and restored-cluster
-  probes, and retains the same release-bound checksummed artifact set.
+  `restore_command`, requires repeatable manifest verification, proves latest
+  and timestamp recovery boundaries, and retains the same release-bound
+  checksummed artifact set.
 - A pinned pgBackRest 2.58.0/PostgreSQL 18.3 companion drill that creates a
   real filesystem-repository full backup, retrieves the exact post-backup WAL
-  segment, requires `check` and selected-set `verify`, and restores through the
-  same local lifecycle and evidence contract.
+  segments, requires `check` and selected-set `verify`, proves latest and
+  timestamp recovery boundaries, and restores through the same local lifecycle
+  and evidence contract.
 - A source-pinned pg_probackup 2.5.16/PostgreSQL 18.3 companion drill that
   applies the upstream PostgreSQL 18 patch, creates a compressed full STREAM
-  backup, retrieves the exact post-backup WAL through `archive-get`, requires
-  native backup/WAL validation, and restores through the same local lifecycle
-  and evidence contract.
+  backup, byte-compares the exact boundary WAL through `archive-get`, requires
+  native backup/WAL validation, proves latest and whole-second timestamp
+  recovery boundaries, and restores through the same local lifecycle and
+  evidence contract.
 - Shared host-side integration mechanics for deterministic release archives,
   explicit dirty builds, rootless network-isolated Docker execution, and
   recursive artifact checksums, while provider semantics remain separate.

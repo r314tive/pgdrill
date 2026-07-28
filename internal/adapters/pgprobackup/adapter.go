@@ -322,7 +322,15 @@ func recoveryArgs(target model.RecoveryTarget, includeAction bool) ([]string, er
 		if target.Value == "" {
 			return nil, fmt.Errorf("timestamp recovery target requires value")
 		}
-		args = append(args, "--recovery-target-time="+target.Value)
+		timestamp, err := target.Timestamp()
+		if err != nil {
+			return nil, err
+		}
+		if timestamp.Nanosecond() != 0 {
+			return nil, fmt.Errorf("pg_probackup recovery target timestamp requires whole-second precision")
+		}
+		nativeTimestamp := timestamp.UTC().Format("2006-01-02 15:04:05-07:00")
+		args = append(args, "--recovery-target-time="+nativeTimestamp)
 	case model.RecoveryTargetLSN:
 		if target.Value == "" {
 			return nil, fmt.Errorf("lsn recovery target requires value")

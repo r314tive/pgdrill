@@ -50,3 +50,8 @@ Current scenarios:
 - [pgBackRest to a local PostgreSQL target](pgbackrest/README.md)
 - [pg_probackup to a local PostgreSQL target](pgprobackup/README.md)
 - [CloudNativePG to a disposable KinD target](cnpg/README.md)
+
+Every native-provider scenario proves latest recovery with post-backup WAL
+replay and inclusive timestamp PITR with a transaction on each side of the
+requested boundary. These disposable observations remain narrower than
+retained compatibility claims.

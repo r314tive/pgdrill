@@ -458,7 +458,7 @@ func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 		"--pg1-path=/tmp/pgdrill/main/data",
 		"--reset-pg1-host",
 		"--type=time",
-		"--target=2026-07-06T01:02:03Z",
+		"--target=2026-07-06 01:02:03+00:00",
 		"--target-timeline=latest",
 		"--target-exclusive",
 		"--target-action=promote",

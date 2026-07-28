@@ -386,6 +386,16 @@ func (c Config) Validate() error {
 		if c.Provider.PGProbackupValidate.Threads < 0 {
 			return fmt.Errorf("provider.pg_probackup_validate.threads must not be negative")
 		}
+		target := c.RecoveryTarget()
+		if target.Type == model.RecoveryTargetTimestamp {
+			timestamp, err := target.Timestamp()
+			if err != nil {
+				return fmt.Errorf("recovery: %w", err)
+			}
+			if timestamp.Nanosecond() != 0 {
+				return fmt.Errorf("recovery.value must use whole-second precision for pg_probackup")
+			}
+		}
 	}
 	return c.validateCommon()
 }

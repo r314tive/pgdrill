@@ -18,7 +18,9 @@ The scenario:
    another port, with the scenario config explicitly propagated to Barman's
    generated WAL restore command;
 7. requires readiness, the 101-row WAL sentinel, `pg_amcheck`, schema dump,
-   recovery policy, and owned cleanup to pass.
+   recovery policy, and owned cleanup to pass;
+8. records an exact timestamp, commits row 102 after it, archives that WAL,
+   and requires a second restore to retain row 101 while excluding row 102.
 
 ## Run
 
@@ -35,10 +37,10 @@ The resulting definition hash and image ID are recorded. The actual drill has
 no network, runs as UID 999 with all Linux capabilities dropped and a read-only
 root filesystem, and uses disposable tmpfs state.
 
-Each run writes `report.json`, doctor/catalog output, PostgreSQL and Barman
-logs, package and runtime inventories, operation checkpoints, the validated
-history attempt/list/full-verification views, an archive of the raw private
-history store, and recursive checksums under the ignored
+Each run writes latest and timestamp-PITR reports, doctor/catalog output,
+PostgreSQL and Barman logs, package and runtime inventories, operation
+checkpoints, the validated history attempt/list/full-verification views, an
+archive of the raw private history store, and recursive checksums under the ignored
 `.cache/integration/barman/runs/<timestamp>/` directory. An explicit
 `PGDRILL_INTEGRATION_BARMAN_IMAGE` override must already exist locally; the
 runtime still refuses unexpected Barman or PostgreSQL versions and records the
@@ -56,7 +58,8 @@ Supported Docker daemon architectures are `linux/amd64` and `linux/arm64`.
 ## Scope Boundary
 
 This test covers one same-host local-rsync full backup, file-based WAL
-archiving, latest recovery, one post-backup WAL segment, and one container
-boundary. It does not establish SSH/remote-server behavior, streaming
-archiving, cloud storage, incremental backups, timestamp PITR, multi-host
-isolation, production RTO, or customer readiness.
+archiving, latest recovery, inclusive timestamp PITR with a proved
+before/after transaction boundary, and one container boundary. It does not
+establish SSH/remote-server behavior, streaming archiving, cloud storage,
+incremental backups, other PITR targets, multi-host isolation, production RTO,
+or customer readiness.

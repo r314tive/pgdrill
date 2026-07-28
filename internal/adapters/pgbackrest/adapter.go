@@ -357,7 +357,12 @@ func pgBackRestRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
 		if target.Value == "" {
 			return nil, fmt.Errorf("timestamp recovery target requires value")
 		}
-		args = append(args, "--type=time", "--target="+target.Value)
+		timestamp, err := target.Timestamp()
+		if err != nil {
+			return nil, err
+		}
+		nativeTimestamp := timestamp.UTC().Format("2006-01-02 15:04:05.999999999-07:00")
+		args = append(args, "--type=time", "--target="+nativeTimestamp)
 		targeted = true
 	case model.RecoveryTargetLSN:
 		if target.Value == "" {

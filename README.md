@@ -46,16 +46,20 @@ reporting contract. Shared conformance suites cover every adapter and
 executable target. Reproducible integration harnesses exercise all four native
 providers plus separate native and Barman Cloud Plugin KinD/CNPG environments
 through real base backups, post-backup WAL replay, probes, policy, and cleanup.
-The WAL-G gate also kills the complete drill process group after durable
-restore intent, reconciles and cleans the interrupted attempt, then requires a
-passed retry under a new attempt ID.
+Every native-provider gate additionally proves timestamp PITR with a
+transaction on each side of the requested boundary. The WAL-G gate also kills
+the complete drill process group after durable restore intent, reconciles and
+cleans the interrupted attempt, then requires a passed retry under a new
+attempt ID.
 
 The compatibility matrix records narrow fixture, controlled, and exact-version
 field evidence. One clean `v0.1.0-alpha.10` commit has passed WAL-G 3.0.8,
 Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 restores with
 PostgreSQL 18.3 on Linux arm64, plus CNPG 1.26.3 / PostgreSQL 15.17 in a
-disposable KinD environment. Other versions, storage backends, platforms, and
-PITR modes remain unclaimed until separately exercised.
+disposable KinD environment. Current `main` exercises timestamp PITR for all
+four native providers, but only the separately retained WAL-G cell is field
+evidence so far. Other versions, storage backends, platforms, and recovery
+targets remain unclaimed until separately exercised.
 
 The exact `v0.2.0-rc.2` commit
 `97ad852ecb2c9493c1c4a1e7718f61bf496efa17` passed the clean aggregate

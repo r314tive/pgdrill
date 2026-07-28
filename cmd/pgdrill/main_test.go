@@ -1497,7 +1497,7 @@ JSON
         --pg1-path=*) dest="${arg#--pg1-path=}" ;;
         --reset-pg1-host) saw_reset=1 ;;
         --type=time) saw_type=1 ;;
-        --target=2026-07-06T01:02:03Z) saw_target=1 ;;
+        "--target=2026-07-06 01:02:03+00:00") saw_target=1 ;;
         --target-action=promote) saw_action=1 ;;
       esac
     done
@@ -1592,6 +1592,10 @@ report:
 	}
 	if result.Backup.ID != "pgbackrest:main/20240502-030405F" {
 		t.Fatalf("unexpected backup %q", result.Backup.ID)
+	}
+	if result.RecoveryTarget.Type != model.RecoveryTargetTimestamp ||
+		result.RecoveryTarget.Value != "2026-07-06T01:02:03Z" {
+		t.Fatalf("unexpected canonical recovery target %#v", result.RecoveryTarget)
 	}
 	if !hasCheckNamed(result.Checks, "pgbackrest-check", model.CheckStatusPassed) {
 		t.Fatalf("expected passed pgbackrest check, got %#v", result.Checks)

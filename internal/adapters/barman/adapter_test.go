@@ -404,6 +404,71 @@ func TestValidateCatalogRunsBarmanGenerateManifest(t *testing.T) {
 	}
 }
 
+func TestValidateCatalogAcceptsVerifiedExistingBarmanManifest(t *testing.T) {
+	runner := &fakeRunner{
+		results: []command.Result{
+			successResult([]byte("server main: OK\n")),
+			successResult([]byte("backup 20240502T030405: OK\n")),
+			successResult([]byte(`{"backup_id":"20240502T030405","server_name":"main","status":"DONE"}`)),
+			failureResult([]byte("EXCEPTION: File /srv/barman/main/base/20240502T030405/data/backup_manifest already exists.\n"), 1),
+			successResult([]byte("backup manifest verified\n")),
+		},
+	}
+	report, err := New(Config{
+		Server:       "main",
+		Manifest:     ManifestConfig{Enabled: true},
+		BarmanVerify: BarmanVerifyConfig{Enabled: true},
+	}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{
+		ID:         "barman:main/20240502T030405",
+		Provider:   model.ProviderBarman,
+		ProviderID: "main/20240502T030405",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "2024-05-03T04:00:00Z"})
+	if err != nil {
+		t.Fatalf("validate catalog: %v", err)
+	}
+	generate := report.Checks[3]
+	if generate.Status != model.CheckStatusPassed {
+		t.Fatalf("existing generate-manifest check = %#v, want passed", generate)
+	}
+	if got := generate.Attributes["manifest_state"]; got != "existing" {
+		t.Fatalf("manifest_state = %q, want existing", got)
+	}
+	if !strings.Contains(generate.Message, "barman-verify-backup") {
+		t.Fatalf("existing manifest message = %q", generate.Message)
+	}
+	if verify := report.Checks[4]; verify.Status != model.CheckStatusPassed {
+		t.Fatalf("verify-backup check = %#v, want passed", verify)
+	}
+}
+
+func TestValidateCatalogRejectsUnverifiedExistingBarmanManifest(t *testing.T) {
+	runner := &fakeRunner{
+		results: []command.Result{
+			successResult([]byte("server main: OK\n")),
+			successResult([]byte("backup 20240502T030405: OK\n")),
+			successResult([]byte(`{"backup_id":"20240502T030405","server_name":"main","status":"DONE"}`)),
+			failureResult([]byte("EXCEPTION: File /srv/barman/main/base/20240502T030405/data/backup_manifest already exists.\n"), 1),
+		},
+	}
+	report, err := New(Config{
+		Server:   "main",
+		Manifest: ManifestConfig{Enabled: true},
+	}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{
+		ID:         "barman:main/20240502T030405",
+		Provider:   model.ProviderBarman,
+		ProviderID: "main/20240502T030405",
+	}, model.RecoveryTarget{Type: model.RecoveryTargetLatest})
+	if err != nil {
+		t.Fatalf("validate catalog: %v", err)
+	}
+	if generate := report.Checks[3]; generate.Status != model.CheckStatusFailed {
+		t.Fatalf("unverified existing generate-manifest check = %#v, want failed", generate)
+	}
+	if verify := report.Checks[4]; verify.Status != model.CheckStatusSkipped {
+		t.Fatalf("verify-backup check = %#v, want skipped", verify)
+	}
+}
+
 func TestValidateCatalogReportsBarmanCheckFailure(t *testing.T) {
 	runner := &fakeRunner{
 		results: []command.Result{
