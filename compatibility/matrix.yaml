@@ -802,6 +802,81 @@ entries:
       - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
       - Linux amd64 ran through Docker emulation on an arm64 daemon, so this is functional evidence rather than native-hardware performance or RTO evidence.
       - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.wal-g.field.v0-3-0-alpha-12-linux-arm64-s3
+    component: provider
+    implementation: wal-g
+    evidence_level: field
+    capabilities:
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - s3_compatible_object_storage
+      - wal_replay
+    recovery_targets:
+      - latest
+    implementation_versions:
+      - "3.0.8"
+    pgdrill_versions:
+      - v0.3.0-alpha.12
+    pgdrill_commits:
+      - 9ea9a3b68ee12a457b1cb2195e9b268a7ea9203c
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12/report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12/README.md#validated-scope
+    limitations:
+      - One disposable single-node MinIO observation does not establish compatibility with Amazon S3, Yandex Object Storage, or another S3 implementation.
+      - Only latest recovery from one full backup with post-backup WAL replay was exercised.
+      - TLS, encryption, IAM or workload identity, network failures, incremental backups, and production RTO remain untested.
+      - The pgdrill candidate archive was not a published or signed release asset.
+  - id: provider.wal-g.field.v0-3-0-alpha-12-linux-arm64-s3-pitr
+    component: provider
+    implementation: wal-g
+    evidence_level: field
+    capabilities:
+      - catalog_discovery
+      - catalog_validation
+      - end_to_end_restore
+      - owned_cleanup
+      - post_restore_probes
+      - s3_compatible_object_storage
+      - timestamp_pitr
+      - wal_replay
+    recovery_targets:
+      - timestamp
+    implementation_versions:
+      - "3.0.8"
+    pgdrill_versions:
+      - v0.3.0-alpha.12
+    pgdrill_commits:
+      - 9ea9a3b68ee12a457b1cb2195e9b268a7ea9203c
+    postgresql_versions:
+      - "18.3"
+    platforms:
+      - linux/arm64
+    observed_at: "2026-07-28"
+    evidence:
+      - kind: drill_report
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12/pitr-report.json
+      - kind: runtime_inventory
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12/runtime.txt
+      - kind: field_note
+        ref: compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12/README.md#validated-scope
+    limitations:
+      - One disposable single-node MinIO observation does not establish compatibility with Amazon S3, Yandex Object Storage, or another S3 implementation.
+      - Only one full backup and one inclusive timestamp boundary on timeline 1 were exercised.
+      - TLS, encryption, IAM or workload identity, network failures, incremental backups, and production RTO remain untested.
+      - The pgdrill candidate archive was not a published or signed release asset.
   - id: provider.wal-g.fixture
     component: provider
     implementation: wal-g

@@ -165,8 +165,9 @@ Remaining compatibility extension:
 Status: initial four-provider surface and semantic config validation
 implemented. WAL-G, Barman, pgBackRest, and pg_probackup have exact Linux
 arm64 observations plus retained Linux amd64 emulated functional observations;
-broader storage, version, native-hardware, and PITR coverage remains in
-progress. Disposable local gates prove latest plus inclusive timestamp PITR
+WAL-G additionally has one exact Linux arm64 single-node MinIO observation.
+Broader storage, version, native-hardware, and PITR coverage remains in
+progress. Disposable gates prove latest plus inclusive timestamp PITR
 boundaries for all four providers, with exact clean-candidate evidence retained
 in the compatibility matrix.
 
@@ -273,9 +274,8 @@ Completed foundation:
 
 Remaining external engine gate:
 
-1. Retain a clean exact-candidate observation from the implemented WAL-G
-   S3-compatible profile, then broaden the other providers beyond local
-   repositories across appropriate remote storage.
+1. Broaden beyond one single-node MinIO point and extend the other providers
+   beyond local repositories across appropriate remote storage.
 2. Exercise a second PostgreSQL major, native Linux amd64 hardware, additional
    backup modes, and non-timestamp PITR targets where the provider contract
    supports them.

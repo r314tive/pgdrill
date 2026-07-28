@@ -15,6 +15,10 @@ called out explicitly even while the major version is `0`.
   execution-bound S3 credentials, latest and timestamp recovery, WAL
   validation, process-loss reconciliation, retained object inventory,
   credential-leak rejection, and explicit harness cleanup proof.
+- Retained exact `v0.3.0-alpha.12` Linux arm64 field evidence for WAL-G 3.0.8
+  latest and timestamp recovery against single-node MinIO, plus
+  capability-specific matrix validation of the S3 execution path and typed
+  storage runtime inventory.
 - Real Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 timestamp-PITR
   integration paths with exact pre/post-target transactions, native WAL
   retrieval, independent reports, durable history verification, policy

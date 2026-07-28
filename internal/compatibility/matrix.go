@@ -266,6 +266,9 @@ func (e Entry) validate(updatedAt time.Time) error {
 		if hasCapability(e, "cross_architecture_functional") && runtimeInventories != 1 {
 			return fmt.Errorf("cross-architecture field evidence requires exactly one runtime_inventory reference")
 		}
+		if hasCapability(e, "s3_compatible_object_storage") && runtimeInventories != 1 {
+			return fmt.Errorf("S3-compatible field evidence requires exactly one runtime_inventory reference")
+		}
 	}
 	return nil
 }
@@ -391,6 +394,16 @@ func validateRuntimeInventory(entry Entry, path string) error {
 		}
 		if normalized == architecture {
 			return fmt.Errorf("runtime inventory does not prove cross-architecture execution")
+		}
+	}
+	if hasCapability(entry, "s3_compatible_object_storage") {
+		if err := requireEqual("storage_backend", "s3-compatible"); err != nil {
+			return err
+		}
+		for _, key := range []string{"storage_endpoint", "storage_bucket", "storage_network"} {
+			if _, err := required(key); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -522,7 +535,50 @@ func validateDrillReport(entry Entry, path string) error {
 			return err
 		}
 	}
+	if hasCapability(entry, "s3_compatible_object_storage") {
+		if err := validateS3CompatibleEvidence(result); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateS3CompatibleEvidence(result model.DrillResult) error {
+	for _, evidence := range result.Evidence {
+		command := evidence.Command
+		if command == nil || !command.ExitStatus.Success || filepath.Base(command.Path) != "wal-g" {
+			continue
+		}
+		backupFetch := false
+		for _, arg := range command.Args {
+			if arg == "backup-fetch" {
+				backupFetch = true
+				break
+			}
+		}
+		if !backupFetch {
+			continue
+		}
+		if !strings.HasPrefix(command.Env["WALG_S3_PREFIX"], "s3://") {
+			return fmt.Errorf("S3-compatible evidence backup-fetch has no S3 WAL-G prefix")
+		}
+		if strings.TrimSpace(command.Env["AWS_ENDPOINT"]) == "" {
+			return fmt.Errorf("S3-compatible evidence backup-fetch has no custom endpoint")
+		}
+		if command.Env["AWS_S3_FORCE_PATH_STYLE"] != "true" {
+			return fmt.Errorf("S3-compatible evidence backup-fetch does not require path-style addressing")
+		}
+		if _, exists := command.Env["WALG_FILE_PREFIX"]; exists {
+			return fmt.Errorf("S3-compatible evidence backup-fetch also configures filesystem storage")
+		}
+		for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+			if _, exists := command.Env[key]; exists {
+				return fmt.Errorf("S3-compatible evidence exposes credential field %s", key)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("S3-compatible evidence has no successful WAL-G backup-fetch command")
 }
 
 func validateTimestampPITREvidence(result model.DrillResult) error {

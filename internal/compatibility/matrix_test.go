@@ -23,8 +23,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 29 {
-		t.Fatalf("matrix entry count = %d, want 29", len(matrix.Entries))
+	if len(matrix.Entries) != 31 {
+		t.Fatalf("matrix entry count = %d, want 31", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -80,6 +80,8 @@ func TestCommittedMatrix(t *testing.T) {
 		"provider.pgbackrest.field.v0-3-0-alpha-10-linux-amd64-pitr",
 		"provider.wal-g.field.v0-3-0-alpha-10-linux-amd64",
 		"provider.wal-g.field.v0-3-0-alpha-10-linux-amd64-pitr",
+		"provider.wal-g.field.v0-3-0-alpha-12-linux-arm64-s3",
+		"provider.wal-g.field.v0-3-0-alpha-12-linux-arm64-s3-pitr",
 	} {
 		if levels[id] != EvidenceLevelField {
 			t.Fatalf("%s level = %q, want field", id, levels[id])
@@ -213,6 +215,82 @@ func TestValidateRuntimeInventoryBindsCrossArchitectureCandidate(t *testing.T) {
 	if err := validateRuntimeInventory(entry, path); err == nil ||
 		!strings.Contains(err.Error(), "release_archive") {
 		t.Fatalf("wrong-archive error = %v", err)
+	}
+}
+
+func TestValidateRuntimeInventoryBindsS3CompatibleTopology(t *testing.T) {
+	entry := Entry{
+		PGDrillVersions: []string{"v0.3.0-alpha.12"},
+		PGDrillCommits: []string{
+			"9ea9a3b68ee12a457b1cb2195e9b268a7ea9203c",
+		},
+		Platforms:    []string{"linux/arm64"},
+		Capabilities: []string{"s3_compatible_object_storage"},
+	}
+	payload := strings.Join([]string{
+		"container_image_id=sha256:" + strings.Repeat("1", 64),
+		"container_image_architecture=arm64",
+		"docker_arch=aarch64",
+		"build_target=linux/arm64",
+		"go=go version go1.26.0 darwin/arm64",
+		"build_source=release_archive",
+		"version=v0.3.0-alpha.12",
+		"commit=9ea9a3b68ee12a457b1cb2195e9b268a7ea9203c",
+		"build_date=2026-07-28T08:10:25+05:00",
+		"pgdrill_sha256=" + strings.Repeat("2", 64),
+		"release_archive=pgdrill_0.3.0-alpha.12_linux_arm64.tar.gz",
+		"release_archive_sha256=" + strings.Repeat("3", 64),
+		"storage_backend=s3-compatible",
+		"storage_endpoint=http://minio:9000",
+		"storage_bucket=pgdrill-walg",
+		"storage_network=internal",
+	}, "\n") + "\n"
+	path := filepath.Join(t.TempDir(), "runtime.txt")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write runtime inventory: %v", err)
+	}
+	if err := validateRuntimeInventory(entry, path); err != nil {
+		t.Fatalf("valid S3 runtime inventory rejected: %v", err)
+	}
+
+	localStorage := strings.Replace(payload, "storage_backend=s3-compatible", "storage_backend=file", 1)
+	if err := os.WriteFile(path, []byte(localStorage), 0o600); err != nil {
+		t.Fatalf("write filesystem runtime inventory: %v", err)
+	}
+	if err := validateRuntimeInventory(entry, path); err == nil ||
+		!strings.Contains(err.Error(), "storage_backend") {
+		t.Fatalf("filesystem-backend error = %v", err)
+	}
+}
+
+func TestValidateS3CompatibleEvidenceRequiresSecretFreeBackupFetch(t *testing.T) {
+	result := model.DrillResult{Evidence: []model.EvidenceRecord{{
+		Command: &model.CommandEvidence{
+			Path:       "/opt/pgdrill/bin/wal-g",
+			Args:       []string{"backup-fetch", "/restore", "LATEST"},
+			ExitStatus: model.ExitStatus{Success: true},
+			Env: map[string]string{
+				"AWS_ENDPOINT":            "http://minio:9000",
+				"AWS_S3_FORCE_PATH_STYLE": "true",
+				"WALG_S3_PREFIX":          "s3://pgdrill-walg/integration",
+			},
+		},
+	}}}
+	if err := validateS3CompatibleEvidence(result); err != nil {
+		t.Fatalf("valid S3-compatible evidence rejected: %v", err)
+	}
+
+	result.Evidence[0].Command.Env["AWS_SECRET_ACCESS_KEY"] = "resolved-secret"
+	if err := validateS3CompatibleEvidence(result); err == nil ||
+		!strings.Contains(err.Error(), "credential") {
+		t.Fatalf("credential-field error = %v", err)
+	}
+	delete(result.Evidence[0].Command.Env, "AWS_SECRET_ACCESS_KEY")
+
+	result.Evidence[0].Command.Env["WALG_FILE_PREFIX"] = "/repository"
+	if err := validateS3CompatibleEvidence(result); err == nil ||
+		!strings.Contains(err.Error(), "filesystem") {
+		t.Fatalf("mixed-storage error = %v", err)
 	}
 }
 

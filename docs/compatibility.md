@@ -180,6 +180,29 @@ evidence. The repositories were local, the candidate was not published or
 signed, and broader storage, version, backup-mode, and recovery-target claims
 remain external gates.
 
+### v0.3.0-alpha.12 WAL-G S3-Compatible Gate
+
+On 2026-07-28, the exact clean commit
+`9ea9a3b68ee12a457b1cb2195e9b268a7ea9203c` completed WAL-G 3.0.8 latest and
+inclusive timestamp drills against PostgreSQL 18.3 and single-node MinIO on
+Linux arm64. Both restore points used the deterministic
+`v0.3.0-alpha.12` archive with SHA-256
+`58eebabb2b447be6f672cb915d3e3f45e789cea79e863faeb2707363ce561107`.
+
+The run retained 11 real base-backup and WAL objects totaling 7,097,193 bytes.
+Latest recovery replayed the transaction committed after the full backup;
+timestamp recovery retained that transaction and excluded a later archived
+transaction. Provider validation, PostgreSQL startup, SQL assertions,
+`pg_amcheck`, schema-only `pg_dump`, all required policy verdicts, owned target
+cleanup, credential-leak rejection, and private Docker network cleanup passed.
+
+The exact reports, secret-free configurations, runtime and object inventories,
+source boundary, limitations, and checksums are retained under
+[`compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12`](../compatibility/evidence/wal-g-v3.0.8-postgresql-18.3-s3-minio-linux-arm64-pgdrill-v0.3.0-alpha.12/README.md).
+This closes one S3-compatible object-storage observation, not a support claim
+for Amazon S3, Yandex Object Storage, other implementations, TLS/IAM modes,
+Linux amd64, or production RTO. The candidate was not published or signed.
+
 ### WAL-G Field Validation
 
 On 2026-07-21, pgdrill `v0.1.0-dev` at commit
