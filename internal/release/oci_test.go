@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestVerifyOCIArchive(t *testing.T) {
 		t.Fatalf("VerifyOCIArchive() error = %v", err)
 	}
 	wantPlatforms := []string{"linux/amd64", "linux/arm64"}
-	if !equalStrings(result.Platforms, wantPlatforms) {
+	if !slices.Equal(result.Platforms, wantPlatforms) {
 		t.Fatalf("platforms = %#v, want %#v", result.Platforms, wantPlatforms)
 	}
 	if !canonicalSHA256(result.IndexDigest) {

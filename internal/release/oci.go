@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -484,7 +485,7 @@ func verifyOCIImage(
 			containerWorkingDir,
 		)
 	}
-	if !equalStrings(config.Config.Entrypoint, []string{"/usr/local/bin/pgdrill"}) {
+	if !slices.Equal(config.Config.Entrypoint, []string{"/usr/local/bin/pgdrill"}) {
 		return fmt.Errorf("image entrypoint = %#v", config.Config.Entrypoint)
 	}
 	if config.Config.StopSignal != "SIGTERM" {
@@ -863,18 +864,6 @@ func platformName(platform *ociPlatform) string {
 		name += "/" + platform.Variant
 	}
 	return name
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }
 
 func countExactString(values []string, target string) int {

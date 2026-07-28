@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,7 +126,7 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 func (a *Adapter) walVerifyArgs(backup model.Backup) ([]string, error) {
 	checks := a.walVerifyChecks()
 	backupName := firstNonEmpty(a.cfg.WALVerify.BackupName, backup.ProviderID)
-	if containsString(checks, "integrity") && backupName == "" {
+	if slices.Contains(checks, "integrity") && backupName == "" {
 		return nil, fmt.Errorf("wal-g wal_verify integrity check requires selected backup provider_id or provider.wal_verify.backup_name")
 	}
 
@@ -710,11 +712,7 @@ func copyStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
-	result := make(map[string]string, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
+	return maps.Clone(values)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -724,15 +722,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func metadataOrNil(metadata map[string]string) map[string]string {

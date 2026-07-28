@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"sort"
@@ -337,11 +338,7 @@ func copyEnv(env map[string]string) map[string]string {
 	if len(env) == 0 {
 		return nil
 	}
-	result := make(map[string]string, len(env))
-	for key, value := range env {
-		result[key] = value
-	}
-	return result
+	return maps.Clone(env)
 }
 
 func redactStrings(values []string, redactor Redactor) []string {

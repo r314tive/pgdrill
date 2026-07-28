@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -106,11 +107,7 @@ func cloneStrings(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
+	return maps.Clone(values)
 }
 
 func derivedAttemptID(runID string, startedAt time.Time) string {

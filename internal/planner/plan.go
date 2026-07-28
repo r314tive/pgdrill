@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -274,7 +276,7 @@ func Build(fleet Fleet) (Plan, error) {
 
 		setRuns := 0
 		for _, source := range selectedSources {
-			if !containsMode(policy.Modes, source.Mode) {
+			if !slices.Contains(policy.Modes, source.Mode) {
 				plan.Rejections = append(plan.Rejections, Rejection{
 					DrillSetID: set.ID,
 					SourceID:   source.ID,
@@ -527,13 +529,13 @@ func placeTarget(source BackupSource, pool TargetPool, selector Selector, assign
 
 func compatible(source BackupSource, pool TargetPool, target RestoreTarget) bool {
 	return source.ExecutionPool == pool.ExecutionPool &&
-		containsMode(target.Modes, source.Mode) &&
-		containsString(target.SourceDrivers, source.Driver) &&
+		slices.Contains(target.Modes, source.Mode) &&
+		slices.Contains(target.SourceDrivers, source.Driver) &&
 		(source.Mode != model.DrillModeNative || target.Driver == string(target.Type))
 }
 
 func selectorMatches(id string, labels map[string]string, selector Selector) bool {
-	if len(selector.IDs) > 0 && !containsString(selector.IDs, id) {
+	if len(selector.IDs) > 0 && !slices.Contains(selector.IDs, id) {
 		return false
 	}
 	for key, value := range selector.MatchLabels {
@@ -656,24 +658,6 @@ func (p ProbeProfile) modelProbes() []model.ProbeDescriptor {
 	return probes
 }
 
-func containsMode(values []model.DrillMode, wanted model.DrillMode) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
-}
-
-func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
-}
-
 func targetAssignmentKey(poolID, targetID string) string {
 	return poolID + "\x00" + targetID
 }
@@ -727,9 +711,5 @@ func cloneLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return nil
 	}
-	cloned := make(map[string]string, len(labels))
-	for key, value := range labels {
-		cloned[key] = value
-	}
-	return cloned
+	return maps.Clone(labels)
 }

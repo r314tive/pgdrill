@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -757,11 +758,7 @@ func addAttribute(attributes map[string]string, key string, value string) {
 }
 
 func copyMap(input map[string]any) map[string]any {
-	result := make(map[string]any, len(input)+1)
-	for key, value := range input {
-		result[key] = value
-	}
-	return result
+	return maps.Clone(input)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -784,9 +781,5 @@ func copyStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
-	result := make(map[string]string, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
+	return maps.Clone(values)
 }

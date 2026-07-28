@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -787,9 +788,5 @@ func copyStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
-	copied := make(map[string]string, len(values))
-	for key, value := range values {
-		copied[key] = value
-	}
-	return copied
+	return maps.Clone(values)
 }

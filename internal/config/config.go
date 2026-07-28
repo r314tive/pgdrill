@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -729,11 +730,7 @@ func copyStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
-	result := make(map[string]string, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
+	return maps.Clone(values)
 }
 
 func setDefaultDuration(value *Duration, fallback time.Duration) {

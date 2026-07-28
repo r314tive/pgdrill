@@ -2,6 +2,7 @@ package planner
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -293,11 +294,7 @@ func normalizeLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return nil
 	}
-	normalized := make(map[string]string, len(labels))
-	for key, value := range labels {
-		normalized[key] = value
-	}
-	return normalized
+	return maps.Clone(labels)
 }
 
 func validateResourceID(field, value string) error {

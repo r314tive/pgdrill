@@ -26,10 +26,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		{name: "target_type", value: targetTypeLabel(result.Target.Type)},
 		{name: "recovery_target", value: recoveryTargetLabel(result.RecoveryTarget.Type)},
 	}
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_report_info Report format information."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_report_info gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_report_info", "Report format information."); err != nil {
 		return err
 	}
 	if err := writeMetric(writer, "pgdrill_report_info", []metricLabel{
@@ -39,10 +36,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		return err
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_drill_status Last drill status as a one-hot gauge."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_drill_status gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_drill_status", "Last drill status as a one-hot gauge."); err != nil {
 		return err
 	}
 	for _, status := range []model.DrillStatus{
@@ -60,10 +54,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_failure_info Failure lifecycle stage for the last drill."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_failure_info gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_failure_info", "Failure lifecycle stage for the last drill."); err != nil {
 		return err
 	}
 	failureLabels := appendMetricLabel(baseLabels, "stage", failureStage(result))
@@ -72,40 +63,28 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 	}
 
 	durationLabels := appendMetricLabel(baseLabels, "status", string(normalizeDrillStatus(result.Status)))
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_drill_duration_seconds Last drill duration in seconds."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_drill_duration_seconds gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_drill_duration_seconds", "Last drill duration in seconds."); err != nil {
 		return err
 	}
 	if err := writeMetric(writer, "pgdrill_drill_duration_seconds", durationLabels, formatFloat(durationSeconds(result.StartedAt, result.FinishedAt))); err != nil {
 		return err
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_drill_started_timestamp_seconds Last drill start time as a Unix timestamp."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_drill_started_timestamp_seconds gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_drill_started_timestamp_seconds", "Last drill start time as a Unix timestamp."); err != nil {
 		return err
 	}
 	if err := writeMetric(writer, "pgdrill_drill_started_timestamp_seconds", durationLabels, timestampSeconds(result.StartedAt)); err != nil {
 		return err
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_drill_finished_timestamp_seconds Last drill finish time as a Unix timestamp."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_drill_finished_timestamp_seconds gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_drill_finished_timestamp_seconds", "Last drill finish time as a Unix timestamp."); err != nil {
 		return err
 	}
 	if err := writeMetric(writer, "pgdrill_drill_finished_timestamp_seconds", durationLabels, timestampSeconds(result.FinishedAt)); err != nil {
 		return err
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_checks_total Number of checks in the last drill grouped by check name, probe, and status."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_checks_total gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_checks_total", "Number of checks in the last drill grouped by check name, probe, and status."); err != nil {
 		return err
 	}
 	for _, sample := range checkCountSamples(result.Cluster, result.Provider, result.Checks) {
@@ -114,10 +93,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		}
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_evidence_records_total Number of evidence records in the last drill grouped by kind."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_evidence_records_total gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_evidence_records_total", "Number of evidence records in the last drill grouped by kind."); err != nil {
 		return err
 	}
 	for _, sample := range evidenceCountSamples(result.Cluster, result.Provider, result.Evidence) {
@@ -126,10 +102,7 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		}
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_operations_total Number of mutation operations in the last drill grouped by kind, state, and reconciliation status."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_operations_total gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_operations_total", "Number of mutation operations in the last drill grouped by kind, state, and reconciliation status."); err != nil {
 		return err
 	}
 	for _, sample := range operationCountSamples(result.Cluster, result.Provider, result.Operations) {
@@ -138,16 +111,10 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		}
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_artifacts_total Number of referenced artifacts in the last drill grouped by retention and redaction classification."); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_artifacts_total", "Number of referenced artifacts in the last drill grouped by retention and redaction classification."); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_artifacts_total gauge"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_artifact_bytes Total referenced artifact bytes in the last drill grouped by retention and redaction classification."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_artifact_bytes gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_artifact_bytes", "Total referenced artifact bytes in the last drill grouped by retention and redaction classification."); err != nil {
 		return err
 	}
 	for _, sample := range artifactSamples(result.Cluster, result.Provider, result.Artifacts) {
@@ -159,34 +126,19 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 		}
 	}
 
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_verdict_info Recovery policy assertion verdict and evidence basis for the last drill."); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_policy_verdict_info", "Recovery policy assertion verdict and evidence basis for the last drill."); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_verdict_info gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_policy_limit_seconds", "Configured duration limit for a recovery policy assertion."); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_limit_seconds Configured duration limit for a recovery policy assertion."); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_policy_observed_seconds", "Observed duration for a recovery policy assertion."); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_limit_seconds gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_policy_satisfied", "Boolean recovery policy assertion result."); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_observed_seconds Observed duration for a recovery policy assertion."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_observed_seconds gauge"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_policy_satisfied Boolean recovery policy assertion result."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_policy_satisfied gauge"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# HELP pgdrill_recovery_proven_timestamp_seconds Time when PostgreSQL and required post-restore probes established recovery proof."); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(writer, "# TYPE pgdrill_recovery_proven_timestamp_seconds gauge"); err != nil {
+	if err := writeMetricDescriptor(writer, "pgdrill_recovery_proven_timestamp_seconds", "Time when PostgreSQL and required post-restore probes established recovery proof."); err != nil {
 		return err
 	}
 	if result.PolicyEvaluation != nil {
@@ -229,6 +181,14 @@ func WritePrometheus(writer io.Writer, result model.DrillResult) error {
 	}
 
 	return nil
+}
+
+func writeMetricDescriptor(writer io.Writer, name, help string) error {
+	if _, err := fmt.Fprintln(writer, "# HELP "+name+" "+help); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(writer, "# TYPE "+name+" gauge")
+	return err
 }
 
 func failureStage(result model.DrillResult) string {
