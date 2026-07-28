@@ -1,0 +1,44 @@
+pgdrill=pgdrill v0.3.0-alpha.8 (1d742c67e1d3968449c13553348fff4b5ccb9b91, 2026-07-28T02:04:12Z)
+pg_probackup=pg_probackup 2.5.16 (PostgreSQL 18.3)
+postgresql=postgres (PostgreSQL) 18.3
+latest_recovery_source_rows=101
+timestamp_recovery_target=2026-07-28T02:05:18Z
+source_rows_after_target=102
+backup_id=TIV4GI
+sentinel_wal=000000010000000000000003
+post_target_wal=000000010000000000000004
+[
+    {
+        "instance": "integration",
+        "backups": [
+            {
+                "id": "TIV4GI",
+                "backup-mode": "FULL",
+                "wal": "STREAM",
+                "compress-alg": "zlib",
+                "compress-level": 1,
+                "from-replica": "false",
+                "block-size": 8192,
+                "xlog-block-size": 8192,
+                "checksum-version": 1,
+                "program-version": "2.5.16",
+                "server-version": "18",
+                "current-tli": 1,
+                "parent-tli": 0,
+                "start-lsn": "0/2000028",
+                "stop-lsn": "0/2000188",
+                "start-time": "2026-07-28 02:05:06+00",
+                "end-time": "2026-07-28 02:05:16+00",
+                "recovery-xid": 755,
+                "recovery-time": "2026-07-28 02:05:07+00",
+                "data-bytes": 7837508,
+                "wal-bytes": 16777216,
+                "uncompressed-bytes": 23071555,
+                "pgdata-bytes": 23071279,
+                "primary_conninfo": "user=postgres channel_binding=disable host=/validation/source-socket port=55431 sslmode=disable sslnegotiation=postgres sslcompression=0 sslcertmode=disable sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=disable krbsrvname=postgres gssdelegation=0 target_session_attrs=any load_balance_hosts=disable",
+                "status": "OK",
+                "content-crc": 2274788255
+            }
+        ]
+    }
+]

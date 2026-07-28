@@ -29,7 +29,10 @@ Native-provider field entries must reference a passed drill report. Repository
 tests parse referenced reports and cross-check provider or target identity,
 recovery target, observation date, PostgreSQL/tool versions, claimed CNPG
 operator version when applicable, pgdrill version, and full commit. Release
-packaging validates and includes the matrix and this document.
+packaging validates and includes the matrix and this document. A field entry
+that claims `timestamp_pitr` must additionally contain a passed SQL boundary
+probe with evidence, a recovery proof timestamp, and passed required verdicts
+for all five recovery-policy assertions.
 
 ## Release Platforms
 
@@ -122,6 +125,32 @@ retained in the compatibility matrix.
 This adds one WAL-G 3.0.8 / PostgreSQL 18.3 / Linux arm64 timestamp field point.
 It does not imply timestamp support for other providers, versions, platforms,
 backup modes, or storage backends.
+
+### v0.3.0-alpha.8 Native Provider PITR Gate
+
+On 2026-07-28, the exact clean commit
+`1d742c67e1d3968449c13553348fff4b5ccb9b91` completed separate latest and
+inclusive timestamp drills with Barman 3.19.1, pgBackRest 2.58.0, and
+pg_probackup 2.5.16 against PostgreSQL 18.3 on Linux arm64. All three used the
+same deterministic `v0.3.0-alpha.8` candidate archive, whose SHA-256 was
+`fdae0478288c7f953c501fd18948ef83eb09a802adfbc3749f14cb0e70630515`.
+
+Each run created a real full backup, recovered row 101 committed after that
+backup but before the requested target, and excluded archived row 102 committed
+after the target. WAL replay used the provider-native retrieval path:
+`barman get-wal`, `pgbackrest archive-get`, or `pg_probackup archive-get`.
+Catalog and backup validation, PostgreSQL startup, the exact SQL boundary,
+`pg_amcheck`, schema-only `pg_dump`, all required policy verdicts, durable
+history verification, and owned cleanup passed.
+
+The reports, exact rendered configurations, runtime identities, source/WAL
+boundaries, and checksums are retained as separate field entries under
+[`compatibility/evidence`](../compatibility/evidence). These observations cover
+one local repository topology, one full backup, one timestamp on timeline 1,
+and one exact version/platform point per provider. The candidate archive was
+not published or signed, and the results do not establish remote storage,
+other backup modes or recovery targets, cross-version behavior, performance,
+production RTO, or a support range.
 
 ### WAL-G Field Validation
 

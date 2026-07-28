@@ -1,0 +1,10 @@
+pgdrill=pgdrill v0.3.0-alpha.8 (1d742c67e1d3968449c13553348fff4b5ccb9b91, 2026-07-28T02:04:12Z)
+barman=3.19.1 Barman by EnterpriseDB (www.enterprisedb.com)
+postgresql=postgres (PostgreSQL) 18.3 (Debian 18.3-1.pgdg13+1)
+latest_recovery_source_rows=101
+timestamp_recovery_target=2026-07-28T02:04:32.011927Z
+source_rows_after_target=102
+backup_id=20260728T020430
+sentinel_wal=000000010000000000000004
+post_target_wal=000000010000000000000005
+{"integration": [{"backup_id": "20260728T020430", "backup_type": "rsync", "end_time": "Tue Jul 28 02:04:30 2026", "end_time_timestamp": "1785204270", "retention_status": "-", "size": "38.7 MiB", "size_bytes": 40536786, "status": "DONE", "wal_size": "32.0 MiB", "wal_size_bytes": 33554432}]}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -22,8 +23,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 18 {
-		t.Fatalf("matrix entry count = %d, want 18", len(matrix.Entries))
+	if len(matrix.Entries) != 21 {
+		t.Fatalf("matrix entry count = %d, want 21", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -68,6 +69,9 @@ func TestCommittedMatrix(t *testing.T) {
 		"provider.wal-g.field.v0-1-0-alpha-10",
 		"target.cnpg.field.v0-1-0-alpha-10",
 		"target.cnpg.field.v0-3-0-alpha-6-plugin",
+		"provider.barman.field.v0-3-0-alpha-8-pitr",
+		"provider.pg-probackup.field.v0-3-0-alpha-8-pitr",
+		"provider.pgbackrest.field.v0-3-0-alpha-8-pitr",
 	} {
 		if levels[id] != EvidenceLevelField {
 			t.Fatalf("%s level = %q, want field", id, levels[id])
@@ -76,9 +80,9 @@ func TestCommittedMatrix(t *testing.T) {
 
 	fixtureProviders := make(map[model.ProviderType]Entry)
 	for _, entry := range matrix.Entries {
-		if entry.ID == "provider.wal-g.field.v0-2-0-rc-2-pitr" {
+		if strings.HasSuffix(entry.ID, "-pitr") {
 			if len(entry.RecoveryTargets) != 1 || entry.RecoveryTargets[0] != model.RecoveryTargetTimestamp {
-				t.Fatalf("WAL-G PITR recovery targets = %#v, want timestamp", entry.RecoveryTargets)
+				t.Fatalf("%s recovery targets = %#v, want timestamp", entry.ID, entry.RecoveryTargets)
 			}
 		}
 		if entry.Component == ComponentProvider && entry.EvidenceLevel == EvidenceLevelFixture {
@@ -104,6 +108,48 @@ func TestCommittedMatrix(t *testing.T) {
 				t.Fatalf("provider %q fixture entry does not cover recovery target %q", provider, target)
 			}
 		}
+	}
+}
+
+func TestValidateTimestampPITREvidenceRequiresBoundaryAndPolicy(t *testing.T) {
+	recoveredAt := time.Date(2026, 7, 28, 2, 4, 35, 0, time.UTC)
+	verdicts := make([]model.PolicyVerdict, 0, len(model.RecoveryPolicyAssertions()))
+	for _, assertion := range model.RecoveryPolicyAssertions() {
+		verdicts = append(verdicts, model.PolicyVerdict{
+			Assertion: assertion,
+			Required:  true,
+			Status:    model.PolicyVerdictPassed,
+		})
+	}
+	result := model.DrillResult{
+		RecoveryTarget: model.RecoveryTarget{
+			Type:  model.RecoveryTargetTimestamp,
+			Value: "2026-07-28T02:04:32.011927Z",
+		},
+		Checks: []model.Check{{
+			Name:        "timestamp_boundary_replayed",
+			Probe:       model.ProbeSQL,
+			Status:      model.CheckStatusPassed,
+			EvidenceIDs: []string{"sql:run:1"},
+		}},
+		PolicyEvaluation: &model.RecoveryPolicyEvaluation{
+			RecoveryProvenAt: &recoveredAt,
+			Verdicts:         verdicts,
+		},
+	}
+	if err := validateTimestampPITREvidence(result); err != nil {
+		t.Fatalf("valid timestamp PITR evidence rejected: %v", err)
+	}
+
+	result.Checks[0].EvidenceIDs = nil
+	if err := validateTimestampPITREvidence(result); err == nil || !strings.Contains(err.Error(), "SQL boundary") {
+		t.Fatalf("missing-boundary-evidence error = %v", err)
+	}
+	result.Checks[0].EvidenceIDs = []string{"sql:run:1"}
+
+	result.PolicyEvaluation.Verdicts[1].Status = model.PolicyVerdictFailed
+	if err := validateTimestampPITREvidence(result); err == nil || !strings.Contains(err.Error(), "rpo") {
+		t.Fatalf("failed-RPO error = %v", err)
 	}
 }
 

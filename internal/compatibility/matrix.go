@@ -357,6 +357,48 @@ func validateDrillReport(entry Entry, path string) error {
 	if !hasPostgreSQLVersionEvidence(entry, result.Checks, entry.PostgreSQLVersions[0]) {
 		return fmt.Errorf("drill report has no passed PostgreSQL version check matching the entry")
 	}
+	if hasCapability(entry, "timestamp_pitr") {
+		if err := validateTimestampPITREvidence(result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTimestampPITREvidence(result model.DrillResult) error {
+	if result.RecoveryTarget.Type != model.RecoveryTargetTimestamp {
+		return fmt.Errorf("timestamp PITR evidence has recovery target %q", result.RecoveryTarget.Type)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, result.RecoveryTarget.Value); err != nil {
+		return fmt.Errorf("timestamp PITR evidence has invalid recovery target value: %w", err)
+	}
+
+	boundaryProven := false
+	for _, check := range result.Checks {
+		if check.Name == "timestamp_boundary_replayed" &&
+			check.Probe == model.ProbeSQL &&
+			check.Status == model.CheckStatusPassed &&
+			len(check.EvidenceIDs) > 0 {
+			boundaryProven = true
+			break
+		}
+	}
+	if !boundaryProven {
+		return fmt.Errorf("timestamp PITR evidence has no passed SQL boundary check with evidence")
+	}
+	if result.PolicyEvaluation == nil || result.PolicyEvaluation.RecoveryProvenAt == nil {
+		return fmt.Errorf("timestamp PITR evidence has no recovery policy proof")
+	}
+	verdicts := make(map[model.PolicyAssertion]model.PolicyVerdict, len(result.PolicyEvaluation.Verdicts))
+	for _, verdict := range result.PolicyEvaluation.Verdicts {
+		verdicts[verdict.Assertion] = verdict
+	}
+	for _, assertion := range model.RecoveryPolicyAssertions() {
+		verdict, ok := verdicts[assertion]
+		if !ok || !verdict.Required || verdict.Status != model.PolicyVerdictPassed {
+			return fmt.Errorf("timestamp PITR evidence has no passed required %s policy verdict", assertion)
+		}
+	}
 	return nil
 }
 

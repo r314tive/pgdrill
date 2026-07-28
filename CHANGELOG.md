@@ -14,6 +14,10 @@ called out explicitly even while the major version is `0`.
   integration paths with exact pre/post-target transactions, native WAL
   retrieval, independent reports, durable history verification, policy
   assertions, structural probes, and owned cleanup.
+- Retained exact `v0.3.0-alpha.8` field evidence for those three native
+  timestamp-PITR paths, plus capability-specific matrix validation that
+  requires a passed SQL boundary probe, attached evidence, recovery proof,
+  and all five required policy verdicts.
 - Typed CNPG Barman Cloud Plugin recovery with exact Barman backup-ID binding,
   read-only `externalClusters[].plugin` manifests, source plugin/ObjectStore
   discovery, selected-Backup method and plugin validation, fixture-driven JSON
