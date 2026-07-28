@@ -55,6 +55,19 @@ An emulated observation proves functional interoperability at that
 Linux/architecture point; it is not native-hardware performance or RTO
 evidence.
 
+Native provider scenarios use PostgreSQL 18.3 by default. The only alternate
+profile is the separately pinned PostgreSQL 17.10 line:
+
+```sh
+make test-integration-postgresql-17
+```
+
+`PGDRILL_INTEGRATION_POSTGRES_VERSION` accepts exactly `17.10` or `18.3`.
+Every provider checks the actual server and client versions inside the
+container before repository mutation. Alternate-version runs use a separate
+cache subtree so their artifacts and latest-run pointers cannot overwrite the
+default profile.
+
 Current scenarios:
 
 - [WAL-G with filesystem or S3-compatible storage to a local PostgreSQL target](walg/README.md)

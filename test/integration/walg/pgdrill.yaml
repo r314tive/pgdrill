@@ -1,5 +1,5 @@
 cluster:
-  name: integration-walg-postgresql-18
+  name: integration-walg-postgresql
 
 provider:
   type: wal-g
@@ -17,7 +17,7 @@ provider:
 target:
   type: local
   work_dir: /validation/work/restore
-  postgres_binary: /usr/lib/postgresql/18/bin/postgres
+  postgres_binary: postgres
   postgres_port: 55432
   startup_timeout: 30s
   shutdown_timeout: 30s
@@ -40,23 +40,23 @@ policy:
 
 probes:
   - type: pg_isready
-    binary: /usr/lib/postgresql/18/bin/pg_isready
+    binary: pg_isready
     timeout: 30s
   - type: sql
     name: post_backup_wal_replayed
-    binary: /usr/lib/postgresql/18/bin/psql
+    binary: psql
     query: "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_integration_probe"
     timeout: 30s
   - type: amcheck
     name: structural_amcheck
-    binary: /usr/lib/postgresql/18/bin/pg_amcheck
+    binary: pg_amcheck
     mode: database
     args:
       on_error_stop: "true"
     timeout: 2m
   - type: pg_dump
     name: schema_dump
-    binary: /usr/lib/postgresql/18/bin/pg_dump
+    binary: pg_dump
     mode: schema
     timeout: 2m
 

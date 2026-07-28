@@ -237,21 +237,24 @@ Completed foundation:
   both a network-free filesystem repository and pinned MinIO over a private
   S3-compatible network, without coupling demo infrastructure to engine
   packages.
-- A pinned Barman 3.19.1/PostgreSQL 18.3 companion drill that creates a real
-  local-rsync backup, exercises archived WAL through Barman's generated
-  `restore_command`, requires repeatable manifest verification, proves latest
-  and timestamp recovery boundaries, and retains the same release-bound
+- Pinned Barman 3.19.1/PostgreSQL 18.3 and 17.10 companion profiles that
+  create a real local-rsync backup, exercise archived WAL through Barman's
+  generated
+  `restore_command`, require repeatable manifest verification, prove latest
+  and timestamp recovery boundaries, and retain the same release-bound
   checksummed artifact set.
-- A pinned pgBackRest 2.58.0/PostgreSQL 18.3 companion drill that creates a
-  real filesystem-repository full backup, retrieves the exact post-backup WAL
-  segments, requires `check` and selected-set `verify`, proves latest and
-  timestamp recovery boundaries, and restores through the same local lifecycle
+- Pinned pgBackRest 2.58.0/PostgreSQL 18.3 and 17.10 companion profiles that
+  create a real filesystem-repository full backup, retrieve the exact
+  post-backup WAL
+  segments, require `check` and selected-set `verify`, prove latest and
+  timestamp recovery boundaries, and restore through the same local lifecycle
   and evidence contract.
-- A source-pinned pg_probackup 2.5.16/PostgreSQL 18.3 companion drill that
-  applies the upstream PostgreSQL 18 patch, creates a compressed full STREAM
-  backup, byte-compares the exact boundary WAL through `archive-get`, requires
-  native backup/WAL validation, proves latest and whole-second timestamp
-  recovery boundaries, and restores through the same local lifecycle and
+- Source-pinned pg_probackup 2.5.16/PostgreSQL 18.3 and 17.10 companion
+  profiles that apply the upstream PostgreSQL 18 patch only to the 18 build,
+  create a compressed full STREAM backup, byte-compare the exact boundary WAL
+  through `archive-get`, require
+  native backup/WAL validation, prove latest and whole-second timestamp
+  recovery boundaries, and restore through the same local lifecycle and
   evidence contract.
 - Shared host-side integration mechanics for deterministic release archives,
   explicit dirty builds, rootless network-isolated Docker execution, and
@@ -263,9 +266,9 @@ Completed foundation:
   verify owned cleanup, remove ephemeral kubeconfig state, and retain
   checksummed artifacts.
 - A clean-tree `release-candidate-check` that runs the deterministic release
-  gate, ShellCheck, all four native-provider drills, the additional WAL-G S3
-  profile, and both disposable CNPG protocol drills with one version and full
-  Git commit.
+  gate, ShellCheck, all four native-provider drills on PostgreSQL 18.3 and
+  17.10, the additional WAL-G S3 profile, and both disposable CNPG protocol
+  drills with one version and full Git commit.
 - A deterministic real WAL-G executor-loss gate that sends `SIGKILL` to the
   complete drill process group after durable restore intent, preserves
   incomplete history, applies digest-confirmed observation-only recovery,

@@ -7,15 +7,22 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 readonly ROOT
-readonly CACHE_ROOT="${PGDRILL_INTEGRATION_CACHE:-${ROOT}/.cache/integration/barman}"
-readonly RUNS_DIR="${CACHE_ROOT}/runs"
+readonly CACHE_BASE_DEFAULT="${ROOT}/.cache/integration/barman"
 readonly BARMAN_VERSION="3.19.1"
-readonly POSTGRES_VERSION="18.3"
 readonly VERSION_BASE="${PGDRILL_INTEGRATION_VERSION:-v0.0.0-integration}"
 readonly PGDRILL_INTEGRATION_LOG_PREFIX="integration/barman-host"
 
 # shellcheck source=test/integration/lib/runtime.sh
 source "${SCRIPT_DIR}/../lib/runtime.sh"
+
+POSTGRES_VERSION="$(pgdrill_integration_postgres_version)"
+readonly POSTGRES_VERSION
+POSTGRES_MAJOR="$(pgdrill_integration_postgres_major "${POSTGRES_VERSION}")"
+readonly POSTGRES_MAJOR
+cache_base="${PGDRILL_INTEGRATION_CACHE:-${CACHE_BASE_DEFAULT}}"
+CACHE_ROOT="$(pgdrill_integration_postgres_cache_root "${cache_base}" "${POSTGRES_VERSION}")"
+readonly CACHE_ROOT
+readonly RUNS_DIR="${CACHE_ROOT}/runs"
 
 log() {
   pgdrill_integration_log "$@"
@@ -34,7 +41,7 @@ git -C "${ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
 docker_arch="$(docker info --format '{{.Architecture}}')"
 arch="$(pgdrill_integration_target_arch)"
 readonly arch
-POSTGRES_IMAGE="$(pgdrill_integration_postgres_18_3_image "${arch}")"
+POSTGRES_IMAGE="$(pgdrill_integration_postgres_image "${POSTGRES_VERSION}" "${arch}")"
 readonly POSTGRES_IMAGE
 
 pgdrill_integration_prepare_pgdrill "${ROOT}" "${CACHE_ROOT}" "${arch}" "${VERSION_BASE}"
@@ -61,6 +68,8 @@ chmod 0777 "${OUTPUT_DIR}"
 
 {
   pgdrill_integration_print_image_inventory "${POSTGRES_IMAGE}"
+  printf 'postgresql_version=%s\n' "${POSTGRES_VERSION}"
+  printf 'postgresql_major=%s\n' "${POSTGRES_MAJOR}"
   pgdrill_integration_print_runtime_inventory "${docker_arch}"
 } >"${OUTPUT_DIR}/runtime.txt"
 
@@ -82,6 +91,8 @@ pgdrill_integration_docker_run "${CONTAINER_NAME}" "${arch}" 4294967296 \
   --mount "type=bind,src=${OUTPUT_DIR},dst=/output" \
   --env "PGDRILL_EXPECTED_COMMIT=${commit}" \
   --env "PGDRILL_EXPECTED_VERSION=${version}" \
+  --env "PGDRILL_POSTGRES_VERSION=${POSTGRES_VERSION}" \
+  --env "PGDRILL_POSTGRES_MAJOR=${POSTGRES_MAJOR}" \
   "${barman_image}" \
   /opt/pgdrill/test/run-in-container.sh 2>&1 | tee "${OUTPUT_DIR}/container.log"
 chmod 0750 "${OUTPUT_DIR}"

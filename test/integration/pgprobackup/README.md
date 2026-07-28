@@ -1,15 +1,16 @@
 # Local pg_probackup Integration Drill
 
 This test builds pg_probackup 2.5.16 at its exact source commit together with
-the patched PostgreSQL 18.3 source, then creates a real local backup catalog and
-a separate pgdrill restore target in one disposable Linux container. It is a
-developer compatibility gate, not an operator demo or a production topology
-claim.
+PostgreSQL 18.3 or 17.10 source, then creates a real local backup catalog and a
+separate pgdrill restore target in one disposable Linux container. PostgreSQL
+18.3 is the default. It is a developer compatibility gate, not an operator demo
+or a production topology claim.
 
 The scenario:
 
-1. verifies the PostgreSQL source archive, applies pg_probackup's PG18 patch,
-   and builds PostgreSQL, pg_probackup, and `amcheck`;
+1. verifies the exact PostgreSQL source archive, applies pg_probackup's PG18
+   patch only for PostgreSQL 18, and builds PostgreSQL, pg_probackup, and
+   `amcheck`;
 2. initializes a checksummed source and local pg_probackup catalog;
 3. inserts 100 rows and takes a compressed full STREAM backup;
 4. commits row 101 only after that backup, archives the containing WAL segment,
@@ -29,6 +30,7 @@ Prerequisites are Docker, Git, and the Go toolchain pinned by `.go-version`.
 
 ```sh
 make test-integration-pgprobackup
+PGDRILL_INTEGRATION_POSTGRES_VERSION=17.10 make test-integration-pgprobackup
 ```
 
 The first preparation builds the provider runtime from the immutable
@@ -46,6 +48,8 @@ runtime inventories, operation checkpoints, the validated history
 attempt/list/full-verification views, an archive of the raw private history
 store, and recursive checksums under the ignored
 `.cache/integration/pgprobackup/runs/<timestamp>/` directory. An explicit
+PostgreSQL 17.10 run uses the isolated
+`.cache/integration/pgprobackup/postgresql-17.10/` subtree. An explicit
 `PGDRILL_INTEGRATION_PGPROBACKUP_IMAGE` override must already exist locally;
 the runtime still refuses unexpected pg_probackup or PostgreSQL versions and
 records the override.
@@ -60,6 +64,7 @@ Supported target architectures are `linux/amd64` and `linux/arm64`. By
 default the target matches the Docker daemon; `PGDRILL_INTEGRATION_TARGET_ARCH`
 selects an explicit architecture when Docker emulation is available.
 `PGDRILL_INTEGRATION_VERSION` binds a clean candidate version.
+`PGDRILL_INTEGRATION_POSTGRES_VERSION` accepts exactly `17.10` or `18.3`.
 
 ## Scope Boundary
 
@@ -67,5 +72,5 @@ This test covers one same-host filesystem catalog, one compressed full STREAM
 backup, continuous WAL archive push/get, latest recovery, inclusive timestamp
 PITR with a proved before/after transaction boundary, a superuser connection,
 and one container boundary. It does not establish remote SSH, incremental
-modes, other PITR targets, other versions or platforms, production RTO, or
-customer readiness.
+modes, other PITR targets, PostgreSQL versions outside 17.10 and 18.3, other
+platforms, production RTO, or customer readiness.

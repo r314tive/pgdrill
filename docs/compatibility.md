@@ -375,3 +375,10 @@ adapter against a real Barman repository.
 range. Local drills execute the configured PostgreSQL binaries. CNPG drills
 reuse the source cluster image, including fallback discovery from its
 `postgres` container, to avoid silently changing the PostgreSQL major version.
+
+The native-provider integration harness has fail-closed profiles for exact
+PostgreSQL 18.3 and 17.10 patch releases. Each profile pins platform manifests,
+checks server and client versions before repository mutation, and writes to an
+isolated cache. A passing harness run is development evidence only. It becomes
+a compatibility point only after a clean candidate run is reviewed, retained,
+and referenced by a `field` entry in the machine-readable matrix.

@@ -6,7 +6,10 @@ umask 022
 # shellcheck source=test/integration/lib/history.sh
 source /opt/pgdrill/test/history.sh
 
-readonly PGBIN="/opt/postgresql-18.3/bin"
+readonly POSTGRES_VERSION="${PGDRILL_POSTGRES_VERSION:?PGDRILL_POSTGRES_VERSION is required}"
+readonly POSTGRES_MAJOR="${PGDRILL_POSTGRES_MAJOR:?PGDRILL_POSTGRES_MAJOR is required}"
+readonly POSTGRES_SOURCE_SHA256="${PGDRILL_POSTGRES_SOURCE_SHA256:?PGDRILL_POSTGRES_SOURCE_SHA256 is required}"
+readonly PGBIN="/opt/postgresql/bin"
 readonly PGDRILL="/opt/pgdrill/bin/pgdrill"
 readonly PGPROBACKUP="${PGBIN}/pg_probackup"
 readonly CONFIG="/opt/pgdrill/test/pgdrill.yaml"
@@ -23,7 +26,6 @@ readonly INSTANCE="integration"
 readonly WORK_DIR="${ROOT}/work/restore"
 readonly SOURCE_PORT="55431"
 readonly PGPROBACKUP_COMMIT="79b986494ecea8bbd67f97a62ba8ae4a00703586"
-readonly POSTGRES_SOURCE_SHA256="d95663fbbf3a80f81a9d98d895266bdcb74ba274bcc04ef6d76630a72dee016f"
 readonly EXPECTED_COMMIT="${PGDRILL_EXPECTED_COMMIT:?PGDRILL_EXPECTED_COMMIT is required}"
 readonly EXPECTED_VERSION="${PGDRILL_EXPECTED_VERSION:?PGDRILL_EXPECTED_VERSION is required}"
 
@@ -118,14 +120,15 @@ expected_version_prefix="pgdrill ${EXPECTED_VERSION} (${EXPECTED_COMMIT}, "
 pgprobackup_version="$(${PGPROBACKUP} version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 [[ "${pgprobackup_version}" == *"2.5.16"* ]] ||
   die "unexpected pg_probackup version: ${pgprobackup_version}"
-postgres_version="$(${PGBIN}/postgres --version)"
-[[ "${postgres_version}" == *" 18.3 "* || "${postgres_version}" == *" 18.3" ]] ||
+postgres_version="$("${PGBIN}/postgres" --version)"
+[[ "${postgres_version}" == "postgres (PostgreSQL) ${POSTGRES_VERSION}"* ]] ||
   die "unexpected PostgreSQL version: ${postgres_version}"
 
 {
   printf 'pg_probackup_source_commit=%s\n' "${PGPROBACKUP_COMMIT}"
+  printf 'postgresql_major=%s\n' "${POSTGRES_MAJOR}"
   printf 'postgresql_source_sha256=%s\n' "${POSTGRES_SOURCE_SHA256}"
-  printf 'pg_configure=%s\n' "$(${PGBIN}/pg_config --configure)"
+  printf 'pg_configure=%s\n' "$("${PGBIN}/pg_config" --configure)"
 } >/output/source-build.txt
 sha256sum \
   "${PGPROBACKUP}" \
@@ -147,12 +150,12 @@ log "initializing checksummed PostgreSQL source and backup catalog"
   --instance="${INSTANCE}" \
   -D "${SOURCE_DATA}" 2>&1 | tee /output/add-instance.log
 
-cat >>"${SOURCE_DATA}/postgresql.conf" <<'EOF'
+cat >>"${SOURCE_DATA}/postgresql.conf" <<EOF
 listen_addresses = '127.0.0.1'
 port = 55431
 unix_socket_directories = '/validation/source-socket'
 archive_mode = on
-archive_command = '/opt/postgresql-18.3/bin/pg_probackup archive-push -B /validation/backup --instance=integration --wal-file-path=%p --wal-file-name=%f'
+archive_command = '${PGPROBACKUP} archive-push -B /validation/backup --instance=integration --wal-file-path=%p --wal-file-name=%f'
 archive_timeout = '10s'
 wal_level = replica
 max_wal_senders = 5
@@ -207,7 +210,7 @@ backup_id="$(
 log "committing and archiving the post-backup WAL sentinel"
 "${PGBIN}/psql" --set ON_ERROR_STOP=1 --command \
   "INSERT INTO public.pgdrill_integration_probe (id, payload) VALUES (101, 'post-backup-wal-sentinel');"
-sentinel_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
+sentinel_wal="$("${PGBIN}/psql" -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
 "${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
 
 retrieve_archived_wal "${sentinel_wal}" /output/archive-get-sentinel.log
@@ -222,7 +225,7 @@ log "validating the native backup and WAL archive"
   --wal \
   --recovery-target=latest 2>&1 | tee /output/validate-before-drill.log
 
-latest_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+latest_row_count="$("${PGBIN}/psql" -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
 [[ "${latest_row_count}" == "101" ]] ||
   die "source row count is ${latest_row_count}, expected 101 before latest recovery"
 pitr_target_time="$(
@@ -271,7 +274,7 @@ pgdrill_integration_verify_history_attempt \
 log "committing and archiving a transaction after the PITR boundary"
 target_reached=false
 for _ in $(seq 1 100); do
-  if [[ "$(${PGBIN}/psql -Atqc "SELECT clock_timestamp() > '${pitr_target_time}'::timestamptz;")" == "t" ]]; then
+  if [[ "$("${PGBIN}/psql" -Atqc "SELECT clock_timestamp() > '${pitr_target_time}'::timestamptz;")" == "t" ]]; then
     target_reached=true
     break
   fi
@@ -281,12 +284,12 @@ done
   die "source clock did not pass PITR boundary ${pitr_target_time}"
 "${PGBIN}/psql" --set ON_ERROR_STOP=1 --command \
   "INSERT INTO public.pgdrill_integration_probe (id, payload) VALUES (102, 'post-target-wal-sentinel');"
-post_target_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
+post_target_wal="$("${PGBIN}/psql" -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
 "${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
 retrieve_archived_wal "${post_target_wal}" /output/archive-get-post-target.log
 find "${BACKUP_DIR}/wal/${INSTANCE}" -type f -print | sort >/output/archive-files.txt
 
-source_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+source_row_count="$("${PGBIN}/psql" -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
 [[ "${source_row_count}" == "102" ]] ||
   die "source row count is ${source_row_count}, expected 102 before timestamp recovery"
 

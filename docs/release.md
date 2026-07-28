@@ -70,6 +70,7 @@ make test-integration-barman
 make test-integration-pgbackrest
 make test-integration-pgprobackup
 make test-integration-native
+make test-integration-postgresql-17
 make test-integration-cnpg
 make test-integration-cnpg-plugin
 ```
@@ -87,8 +88,9 @@ make -s release-check VERSION=v0.3.0-alpha.5
 
 The aggregate prerelease-candidate gate requires a clean worktree and runs the
 release gate, a non-published Linux amd64/arm64 OCI build and content
-verification, ShellCheck, all four native-provider drills, and both disposable
-KinD/CNPG protocol drills:
+verification, ShellCheck, all four native-provider drills on PostgreSQL 18.3
+and 17.10, the WAL-G/MinIO profile on 18.3, and both disposable KinD/CNPG
+protocol drills:
 
 ```sh
 make -s release-candidate-check VERSION=v0.3.0-alpha.5

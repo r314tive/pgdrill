@@ -219,13 +219,16 @@ make test-integration-barman
 make test-integration-pgbackrest
 make test-integration-pgprobackup
 make test-integration-native
+make test-integration-postgresql-17
 make test-integration-cnpg
 make test-integration-cnpg-plugin
 ```
 
 `make test-local` combines the normal checks, race detector, CLI smoke, and all
 filesystem-backed disposable native drills. The aggregate release-candidate
-gate additionally runs the WAL-G S3-compatible profile and both CNPG profiles.
+gate additionally repeats all four native providers on PostgreSQL 17.10, runs
+the WAL-G S3-compatible profile on the default PostgreSQL 18.3 baseline, and
+runs both CNPG profiles.
 Artifacts remain under ignored `.cache`; they are not compatibility evidence
 by themselves. See
 [test/integration](test/integration/README.md) for the evidence boundary.

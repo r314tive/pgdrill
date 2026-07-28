@@ -10,6 +10,13 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- A fail-closed second PostgreSQL-major integration profile: all four native
+  provider drills now run against either the default PostgreSQL 18.3 or pinned
+  PostgreSQL 17.10 platform manifests, with isolated caches, exact runtime
+  inventory, dynamic server/client discovery, and one aggregate
+  `test-integration-postgresql-17` gate. The pg_probackup profile additionally
+  verifies the official PostgreSQL 17.10 source digest and applies its
+  PostgreSQL 18 compatibility patch only to the PostgreSQL 18 build.
 - A second real WAL-G 3.0.8 integration profile backed by pinned MinIO and
   MinIO Client platform manifests on a private Docker network, with
   execution-bound S3 credentials, latest and timestamp recovery, WAL

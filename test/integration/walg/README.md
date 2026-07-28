@@ -1,11 +1,12 @@
 # WAL-G Integration Drills
 
-These tests create a real PostgreSQL 18.3 source, a WAL-G 3.0.8 repository, and
-a separate pgdrill local restore target. The default profile uses a disposable
+These tests create a real PostgreSQL source, a WAL-G 3.0.8 repository, and a
+separate pgdrill local restore target. PostgreSQL 18.3 is the default; 17.10 is
+the pinned second-major profile. The default storage profile uses a disposable
 filesystem repository in one Linux container. The S3 profile uses a separate
-pinned MinIO server over a private Docker network with no published ports.
-They are developer and release gates, not replacements for the isolated VM
-demo topology.
+pinned MinIO server over a private Docker network with no published ports. They
+are developer and release gates, not replacements for the isolated VM demo
+topology.
 
 The scenario:
 
@@ -29,6 +30,7 @@ Prerequisites are Docker, `curl`, Git, and the Go toolchain pinned by
 ```sh
 make test-integration-walg
 make test-integration-walg-s3
+PGDRILL_INTEGRATION_POSTGRES_VERSION=17.10 make test-integration-walg
 ```
 
 Shell changes should additionally pass the opt-in static lint when ShellCheck
@@ -67,9 +69,10 @@ full-store verification views, an archive of the raw private history store,
 and recursive checksums under the
 ignored `.cache/integration/walg/runs/<timestamp>/` directory for filesystem
 storage or `.cache/integration/walg-s3/runs/<timestamp>/` for S3-compatible
-storage. A dirty source tree is allowed for development, but both version and
-commit metadata are suffixed with `dirty`; such output must not be promoted to
-compatibility evidence.
+storage. PostgreSQL 17.10 filesystem runs use the isolated
+`.cache/integration/walg/postgresql-17.10/` subtree. A dirty source tree is
+allowed for development, but both version and commit metadata are suffixed
+with `dirty`; such output must not be promoted to compatibility evidence.
 
 A clean source tree takes the stronger path: the repository's deterministic
 release builder creates a single-platform archive, the harness verifies and
@@ -82,6 +85,7 @@ Supported target architectures are `linux/amd64` and `linux/arm64`. By
 default the target matches the Docker daemon; `PGDRILL_INTEGRATION_TARGET_ARCH`
 selects an explicit architecture when Docker emulation is available.
 `PGDRILL_INTEGRATION_VERSION` can bind a clean candidate version, while
+`PGDRILL_INTEGRATION_POSTGRES_VERSION` accepts exactly `17.10` or `18.3`, and
 `PGDRILL_INTEGRATION_POSTGRES_IMAGE` is an explicit image override for
 diagnostics. Any override changes the observed compatibility point and must be
 recorded if the result is retained.

@@ -1,9 +1,9 @@
 # Local Barman Integration Drill
 
-This test creates a real PostgreSQL 18.3 source, a Barman 3.19.1 local-rsync
-repository, and a separate pgdrill local restore target in one disposable Linux
-container. It is a developer compatibility gate, not an operator demo or a
-production topology claim.
+This test creates a real PostgreSQL 18.3 or 17.10 source, a Barman 3.19.1
+local-rsync repository, and a separate pgdrill local restore target in one
+disposable Linux container. PostgreSQL 18.3 is the default. It is a developer
+compatibility gate, not an operator demo or a production topology claim.
 
 The scenario:
 
@@ -28,6 +28,7 @@ Prerequisites are Docker, Git, and the Go toolchain pinned by `.go-version`.
 
 ```sh
 make test-integration-barman
+PGDRILL_INTEGRATION_POSTGRES_VERSION=17.10 make test-integration-barman
 ```
 
 The first preparation builds a provider runtime from the immutable PostgreSQL
@@ -40,8 +41,9 @@ root filesystem, and uses disposable tmpfs state.
 Each run writes latest and timestamp-PITR reports, doctor/catalog output,
 PostgreSQL and Barman logs, package and runtime inventories, operation
 checkpoints, the validated history attempt/list/full-verification views, an
-archive of the raw private history store, and recursive checksums under the ignored
-`.cache/integration/barman/runs/<timestamp>/` directory. An explicit
+archive of the raw private history store, and recursive checksums under the
+ignored `.cache/integration/barman/runs/<timestamp>/` directory. PostgreSQL
+17.10 runs use `.cache/integration/barman/postgresql-17.10/`. An explicit
 `PGDRILL_INTEGRATION_BARMAN_IMAGE` override must already exist locally; the
 runtime still refuses unexpected Barman or PostgreSQL versions and records the
 override.
@@ -56,6 +58,7 @@ Supported target architectures are `linux/amd64` and `linux/arm64`. By
 default the target matches the Docker daemon; `PGDRILL_INTEGRATION_TARGET_ARCH`
 selects an explicit architecture when Docker emulation is available.
 `PGDRILL_INTEGRATION_VERSION` binds a clean candidate version.
+`PGDRILL_INTEGRATION_POSTGRES_VERSION` accepts exactly `17.10` or `18.3`.
 
 ## Scope Boundary
 

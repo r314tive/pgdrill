@@ -10,12 +10,12 @@ readonly ROOT
 readonly STORAGE_MODE="${PGDRILL_INTEGRATION_WALG_STORAGE:-file}"
 case "${STORAGE_MODE}" in
   file)
-    cache_default="${ROOT}/.cache/integration/walg"
+    cache_base_default="${ROOT}/.cache/integration/walg"
     log_prefix="integration/walg-host"
     storage_backend="file"
     ;;
   s3)
-    cache_default="${ROOT}/.cache/integration/walg-s3"
+    cache_base_default="${ROOT}/.cache/integration/walg-s3"
     log_prefix="integration/walg-s3-host"
     storage_backend="s3-compatible"
     ;;
@@ -26,8 +26,6 @@ case "${STORAGE_MODE}" in
     ;;
 esac
 readonly storage_backend
-readonly CACHE_ROOT="${PGDRILL_INTEGRATION_CACHE:-${cache_default}}"
-readonly RUNS_DIR="${CACHE_ROOT}/runs"
 readonly WALG_VERSION="3.0.8"
 readonly MINIO_VERSION="RELEASE.2025-04-22T22-12-26Z"
 readonly MINIO_CLIENT_VERSION="RELEASE.2025-04-16T18-13-26Z"
@@ -36,6 +34,15 @@ readonly PGDRILL_INTEGRATION_LOG_PREFIX="${log_prefix}"
 
 # shellcheck source=test/integration/lib/runtime.sh
 source "${SCRIPT_DIR}/../lib/runtime.sh"
+
+POSTGRES_VERSION="$(pgdrill_integration_postgres_version)"
+readonly POSTGRES_VERSION
+POSTGRES_MAJOR="$(pgdrill_integration_postgres_major "${POSTGRES_VERSION}")"
+readonly POSTGRES_MAJOR
+cache_base="${PGDRILL_INTEGRATION_CACHE:-${cache_base_default}}"
+CACHE_ROOT="$(pgdrill_integration_postgres_cache_root "${cache_base}" "${POSTGRES_VERSION}")"
+readonly CACHE_ROOT
+readonly RUNS_DIR="${CACHE_ROOT}/runs"
 
 log() {
   pgdrill_integration_log "$@"
@@ -66,7 +73,7 @@ case "${arch}" in
     ;;
 esac
 readonly arch walg_asset walg_sha256
-postgres_image_default="$(pgdrill_integration_postgres_18_3_image "${arch}")"
+postgres_image_default="$(pgdrill_integration_postgres_image "${POSTGRES_VERSION}" "${arch}")"
 readonly postgres_image_default
 readonly POSTGRES_IMAGE="${PGDRILL_INTEGRATION_POSTGRES_IMAGE:-${postgres_image_default}}"
 MINIO_IMAGE=""
@@ -115,7 +122,10 @@ readonly MINIO_SECRET_KEY="pgdrill-${run_stamp}-object-storage"
 mkdir -p "${OUTPUT_DIR}"
 chmod 0777 "${OUTPUT_DIR}"
 
-pgdrill_integration_ensure_image_platform "${POSTGRES_IMAGE}" "${arch}" "PostgreSQL 18.3"
+pgdrill_integration_ensure_image_platform \
+  "${POSTGRES_IMAGE}" \
+  "${arch}" \
+  "PostgreSQL ${POSTGRES_VERSION}"
 image_id="$(docker image inspect --format '{{.Id}}' "${POSTGRES_IMAGE}")"
 image_arch="$(docker image inspect --format '{{.Architecture}}' "${POSTGRES_IMAGE}")"
 minio_image_id=""
@@ -139,6 +149,8 @@ fi
   printf 'container_image=%s\n' "${POSTGRES_IMAGE}"
   printf 'container_image_id=%s\n' "${image_id}"
   printf 'container_image_architecture=%s\n' "${image_arch}"
+  printf 'postgresql_version=%s\n' "${POSTGRES_VERSION}"
+  printf 'postgresql_major=%s\n' "${POSTGRES_MAJOR}"
   pgdrill_integration_print_runtime_inventory "${docker_arch}"
   printf 'wal_g_sha256=%s\n' "$(pgdrill_integration_sha256_file "${WALG_BINARY}")"
   printf 'storage_backend=%s\n' "${storage_backend}"
@@ -267,6 +279,8 @@ pgdrill_integration_docker_run_on_network \
   --mount "type=bind,src=${OUTPUT_DIR},dst=/output" \
   --env "PGDRILL_EXPECTED_COMMIT=${commit}" \
   --env "PGDRILL_EXPECTED_VERSION=${version}" \
+  --env "PGDRILL_POSTGRES_VERSION=${POSTGRES_VERSION}" \
+  --env "PGDRILL_POSTGRES_MAJOR=${POSTGRES_MAJOR}" \
   "${drill_env[@]}" \
   "${POSTGRES_IMAGE}" \
   /opt/pgdrill/test/run-in-container.sh 2>&1 | tee "${OUTPUT_DIR}/container.log"

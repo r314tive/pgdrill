@@ -100,22 +100,93 @@ pgdrill_integration_ensure_image_platform() {
       "${description} image architecture ${image_arch:-unknown} does not match linux/${target_arch}"
 }
 
-pgdrill_integration_postgres_18_3_image() {
-  local target_arch="$1"
-  case "${target_arch}" in
-    amd64)
+pgdrill_integration_postgres_version() {
+  local configured_version="${PGDRILL_INTEGRATION_POSTGRES_VERSION:-18.3}"
+
+  case "${configured_version}" in
+    17.10 | 18.3)
+      printf '%s\n' "${configured_version}"
+      ;;
+    *)
+      pgdrill_integration_die \
+        "unsupported PGDRILL_INTEGRATION_POSTGRES_VERSION: ${configured_version}; expected 17.10 or 18.3"
+      ;;
+  esac
+}
+
+pgdrill_integration_postgres_major() {
+  local postgres_version="$1"
+
+  case "${postgres_version}" in
+    17.10)
+      printf '17\n'
+      ;;
+    18.3)
+      printf '18\n'
+      ;;
+    *)
+      pgdrill_integration_die \
+        "PostgreSQL major is not defined for version ${postgres_version}"
+      ;;
+  esac
+}
+
+pgdrill_integration_postgres_source_sha256() {
+  local postgres_version="$1"
+
+  case "${postgres_version}" in
+    17.10)
+      printf '%s\n' \
+        "078a03516dcdbdb705fecaf415ea3d13a956c589e46f09fed68a06fb00598c90"
+      ;;
+    18.3)
+      printf '%s\n' \
+        "d95663fbbf3a80f81a9d98d895266bdcb74ba274bcc04ef6d76630a72dee016f"
+      ;;
+    *)
+      pgdrill_integration_die \
+        "PostgreSQL source digest is not pinned for version ${postgres_version}"
+      ;;
+  esac
+}
+
+pgdrill_integration_postgres_image() {
+  local postgres_version="$1"
+  local target_arch="$2"
+
+  case "${postgres_version}/${target_arch}" in
+    17.10/amd64)
+      printf '%s\n' \
+        "postgres@sha256:cb875afe6d2e8593c28c22d37d0fd7aaf035c43a42e2f7792cd4c09ceb6beac5"
+      ;;
+    17.10/arm64)
+      printf '%s\n' \
+        "postgres@sha256:c274743e5423a554d3ebe3fcf73e489460397f538a1383d191a9c54774b04a49"
+      ;;
+    18.3/amd64)
       printf '%s\n' \
         "postgres@sha256:a145910d7079e9fbf73e6df19d5fcca0ce59d747cf7d97ac772bff28c3759c32"
       ;;
-    arm64)
+    18.3/arm64)
       printf '%s\n' \
         "postgres@sha256:0c24d31b13a9801233f136bc80e908bda9577ab7e9c622e572eebc13c186ed4d"
       ;;
     *)
       pgdrill_integration_die \
-        "PostgreSQL 18.3 image is not pinned for linux/${target_arch}"
+        "PostgreSQL ${postgres_version} image is not pinned for linux/${target_arch}"
       ;;
   esac
+}
+
+pgdrill_integration_postgres_cache_root() {
+  local default_root="$1"
+  local postgres_version="$2"
+
+  if [[ "${postgres_version}" == "18.3" ]]; then
+    printf '%s\n' "${default_root}"
+    return
+  fi
+  printf '%s/postgresql-%s\n' "${default_root}" "${postgres_version}"
 }
 
 pgdrill_integration_minio_image() {
@@ -412,7 +483,10 @@ pgdrill_integration_prepare_image() {
   local dockerfile="$6"
   local build_context="$7"
   local target_arch="$8"
-  local cached_arch cached_base_image cached_definition
+  local cached_arch cached_base_image cached_definition postgres_major postgres_source_sha256
+
+  postgres_major="$(pgdrill_integration_postgres_major "${postgres_version}")"
+  postgres_source_sha256="$(pgdrill_integration_postgres_source_sha256 "${postgres_version}")"
 
   PGDRILL_INT_IMAGE_DEFINITION_SHA256="$(pgdrill_integration_sha256_file "${dockerfile}")"
   PGDRILL_INT_IMAGE_SOURCE="pinned_build"
@@ -438,6 +512,9 @@ pgdrill_integration_prepare_image() {
         --pull=false \
         --platform "linux/${target_arch}" \
         --build-arg "POSTGRES_IMAGE=${base_image}" \
+        --build-arg "POSTGRES_VERSION=${postgres_version}" \
+        --build-arg "POSTGRES_MAJOR=${postgres_major}" \
+        --build-arg "POSTGRES_SOURCE_SHA256=${postgres_source_sha256}" \
         --build-arg "PGDRILL_INTEGRATION_DEFINITION_SHA=${PGDRILL_INT_IMAGE_DEFINITION_SHA256}" \
         --tag "${PGDRILL_INT_CONTAINER_IMAGE}" \
         --file "${dockerfile}" \

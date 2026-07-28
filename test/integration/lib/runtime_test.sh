@@ -41,6 +41,46 @@ if (
   fail "unsupported target architecture was accepted"
 fi
 
+[[ "$(pgdrill_integration_postgres_version)" == "18.3" ]] ||
+  fail "unexpected default PostgreSQL version"
+[[ "$(PGDRILL_INTEGRATION_POSTGRES_VERSION=17.10 pgdrill_integration_postgres_version)" == "17.10" ]] ||
+  fail "explicit PostgreSQL version was not retained"
+[[ "$(pgdrill_integration_postgres_major 17.10)" == "17" ]] ||
+  fail "unexpected PostgreSQL 17 major"
+[[ "$(pgdrill_integration_postgres_major 18.3)" == "18" ]] ||
+  fail "unexpected PostgreSQL 18 major"
+[[ "$(pgdrill_integration_postgres_source_sha256 17.10)" == \
+  "078a03516dcdbdb705fecaf415ea3d13a956c589e46f09fed68a06fb00598c90" ]] ||
+  fail "unexpected PostgreSQL 17.10 source digest"
+[[ "$(pgdrill_integration_postgres_source_sha256 18.3)" == \
+  "d95663fbbf3a80f81a9d98d895266bdcb74ba274bcc04ef6d76630a72dee016f" ]] ||
+  fail "unexpected PostgreSQL 18.3 source digest"
+[[ "$(pgdrill_integration_postgres_image 17.10 amd64)" == \
+  "postgres@sha256:cb875afe6d2e8593c28c22d37d0fd7aaf035c43a42e2f7792cd4c09ceb6beac5" ]] ||
+  fail "unexpected linux/amd64 PostgreSQL 17.10 image"
+[[ "$(pgdrill_integration_postgres_image 17.10 arm64)" == \
+  "postgres@sha256:c274743e5423a554d3ebe3fcf73e489460397f538a1383d191a9c54774b04a49" ]] ||
+  fail "unexpected linux/arm64 PostgreSQL 17.10 image"
+[[ "$(pgdrill_integration_postgres_image 18.3 amd64)" == \
+  "postgres@sha256:a145910d7079e9fbf73e6df19d5fcca0ce59d747cf7d97ac772bff28c3759c32" ]] ||
+  fail "unexpected linux/amd64 PostgreSQL 18.3 image"
+[[ "$(pgdrill_integration_postgres_image 18.3 arm64)" == \
+  "postgres@sha256:0c24d31b13a9801233f136bc80e908bda9577ab7e9c622e572eebc13c186ed4d" ]] ||
+  fail "unexpected linux/arm64 PostgreSQL 18.3 image"
+[[ "$(pgdrill_integration_postgres_cache_root /cache 18.3)" == "/cache" ]] ||
+  fail "default PostgreSQL cache root changed"
+[[ "$(pgdrill_integration_postgres_cache_root /cache 17.10)" == "/cache/postgresql-17.10" ]] ||
+  fail "alternate PostgreSQL cache root is not isolated"
+if (
+  export PGDRILL_INTEGRATION_POSTGRES_VERSION=17
+  pgdrill_integration_postgres_version
+) >/dev/null 2>&1; then
+  fail "unsupported PostgreSQL version was accepted"
+fi
+if (pgdrill_integration_postgres_image 17.10 ppc64le) >/dev/null 2>&1; then
+  fail "unsupported PostgreSQL architecture was accepted"
+fi
+
 [[ "$(pgdrill_integration_minio_image amd64)" == \
   "quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb" ]] ||
   fail "unexpected linux/amd64 MinIO image"

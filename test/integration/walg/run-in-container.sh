@@ -6,7 +6,9 @@ umask 022
 # shellcheck source=test/integration/lib/history.sh
 source /opt/pgdrill/test/history.sh
 
-readonly PGBIN="/usr/lib/postgresql/18/bin"
+readonly POSTGRES_VERSION="${PGDRILL_POSTGRES_VERSION:?PGDRILL_POSTGRES_VERSION is required}"
+readonly POSTGRES_MAJOR="${PGDRILL_POSTGRES_MAJOR:?PGDRILL_POSTGRES_MAJOR is required}"
+readonly PGBIN="/usr/lib/postgresql/${POSTGRES_MAJOR}/bin"
 readonly PGDRILL="/opt/pgdrill/bin/pgdrill"
 readonly WALG="/opt/pgdrill/bin/wal-g"
 readonly ROOT="/validation"
@@ -73,7 +75,7 @@ wait_for_archived_wal() {
   local observed_wal
 
   for _ in $(seq 1 60); do
-    observed_wal="$(${PGBIN}/psql -Atqc "SELECT COALESCE(last_archived_wal, '') FROM pg_stat_archiver;")"
+    observed_wal="$("${PGBIN}/psql" -Atqc "SELECT COALESCE(last_archived_wal, '') FROM pg_stat_archiver;")"
     if [[ "${observed_wal}" == "${expected_wal}" || "${observed_wal}" > "${expected_wal}" ]]; then
       printf '%s\n' "${observed_wal}"
       return 0
@@ -124,8 +126,8 @@ expected_version_prefix="pgdrill ${EXPECTED_VERSION} (${EXPECTED_COMMIT}, "
   die "pgdrill version is not bound to expected version/commit ${EXPECTED_VERSION}/${EXPECTED_COMMIT}"
 walg_version="$(${WALG} --version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 [[ "${walg_version}" == *"v3.0.8"* ]] || die "unexpected WAL-G version: ${walg_version}"
-postgres_version="$(${PGBIN}/postgres --version)"
-[[ "${postgres_version}" == *" 18.3 "* || "${postgres_version}" == *" 18.3" ]] ||
+postgres_version="$("${PGBIN}/postgres" --version)"
+[[ "${postgres_version}" == "postgres (PostgreSQL) ${POSTGRES_VERSION}"* ]] ||
   die "unexpected PostgreSQL version: ${postgres_version}"
 
 log "initializing checksummed PostgreSQL source"
@@ -172,14 +174,14 @@ log "taking a real WAL-G full backup"
 log "committing and archiving the post-backup WAL sentinel"
 "${PGBIN}/psql" --set ON_ERROR_STOP=1 --command \
   "INSERT INTO public.pgdrill_integration_probe (id, payload) VALUES (101, 'post-backup-wal-sentinel');"
-sentinel_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
+sentinel_wal="$("${PGBIN}/psql" -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
 "${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
 
 if ! last_archived_wal="$(wait_for_archived_wal "${sentinel_wal}")"; then
   die "post-backup WAL ${sentinel_wal} was not archived"
 fi
 
-latest_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+latest_row_count="$("${PGBIN}/psql" -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
 [[ "${latest_row_count}" == "101" ]] ||
   die "source row count is ${latest_row_count}, expected 101 before latest recovery"
 pitr_target_time="$(
@@ -229,13 +231,13 @@ pgdrill_integration_verify_history_attempt \
 log "committing and archiving a transaction after the PITR boundary"
 "${PGBIN}/psql" --set ON_ERROR_STOP=1 --command \
   "INSERT INTO public.pgdrill_integration_probe (id, payload) VALUES (102, 'post-target-wal-sentinel');"
-post_target_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
+post_target_wal="$("${PGBIN}/psql" -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
 "${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
 if ! last_archived_post_target_wal="$(wait_for_archived_wal "${post_target_wal}")"; then
   die "post-target WAL ${post_target_wal} was not archived"
 fi
 
-source_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+source_row_count="$("${PGBIN}/psql" -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
 [[ "${source_row_count}" == "102" ]] ||
   die "source row count is ${source_row_count}, expected 102 before timestamp recovery"
 

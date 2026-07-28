@@ -6,7 +6,9 @@ umask 022
 # shellcheck source=test/integration/lib/history.sh
 source /opt/pgdrill/test/history.sh
 
-readonly PGBIN="/usr/lib/postgresql/18/bin"
+readonly POSTGRES_VERSION="${PGDRILL_POSTGRES_VERSION:?PGDRILL_POSTGRES_VERSION is required}"
+readonly POSTGRES_MAJOR="${PGDRILL_POSTGRES_MAJOR:?PGDRILL_POSTGRES_MAJOR is required}"
+readonly PGBIN="/usr/lib/postgresql/${POSTGRES_MAJOR}/bin"
 readonly PGDRILL="/opt/pgdrill/bin/pgdrill"
 readonly BARMAN="/usr/bin/barman"
 readonly BARMAN_CONFIG="/opt/pgdrill/test/barman.conf"
@@ -83,8 +85,8 @@ expected_version_prefix="pgdrill ${EXPECTED_VERSION} (${EXPECTED_COMMIT}, "
 barman_version="$(${BARMAN} --version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 [[ "${barman_version}" == "3.19.1 Barman by EnterpriseDB"* ]] ||
   die "unexpected Barman version: ${barman_version}"
-postgres_version="$(${PGBIN}/postgres --version)"
-[[ "${postgres_version}" == *" 18.3 "* || "${postgres_version}" == *" 18.3" ]] ||
+postgres_version="$("${PGBIN}/postgres" --version)"
+[[ "${postgres_version}" == "postgres (PostgreSQL) ${POSTGRES_VERSION}"* ]] ||
   die "unexpected PostgreSQL version: ${postgres_version}"
 
 dpkg-query -W \
@@ -92,8 +94,8 @@ dpkg-query -W \
   barman \
   python3-barman \
   rsync \
-  postgresql-18 \
-  postgresql-client-18 > /output/packages.txt
+  "postgresql-${POSTGRES_MAJOR}" \
+  "postgresql-client-${POSTGRES_MAJOR}" > /output/packages.txt
 
 log "initializing checksummed PostgreSQL source"
 "${PGBIN}/initdb" \
@@ -155,7 +157,7 @@ done
 log "committing and archiving the post-backup WAL sentinel"
 "${PGBIN}/psql" --set ON_ERROR_STOP=1 --command \
   "INSERT INTO public.pgdrill_integration_probe (id, payload) VALUES (101, 'post-backup-wal-sentinel');"
-sentinel_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
+sentinel_wal="$("${PGBIN}/psql" -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
 "${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
 
 archived=false
@@ -169,7 +171,7 @@ for _ in $(seq 1 60); do
 done
 [[ "${archived}" == "true" ]] || die "post-backup WAL ${sentinel_wal} was not archived by Barman"
 
-latest_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+latest_row_count="$("${PGBIN}/psql" -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
 [[ "${latest_row_count}" == "101" ]] ||
   die "source row count is ${latest_row_count}, expected 101 before latest recovery"
 pitr_target_time="$(
@@ -226,7 +228,7 @@ pgdrill_integration_verify_history_attempt \
 log "committing and archiving a transaction after the PITR boundary"
 "${PGBIN}/psql" --set ON_ERROR_STOP=1 --command \
   "INSERT INTO public.pgdrill_integration_probe (id, payload) VALUES (102, 'post-target-wal-sentinel');"
-post_target_wal="$(${PGBIN}/psql -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
+post_target_wal="$("${PGBIN}/psql" -Atqc 'SELECT pg_walfile_name(pg_current_wal_lsn());')"
 "${PGBIN}/psql" -Atqc 'SELECT pg_switch_wal();' >/dev/null
 
 post_target_archived=false
@@ -241,7 +243,7 @@ done
 [[ "${post_target_archived}" == "true" ]] ||
   die "post-target WAL ${post_target_wal} was not archived by Barman"
 
-source_row_count="$(${PGBIN}/psql -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
+source_row_count="$("${PGBIN}/psql" -Atqc 'SELECT count(*) FROM public.pgdrill_integration_probe;')"
 [[ "${source_row_count}" == "102" ]] ||
   die "source row count is ${source_row_count}, expected 102 before timestamp recovery"
 

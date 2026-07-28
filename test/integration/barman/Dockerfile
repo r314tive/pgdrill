@@ -2,11 +2,12 @@ ARG POSTGRES_IMAGE=postgres@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a549
 FROM ${POSTGRES_IMAGE}
 
 ARG POSTGRES_IMAGE
+ARG POSTGRES_VERSION
 ARG PGDRILL_INTEGRATION_DEFINITION_SHA
 
 LABEL org.pgdrill.integration.provider="barman" \
       org.pgdrill.integration.barman-version="3.19.1" \
-      org.pgdrill.integration.postgresql-version="18.3" \
+      org.pgdrill.integration.postgresql-version="${POSTGRES_VERSION}" \
       org.pgdrill.integration.base-image="${POSTGRES_IMAGE}" \
       org.pgdrill.integration.definition-sha="${PGDRILL_INTEGRATION_DEFINITION_SHA}"
 
