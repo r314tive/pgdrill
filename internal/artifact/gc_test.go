@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +75,178 @@ func TestDirectoryStorePersistsClaimsAndVerifiesReferenceSet(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, storeMetadataFileName)); err != nil {
 		t.Fatalf("stat store metadata: %v", err)
+	}
+}
+
+func TestGCPlanValidateRejectsOutOfBoundsAccounting(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "artifacts")
+	store := DirectoryStore{Path: root}
+	ref := putArtifact(
+		t,
+		store,
+		artifactMetadata(t, model.ArtifactRetentionHistory, model.ArtifactRedactionNotRequired),
+		"orphan",
+	)
+	setBlobTime(t, root, ref.ID, time.Now().UTC().Add(-4*time.Hour))
+	plan, err := store.PlanGC(
+		context.Background(),
+		GCPolicy{Before: time.Now().UTC().Add(-time.Hour)},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*GCPlan)
+	}{
+		{
+			name: "candidate bytes exceed total",
+			mutate: func(plan *GCPlan) {
+				plan.Summary.TotalBytes = plan.Summary.CandidateBlobBytes - 1
+			},
+		},
+		{
+			name: "reference scope exceeds limit",
+			mutate: func(plan *GCPlan) {
+				plan.Summary.ReferencedOccurrences = MaxGCReferences
+				plan.Summary.ForeignReferences = 1
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			broken := plan
+			test.mutate(&broken)
+			digest, err := planDigest(broken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			broken.Digest = digest
+			if err := broken.Validate(); err == nil ||
+				!strings.Contains(err.Error(), "supported bounds") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestGCResultValidateRejectsOutOfBoundsAccounting(t *testing.T) {
+	t.Parallel()
+
+	result := GCResult{
+		SchemaVersion: CurrentGCResultSchemaVersion,
+		PlanDigest:    "sha256:" + strings.Repeat("a", 64),
+	}
+	tests := []struct {
+		name   string
+		mutate func(*GCResult)
+	}{
+		{
+			name: "blob bytes without blobs",
+			mutate: func(result *GCResult) {
+				result.DeletedBlobBytes = 1
+			},
+		},
+		{
+			name: "too many temporary files",
+			mutate: func(result *GCResult) {
+				result.DeletedTemporaryFiles = MaxTemporaryFiles + 1
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			broken := result
+			test.mutate(&broken)
+			if err := broken.Validate(); err == nil ||
+				!strings.Contains(err.Error(), "supported bounds") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestVerificationResultValidateRejectsOutOfBoundsAccounting(t *testing.T) {
+	t.Parallel()
+
+	result := VerificationResult{
+		SchemaVersion:        CurrentVerificationSchemaVersion,
+		StoreSchemaVersion:   CurrentStoreSchemaVersion,
+		LayoutVersion:        CurrentLayoutVersion,
+		URIBase:              "artifacts",
+		Blobs:                1,
+		BlobBytes:            1,
+		ManagedBlobs:         1,
+		ReferencedBlobs:      1,
+		ReferenceOccurrences: 1,
+		ReferenceDigest:      "sha256:" + strings.Repeat("a", 64),
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("valid verification result: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*VerificationResult)
+		want   string
+	}{
+		{
+			name: "blob bytes exceed content bound",
+			mutate: func(result *VerificationResult) {
+				result.BlobBytes = model.MaxArtifactBytes + 1
+			},
+			want: "counts are inconsistent",
+		},
+		{
+			name: "reference scope exceeds limit",
+			mutate: func(result *VerificationResult) {
+				result.ReferenceOccurrences = MaxGCReferences
+				result.ForeignReferences = 1
+			},
+			want: "counts are inconsistent",
+		},
+		{
+			name: "maintenance states overlap",
+			mutate: func(result *VerificationResult) {
+				digest := "sha256:" + strings.Repeat("b", 64)
+				result.PendingGCOperations = []string{digest}
+				result.PendingGCCleanup = []string{digest}
+				result.MaintenanceRequired = true
+			},
+			want: "overlapping",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			broken := result
+			test.mutate(&broken)
+			if err := broken.Validate(); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestReadClaimsAtRejectsExcessiveClaimCount(t *testing.T) {
+	path := t.TempDir()
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifactID := "sha256:" + strings.Repeat("a", 64)
+	for index := 0; index <= MaxClaimsPerBlob; index++ {
+		name := fmt.Sprintf("%064x.json", index)
+		if err := os.WriteFile(filepath.Join(path, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := readClaimsAt(path, artifactID, 1); err == nil ||
+		!strings.Contains(err.Error(), "maximum claim count") {
+		t.Fatalf("readClaimsAt() error = %v", err)
 	}
 }
 

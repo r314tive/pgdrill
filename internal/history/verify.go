@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -98,7 +99,7 @@ func (s DirectoryStore) Verify(ctx context.Context) (VerificationResult, error) 
 			return err
 		}
 		for _, digest := range state.operations {
-			if err := validateRetentionOperationState(root, digest, containsDigest(state.trash, digest)); err != nil {
+			if err := validateRetentionOperationState(root, digest, slices.Contains(state.trash, digest)); err != nil {
 				return err
 			}
 		}
@@ -128,7 +129,7 @@ func validateRetentionStateCardinality(state retentionState) error {
 	if len(state.pending) > 0 && (len(state.operations) > 0 || len(state.trash) > 0) {
 		return fmt.Errorf("history store has overlapping active and completed retention operations")
 	}
-	if len(state.trash) == 1 && !containsDigest(state.operations, state.trash[0]) {
+	if len(state.trash) == 1 && !slices.Contains(state.operations, state.trash[0]) {
 		return fmt.Errorf("history store has orphaned retention trash %s", state.trash[0])
 	}
 	return nil
@@ -436,15 +437,28 @@ func (v VerificationResult) Validate() error {
 			return fmt.Errorf("history verification migration provenance is inconsistent")
 		}
 	}
-	if v.Runs < 0 || v.Runs > MaxRuns ||
-		v.Attempts < 0 || v.Attempts > MaxTotalAttempts ||
-		v.TerminalReports < 0 || v.IncompleteAttempts < 0 ||
+	if !countsWithinBounds(MaxRuns, v.Runs) ||
+		!countsWithinBounds(
+			MaxTotalAttempts,
+			v.Attempts,
+			v.TerminalReports,
+			v.IncompleteAttempts,
+		) ||
+		v.Attempts > v.Runs*MaxAttemptsPerRun ||
 		v.TerminalReports+v.IncompleteAttempts != v.Attempts ||
-		v.Events < 0 || v.ArtifactReferences < 0 {
+		!countsWithinBounds(MaxEventsPerRun*v.Runs, v.Events) ||
+		!countsWithinBounds(
+			model.MaxArtifactsPerReport*v.TerminalReports,
+			v.ArtifactReferences,
+		) {
 		return fmt.Errorf("history verification counts are inconsistent")
 	}
 	if len(v.PendingRetentionOperations) > 1 || len(v.PendingRetentionCleanup) > 1 {
 		return fmt.Errorf("history verification has multiple pending retention operations")
+	}
+	if len(v.PendingRetentionOperations) > 0 &&
+		len(v.PendingRetentionCleanup) > 0 {
+		return fmt.Errorf("history verification has overlapping active and completed retention operations")
 	}
 	for _, digest := range append(
 		append([]string(nil), v.PendingRetentionOperations...),

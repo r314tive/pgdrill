@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/r314tive/pgdrill/internal/filelock"
@@ -71,7 +72,7 @@ func (s DirectoryStore) Verify(
 				ctx,
 				settings.root,
 				digest,
-				containsDigest(state.trash, digest),
+				slices.Contains(state.trash, digest),
 			)
 			if err != nil {
 				return err
@@ -151,19 +152,35 @@ func (v VerificationResult) Validate() error {
 	if v.MigrationRequired != (v.StoreSchemaVersion == LegacyStoreSchemaVersion) {
 		return fmt.Errorf("artifact verification migration state is inconsistent")
 	}
-	if v.Blobs < 0 || v.Blobs > MaxStoreBlobs || v.BlobBytes < 0 ||
-		v.ManagedBlobs < 0 || v.LegacyBlobs < 0 ||
+	if !countsWithinBounds(
+		MaxStoreBlobs,
+		v.Blobs,
+		v.ManagedBlobs,
+		v.LegacyBlobs,
+		v.AuditClassifiedBlobs,
+		v.ReferencedBlobs,
+		v.UnreferencedBlobs,
+	) ||
+		v.BlobBytes < 0 ||
+		v.BlobBytes > int64(v.Blobs)*model.MaxArtifactBytes ||
 		v.ManagedBlobs+v.LegacyBlobs != v.Blobs ||
-		v.AuditClassifiedBlobs < 0 || v.AuditClassifiedBlobs > v.ManagedBlobs ||
-		v.ReferencedBlobs < 0 || v.UnreferencedBlobs < 0 ||
+		v.AuditClassifiedBlobs > v.ManagedBlobs ||
 		v.ReferencedBlobs+v.UnreferencedBlobs != v.Blobs ||
-		v.ReferenceOccurrences < 0 || v.ReferenceOccurrences > MaxGCReferences ||
-		v.ForeignReferences < 0 || v.ForeignReferences > MaxGCReferences ||
-		v.TemporaryFiles < 0 || v.TemporaryFiles > MaxTemporaryFiles {
+		!countsWithinBounds(
+			MaxGCReferences,
+			v.ReferenceOccurrences,
+			v.ForeignReferences,
+		) ||
+		v.ReferenceOccurrences < v.ReferencedBlobs ||
+		v.ForeignReferences > MaxGCReferences-v.ReferenceOccurrences ||
+		!countsWithinBounds(MaxTemporaryFiles, v.TemporaryFiles) {
 		return fmt.Errorf("artifact verification counts are inconsistent")
 	}
 	if len(v.PendingGCOperations) > 1 || len(v.PendingGCCleanup) > 1 {
 		return fmt.Errorf("artifact verification has multiple pending GC operations")
+	}
+	if len(v.PendingGCOperations) > 0 && len(v.PendingGCCleanup) > 0 {
+		return fmt.Errorf("artifact verification has overlapping active and completed GC operations")
 	}
 	for _, digest := range append(
 		append([]string{}, v.PendingGCOperations...),
@@ -369,14 +386,5 @@ func validateGCTemporaryOperationState(
 	if targetExists {
 		verifyPath = target
 	}
-	return validateGCTemporaryAt(root, verifyPath, item)
-}
-
-func containsDigest(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return validateGCTemporaryAt(verifyPath, item)
 }

@@ -185,7 +185,7 @@ func (s DirectoryStore) ApplyGC(
 		return GCResult{}, err
 	}
 	confirmation = strings.TrimSpace(confirmation)
-	if !model.IsSHA256Digest(confirmation) || confirmation != strings.ToLower(confirmation) {
+	if !model.IsSHA256Digest(confirmation) {
 		return GCResult{}, fmt.Errorf("artifact GC confirmation must be a canonical sha256 digest")
 	}
 	var result GCResult
@@ -475,17 +475,8 @@ func (p GCPlan) Validate() error {
 	if !model.IsSHA256Digest(p.ReferenceDigest) || !model.IsSHA256Digest(p.Digest) {
 		return fmt.Errorf("artifact GC plan digests must be canonical sha256 values")
 	}
-	if p.Summary.TotalBlobs < 0 || p.Summary.TotalBlobs > MaxStoreBlobs ||
-		p.Summary.TotalBytes < 0 ||
-		p.Summary.ReferencedBlobs < 0 || p.Summary.ReferencedOccurrences < 0 ||
-		p.Summary.ReferencedOccurrences > MaxGCReferences ||
-		p.Summary.ForeignReferences < 0 || p.Summary.ProtectedRecentBlobs < 0 ||
-		p.Summary.ProtectedAuditBlobs < 0 || p.Summary.ProtectedLegacyBlobs < 0 ||
-		p.Summary.CandidateBlobs < 0 || p.Summary.CandidateBlobBytes < 0 ||
-		p.Summary.TemporaryFiles < 0 || p.Summary.TemporaryFiles > MaxTemporaryFiles ||
-		p.Summary.ProtectedTemporaryFiles < 0 ||
-		p.Summary.CandidateTemporaryFiles < 0 || p.Summary.CandidateTemporaryBytes < 0 {
-		return fmt.Errorf("artifact GC plan counts must be non-negative")
+	if err := p.Summary.validateBounds(); err != nil {
+		return err
 	}
 	classified := p.Summary.ReferencedBlobs +
 		p.Summary.ProtectedRecentBlobs +
@@ -593,10 +584,61 @@ func (r GCResult) Validate() error {
 		r.DeletedTemporaryFiles < 0 || r.DeletedTemporaryBytes < 0 {
 		return fmt.Errorf("artifact GC result is invalid")
 	}
+	if r.DeletedBlobs > MaxStoreBlobs ||
+		r.DeletedBlobBytes > int64(r.DeletedBlobs)*model.MaxArtifactBytes ||
+		r.DeletedTemporaryFiles > MaxTemporaryFiles ||
+		r.DeletedTemporaryBytes >
+			int64(r.DeletedTemporaryFiles)*model.MaxArtifactBytes {
+		return fmt.Errorf("artifact GC result exceeds supported bounds")
+	}
 	if r.AlreadyApplied && !r.Resumed {
 		return fmt.Errorf("artifact GC already_applied requires resumed")
 	}
 	return nil
+}
+
+func (s GCSummary) validateBounds() error {
+	if !countsWithinBounds(
+		MaxStoreBlobs,
+		s.TotalBlobs,
+		s.ReferencedBlobs,
+		s.ProtectedRecentBlobs,
+		s.ProtectedAuditBlobs,
+		s.ProtectedLegacyBlobs,
+		s.CandidateBlobs,
+	) ||
+		!countsWithinBounds(
+			MaxGCReferences,
+			s.ReferencedOccurrences,
+			s.ForeignReferences,
+		) ||
+		!countsWithinBounds(
+			MaxTemporaryFiles,
+			s.TemporaryFiles,
+			s.ProtectedTemporaryFiles,
+			s.CandidateTemporaryFiles,
+		) ||
+		s.TotalBytes < 0 ||
+		s.TotalBytes > int64(MaxStoreBlobs)*model.MaxArtifactBytes ||
+		s.CandidateBlobBytes < 0 ||
+		s.CandidateBlobBytes > s.TotalBytes ||
+		s.CandidateTemporaryBytes < 0 ||
+		s.CandidateTemporaryBytes >
+			int64(s.CandidateTemporaryFiles)*model.MaxArtifactBytes ||
+		s.ReferencedOccurrences < s.ReferencedBlobs ||
+		s.ForeignReferences > MaxGCReferences-s.ReferencedOccurrences {
+		return fmt.Errorf("artifact GC plan accounting exceeds supported bounds")
+	}
+	return nil
+}
+
+func countsWithinBounds(maximum int, values ...int) bool {
+	for _, value := range values {
+		if value < 0 || value > maximum {
+			return false
+		}
+	}
+	return true
 }
 
 func validateLiveReferences(inventory storeInventory) error {
@@ -1112,7 +1154,7 @@ func (s DirectoryStore) applyGCTemporary(
 	if targetExists {
 		verifyPath = target
 	}
-	if err := validateGCTemporaryAt(root, verifyPath, item); err != nil {
+	if err := validateGCTemporaryAt(verifyPath, item); err != nil {
 		return err
 	}
 	if sourceExists {
@@ -1196,6 +1238,13 @@ func readClaimsAt(path, artifactID string, sizeBytes int64) ([]blobClaim, error)
 	if err != nil {
 		return nil, err
 	}
+	if len(entries) > MaxClaimsPerBlob {
+		return nil, fmt.Errorf(
+			"artifact %s exceeds maximum claim count %d",
+			artifactID,
+			MaxClaimsPerBlob,
+		)
+	}
 	claims := make([]blobClaim, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") ||
@@ -1224,11 +1273,6 @@ func readClaimsAt(path, artifactID string, sizeBytes int64) ([]blobClaim, error)
 		}
 		claims = append(claims, claim)
 	}
-	sort.Slice(claims, func(i, j int) bool {
-		left, _, _ := claims[i].digest()
-		right, _, _ := claims[j].digest()
-		return left < right
-	})
 	return claims, nil
 }
 
@@ -1268,7 +1312,7 @@ func moveGCClaims(source, target string, legacy bool) error {
 	return syncDirectory(filepath.Dir(target))
 }
 
-func validateGCTemporaryAt(root, path string, item GCTemporaryFile) error {
+func validateGCTemporaryAt(path string, item GCTemporaryFile) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -1289,7 +1333,6 @@ func validateGCTemporaryAt(root, path string, item GCTemporaryFile) error {
 	if !reflect.DeepEqual(actual, item) {
 		return fmt.Errorf("artifact temporary file does not match confirmed GC plan")
 	}
-	_ = root
 	return nil
 }
 

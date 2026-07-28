@@ -77,8 +77,11 @@ func validateCheckReport(report model.CheckReport, requireChecks bool) error {
 }
 
 func validateCheckReportArtifacts(report model.CheckReport) error {
-	if len(report.Artifacts) > 256 {
-		return fmt.Errorf("artifacts exceed maximum count 256")
+	if len(report.Artifacts) > model.MaxArtifactsPerReport {
+		return fmt.Errorf(
+			"artifacts exceed maximum count %d",
+			model.MaxArtifactsPerReport,
+		)
 	}
 	artifactIDs := make(map[string]struct{}, len(report.Artifacts))
 	for index, artifact := range report.Artifacts {
@@ -92,8 +95,12 @@ func validateCheckReportArtifacts(report model.CheckReport) error {
 	}
 	artifactReferences := make(map[string]int, len(artifactIDs))
 	for evidenceIndex, evidence := range report.Evidence {
-		if len(evidence.ArtifactIDs) > 32 {
-			return fmt.Errorf("evidence %d artifact_ids exceed maximum count 32", evidenceIndex)
+		if len(evidence.ArtifactIDs) > model.MaxArtifactIDsPerEvidence {
+			return fmt.Errorf(
+				"evidence %d artifact_ids exceed maximum count %d",
+				evidenceIndex,
+				model.MaxArtifactIDsPerEvidence,
+			)
 		}
 		seen := make(map[string]struct{}, len(evidence.ArtifactIDs))
 		for _, artifactID := range evidence.ArtifactIDs {

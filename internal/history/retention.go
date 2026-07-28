@@ -175,7 +175,7 @@ func (s DirectoryStore) ApplyRetention(
 	if err != nil {
 		return PruneResult{}, err
 	}
-	if !model.IsSHA256Digest(confirmation) || confirmation != strings.ToLower(confirmation) {
+	if !model.IsSHA256Digest(confirmation) {
 		return PruneResult{}, fmt.Errorf("retention confirmation must be a canonical sha256 plan digest")
 	}
 
@@ -320,29 +320,8 @@ func (p RetentionPlan) Validate() error {
 	if len(p.Attempts) > MaxTotalAttempts || len(p.Runs) > MaxRuns {
 		return fmt.Errorf("retention plan exceeds store bounds")
 	}
-	if p.Summary.TotalRuns < 0 || p.Summary.TotalRuns > MaxRuns ||
-		p.Summary.TotalAttempts < 0 || p.Summary.TotalAttempts > MaxTotalAttempts ||
-		p.Summary.SelectedAttempts != len(p.Attempts) ||
-		p.Summary.SelectedRuns != len(p.Runs) ||
-		p.Summary.ProtectedIncomplete < 0 ||
-		p.Summary.ProtectedLatest < 0 ||
-		p.Summary.ProtectedRecent < 0 ||
-		p.Summary.ProtectedAudit < 0 ||
-		p.Summary.RetainedArtifactReferences < 0 {
-		return fmt.Errorf("retention plan summary is inconsistent")
-	}
-	protected := p.Summary.ProtectedIncomplete +
-		p.Summary.ProtectedLatest +
-		p.Summary.ProtectedRecent +
-		p.Summary.ProtectedAudit
-	if p.Summary.SelectedAttempts+protected != p.Summary.TotalAttempts {
-		return fmt.Errorf("retention plan attempt accounting is inconsistent")
-	}
-	if p.Summary.SelectedRuns > p.Summary.TotalRuns {
-		return fmt.Errorf("retention plan run accounting is inconsistent")
-	}
-	if p.Summary.SelectedRuns > p.Summary.SelectedAttempts {
-		return fmt.Errorf("retention plan cannot remove more runs than attempts")
+	if err := p.Summary.validate(len(p.Attempts), len(p.Runs)); err != nil {
+		return err
 	}
 
 	artifactCount := 0
@@ -364,7 +343,9 @@ func (p RetentionPlan) Validate() error {
 		if attempt.FinishedAt.IsZero() || !attempt.FinishedAt.Before(p.Policy.Before) {
 			return fmt.Errorf("retention attempt %q is not older than the cutoff", attempt.AttemptID)
 		}
-		if attempt.ArtifactCount < 0 || attempt.AuditArtifactCount < 0 ||
+		if attempt.ArtifactCount < 0 ||
+			attempt.ArtifactCount > model.MaxArtifactsPerReport ||
+			attempt.AuditArtifactCount < 0 ||
 			attempt.AuditArtifactCount > attempt.ArtifactCount {
 			return fmt.Errorf("retention attempt %q artifact counts are invalid", attempt.AttemptID)
 		}
@@ -382,6 +363,9 @@ func (p RetentionPlan) Validate() error {
 		selectedRuns[attempt.RunID] = attempt.SpecDigest
 		if index > 0 && !retentionAttemptLess(p.Attempts[index-1], attempt) {
 			return fmt.Errorf("retention plan attempts are not in canonical order")
+		}
+		if attempt.ArtifactCount > p.Summary.RetainedArtifactReferences-artifactCount {
+			return fmt.Errorf("retention plan artifact accounting is inconsistent")
 		}
 		artifactCount += attempt.ArtifactCount
 	}
@@ -422,17 +406,62 @@ func (p RetentionPlan) Validate() error {
 	return nil
 }
 
+func (s RetentionSummary) validate(attempts, runs int) error {
+	if !countsWithinBounds(MaxRuns, s.TotalRuns, s.SelectedRuns) ||
+		!countsWithinBounds(
+			MaxTotalAttempts,
+			s.TotalAttempts,
+			s.SelectedAttempts,
+			s.ProtectedIncomplete,
+			s.ProtectedLatest,
+			s.ProtectedRecent,
+			s.ProtectedAudit,
+		) ||
+		s.SelectedAttempts != attempts ||
+		s.SelectedRuns != runs ||
+		s.RetainedArtifactReferences < 0 ||
+		s.RetainedArtifactReferences >
+			s.SelectedAttempts*model.MaxArtifactsPerReport {
+		return fmt.Errorf("retention plan summary is inconsistent")
+	}
+	protected := s.ProtectedIncomplete +
+		s.ProtectedLatest +
+		s.ProtectedRecent +
+		s.ProtectedAudit
+	if s.SelectedAttempts+protected != s.TotalAttempts {
+		return fmt.Errorf("retention plan attempt accounting is inconsistent")
+	}
+	if s.SelectedRuns > s.TotalRuns {
+		return fmt.Errorf("retention plan run accounting is inconsistent")
+	}
+	if s.SelectedRuns > s.SelectedAttempts {
+		return fmt.Errorf("retention plan cannot remove more runs than attempts")
+	}
+	return nil
+}
+
+func countsWithinBounds(maximum int, values ...int) bool {
+	for _, value := range values {
+		if value < 0 || value > maximum {
+			return false
+		}
+	}
+	return true
+}
+
 func (r PruneResult) Validate() error {
 	if r.SchemaVersion != CurrentPruneResultSchema {
 		return fmt.Errorf("history prune result schema_version must be %q", CurrentPruneResultSchema)
 	}
-	if !model.IsSHA256Digest(r.PlanDigest) || r.PlanDigest != strings.ToLower(r.PlanDigest) {
+	if !model.IsSHA256Digest(r.PlanDigest) {
 		return fmt.Errorf("history prune result plan_digest must be a canonical sha256 value")
 	}
 	if r.DeletedAttempts < 0 || r.DeletedAttempts > MaxTotalAttempts ||
 		r.DeletedRuns < 0 || r.DeletedRuns > MaxRuns ||
 		r.DeletedRuns > r.DeletedAttempts ||
-		r.RetainedArtifactReferences < 0 {
+		r.RetainedArtifactReferences < 0 ||
+		r.RetainedArtifactReferences >
+			r.DeletedAttempts*model.MaxArtifactsPerReport {
 		return fmt.Errorf("history prune result counts are inconsistent")
 	}
 	if r.AlreadyApplied && !r.Resumed {
@@ -1279,13 +1308,4 @@ func retentionProgressPath(root, digest, kind string, index int) string {
 		retentionProgressDirectory,
 		fmt.Sprintf("%s-%06d.json", kind, index),
 	)
-}
-
-func containsDigest(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }

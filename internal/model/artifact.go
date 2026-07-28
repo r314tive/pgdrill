@@ -14,6 +14,8 @@ const (
 	CurrentArtifactReferenceSchemaVersion = "pgdrill.artifact-reference/v1"
 	LegacyArtifactReferenceSchemaVersion  = "pgdrill.artifact-reference/v1alpha1"
 	MaxArtifactBytes                      = int64(64 << 20)
+	MaxArtifactsPerReport                 = 256
+	MaxArtifactIDsPerEvidence             = 32
 	maxArtifactURIBytes                   = 2048
 	maxArtifactMediaTypeBytes             = 255
 )
@@ -124,7 +126,7 @@ func (r ArtifactRef) Validate() error {
 			LegacyArtifactReferenceSchemaVersion,
 		)
 	}
-	if !IsSHA256Digest(r.ID) || r.ID != strings.ToLower(r.ID) {
+	if !IsSHA256Digest(r.ID) {
 		return fmt.Errorf("id must be a canonical lowercase sha256 digest")
 	}
 	if err := validateArtifactURI(r.URI); err != nil {

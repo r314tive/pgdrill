@@ -325,9 +325,14 @@ func runPostRestoreChecks(ctx context.Context, cfg config.Config, spec cnpg.Veri
 		return checkReport, fmt.Errorf("create restored target probes: %w", err)
 	}
 	probeReport, probeErr := core.RunProbes(ctx, configuredProbes, pg)
-	checkReport.Checks = append(checkReport.Checks, probeReport.Checks...)
-	checkReport.Evidence = append(checkReport.Evidence, probeReport.Evidence...)
+	appendCheckReport(&checkReport, probeReport)
 	return checkReport, probeErr
+}
+
+func appendCheckReport(destination *model.CheckReport, report model.CheckReport) {
+	destination.Checks = append(destination.Checks, report.Checks...)
+	destination.Evidence = append(destination.Evidence, report.Evidence...)
+	destination.Artifacts = append(destination.Artifacts, report.Artifacts...)
 }
 
 func kubectlConfig(cfg config.Config) cnpg.KubectlConfig {

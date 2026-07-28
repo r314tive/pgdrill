@@ -786,9 +786,7 @@ func (t *Target) readOperationReceiptFile(path string) (operationReceipt, error)
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return operationReceipt{}, fmt.Errorf("operation receipt contains trailing data")
 	}
-	if !model.IsSHA256Digest(receipt.OperationKey) ||
-		receipt.OperationKey != strings.ToLower(receipt.OperationKey) ||
-		receipt.CompletedAt.IsZero() {
+	if !model.IsSHA256Digest(receipt.OperationKey) || receipt.CompletedAt.IsZero() {
 		return operationReceipt{}, fmt.Errorf("operation receipt identity is invalid")
 	}
 	if receipt.Postgres == nil {
@@ -858,12 +856,13 @@ func (t *Target) findRecoveredPostgres() (*recoveredPostgres, error) {
 	if err := requirePrivateDirectory(dir); err != nil {
 		return nil, fmt.Errorf("inspect operation receipt directory: %w", err)
 	}
+	var recovered *recoveredPostgres
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		digest := "sha256:" + strings.TrimSuffix(entry.Name(), ".json")
-		if !model.IsSHA256Digest(digest) || digest != strings.ToLower(digest) {
+		if !model.IsSHA256Digest(digest) {
 			return nil, fmt.Errorf("operation receipt directory contains invalid entry %q", entry.Name())
 		}
 		receipt, err := t.readOperationReceiptFile(filepath.Join(dir, entry.Name()))
@@ -881,16 +880,19 @@ func (t *Target) findRecoveredPostgres() (*recoveredPostgres, error) {
 			return nil, err
 		}
 		if active {
-			return &recoveredPostgres{
+			if recovered != nil {
+				return nil, fmt.Errorf("operation receipt directory contains multiple active postgres receipts")
+			}
+			recovered = &recoveredPostgres{
 				pid:           receipt.PID,
 				dataDirectory: receipt.Postgres.DataDirectory,
 				logPath:       receipt.LogPath,
 				port:          receipt.Postgres.Port,
 				receipt:       receipt,
-			}, nil
+			}
 		}
 	}
-	return nil, nil
+	return recovered, nil
 }
 
 func postgresProcessMatches(dataDirectory string, pid int) (bool, error) {

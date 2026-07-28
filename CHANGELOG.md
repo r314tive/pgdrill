@@ -155,6 +155,10 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- Canonical SHA-256 validation now accepts only lowercase hexadecimal digests,
+  and artifact GC, history retention, migration, and full-store verification
+  reject persisted counts, byte totals, reference totals, and maintenance
+  states that exceed their documented store or report capacity.
 - Local restore preparation now establishes a private mode `0700` work
   directory before publishing ownership. Recovery accepts only bounded,
   private, identity-matching operation receipts whose PostgreSQL data and log
@@ -239,6 +243,11 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- CNPG verification now preserves artifact references returned by
+  post-restore probes instead of retaining only their checks and evidence.
+- Local target recovery now inspects every retained operation receipt and
+  refuses ambiguous cleanup when more than one owned PostgreSQL process is
+  still active.
 - Completed history-retention operations are now fully revalidated before
   pending cleanup, reject tampered or overlapping maintenance state, preserve
   the confirmed policy, and return the original deletion counts after a

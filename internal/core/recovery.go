@@ -75,8 +75,7 @@ func (r AttemptRecoveryResult) Validate() error {
 			CurrentAttemptRecoveryResultSchemaVersion,
 		)
 	}
-	if !model.IsSHA256Digest(r.PlanDigest) ||
-		r.PlanDigest != strings.ToLower(r.PlanDigest) {
+	if !model.IsSHA256Digest(r.PlanDigest) {
 		return fmt.Errorf("plan_digest must be a canonical lowercase sha256 digest")
 	}
 	if err := r.Attempt.Validate(); err != nil {
@@ -263,7 +262,7 @@ func (p AttemptRecoveryPlan) Validate() error {
 			return fmt.Errorf("attempt recovery checkpoints are not canonically ordered")
 		}
 	}
-	if !model.IsSHA256Digest(p.Digest) || p.Digest != strings.ToLower(p.Digest) {
+	if !model.IsSHA256Digest(p.Digest) {
 		return fmt.Errorf("digest must be a canonical lowercase sha256 digest")
 	}
 	expectedDigest, err := attemptRecoveryPlanDigest(p)
@@ -292,8 +291,7 @@ func RecoverAttempt(
 		return AttemptRecoveryResult{}, fmt.Errorf("recovery target is required")
 	}
 	confirmation.PlanDigest = strings.TrimSpace(confirmation.PlanDigest)
-	if !model.IsSHA256Digest(confirmation.PlanDigest) ||
-		confirmation.PlanDigest != strings.ToLower(confirmation.PlanDigest) {
+	if !model.IsSHA256Digest(confirmation.PlanDigest) {
 		return AttemptRecoveryResult{}, fmt.Errorf(
 			"attempt recovery confirmation must be a canonical sha256 plan digest",
 		)

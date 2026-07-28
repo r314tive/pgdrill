@@ -209,8 +209,11 @@ func validatePolicyEvaluation(result model.DrillResult, produced bool) error {
 }
 
 func validateArtifacts(artifacts []model.ArtifactRef) (map[string]struct{}, error) {
-	if len(artifacts) > 256 {
-		return nil, fmt.Errorf("artifacts exceed maximum count 256")
+	if len(artifacts) > model.MaxArtifactsPerReport {
+		return nil, fmt.Errorf(
+			"artifacts exceed maximum count %d",
+			model.MaxArtifactsPerReport,
+		)
 	}
 	ids := make(map[string]struct{}, len(artifacts))
 	uriOwners := make(map[string]string, len(artifacts))
@@ -408,8 +411,11 @@ func validateEvidenceRecord(record model.EvidenceRecord, artifactIDs map[string]
 	} else if record.Command != nil {
 		return fmt.Errorf("kind %q must not contain command payload", record.Kind)
 	}
-	if len(record.ArtifactIDs) > 32 {
-		return fmt.Errorf("artifact_ids exceed maximum count 32")
+	if len(record.ArtifactIDs) > model.MaxArtifactIDsPerEvidence {
+		return fmt.Errorf(
+			"artifact_ids exceed maximum count %d",
+			model.MaxArtifactIDsPerEvidence,
+		)
 	}
 	seenArtifacts := make(map[string]struct{}, len(record.ArtifactIDs))
 	for _, artifactID := range record.ArtifactIDs {

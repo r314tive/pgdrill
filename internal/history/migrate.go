@@ -150,7 +150,7 @@ func (s DirectoryStore) ApplyMigration(
 		return MigrationResult{}, err
 	}
 	confirmation = strings.TrimSpace(confirmation)
-	if !model.IsSHA256Digest(confirmation) || confirmation != strings.ToLower(confirmation) {
+	if !model.IsSHA256Digest(confirmation) {
 		return MigrationResult{}, fmt.Errorf("history migration confirmation must be a canonical sha256 digest")
 	}
 	parent := filepath.Dir(destination)
@@ -868,16 +868,21 @@ func (p MigrationPlan) Validate() error {
 		"historical_payload_digest": p.HistoricalPayloadDigest,
 		"digest":                    p.Digest,
 	} {
-		if !model.IsSHA256Digest(digest) || digest != strings.ToLower(digest) {
+		if !model.IsSHA256Digest(digest) {
 			return fmt.Errorf("history migration plan %s must be a canonical sha256 digest", name)
 		}
 	}
 	if p.Files < 1 || p.Files > MaxMigrationFiles || p.Bytes < 1 ||
-		p.Runs < 0 || p.Runs > MaxRuns ||
-		p.Attempts < 0 || p.Attempts > MaxTotalAttempts ||
-		p.TerminalReports < 0 || p.IncompleteAttempts < 0 ||
+		!countsWithinBounds(MaxRuns, p.Runs) ||
+		!countsWithinBounds(
+			MaxTotalAttempts,
+			p.Attempts,
+			p.TerminalReports,
+			p.IncompleteAttempts,
+		) ||
+		p.Attempts > p.Runs*MaxAttemptsPerRun ||
 		p.TerminalReports+p.IncompleteAttempts != p.Attempts ||
-		p.Events < 0 || p.Events > MaxEventsPerRun*MaxRuns {
+		!countsWithinBounds(MaxEventsPerRun*p.Runs, p.Events) {
 		return fmt.Errorf("history migration plan counts are inconsistent")
 	}
 	want, err := migrationPlanDigest(p)
@@ -896,8 +901,6 @@ func (r MigrationResult) Validate() error {
 	}
 	if !model.IsSHA256Digest(r.PlanDigest) ||
 		!model.IsSHA256Digest(r.SourceSnapshotDigest) ||
-		r.PlanDigest != strings.ToLower(r.PlanDigest) ||
-		r.SourceSnapshotDigest != strings.ToLower(r.SourceSnapshotDigest) ||
 		r.Files < 1 ||
 		r.Files > MaxMigrationFiles ||
 		r.Bytes < 1 {
@@ -947,7 +950,7 @@ func (r migrationRecord) validateStandalone() error {
 		"source_snapshot_digest":    r.SourceSnapshotDigest,
 		"historical_payload_digest": r.HistoricalPayloadDigest,
 	} {
-		if !model.IsSHA256Digest(digest) || digest != strings.ToLower(digest) {
+		if !model.IsSHA256Digest(digest) {
 			return fmt.Errorf("history migration record %s must be a canonical sha256 digest", name)
 		}
 	}

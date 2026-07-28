@@ -117,6 +117,33 @@ func TestDirectoryStoreMigratesCompatibilityFloorWithoutRewritingHistory(t *test
 	}
 }
 
+func TestMigrationPlanValidateRejectsCountsBeyondRunCapacity(t *testing.T) {
+	t.Parallel()
+
+	source := extractHistoryFixture(
+		t,
+		filepath.Join("testdata", PreGACompatibilityFloor, "history-store.tar.gz"),
+	)
+	store := DirectoryStore{Path: source}
+	plan, err := store.PlanMigration(
+		context.Background(),
+		filepath.Join(filepath.Dir(source), "history-stable"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Runs = 0
+	digest, err := migrationPlanDigest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Digest = digest
+	if err := plan.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "counts are inconsistent") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestDirectoryStoreMigrationResumesAfterInterruptedCopy(t *testing.T) {
 	t.Parallel()
 

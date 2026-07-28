@@ -15,6 +15,16 @@ func TestRecoveryTargetNormalizeDefaultsLatest(t *testing.T) {
 	}
 }
 
+func TestIsSHA256DigestRequiresCanonicalLowercase(t *testing.T) {
+	lowercase := "sha256:" + strings.Repeat("a", 64)
+	if !IsSHA256Digest(lowercase) {
+		t.Fatalf("canonical digest %q was rejected", lowercase)
+	}
+	if IsSHA256Digest("sha256:" + strings.Repeat("A", 64)) {
+		t.Fatal("uppercase digest was accepted")
+	}
+}
+
 func TestProjectOverviewDistinguishesCanonicalTargetsFromCommandCapabilities(t *testing.T) {
 	overview := ProjectOverview()
 

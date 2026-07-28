@@ -28,6 +28,28 @@ func TestIDPreservesExplicitValueAndUsesNanoseconds(t *testing.T) {
 	}
 }
 
+func TestAppendCheckReportPreservesAllSections(t *testing.T) {
+	destination := model.CheckReport{
+		Checks:    []model.Check{{Name: "preflight"}},
+		Evidence:  []model.EvidenceRecord{{ID: "preflight-evidence"}},
+		Artifacts: []model.ArtifactRef{{ID: "sha256:" + strings.Repeat("a", 64)}},
+	}
+	appendCheckReport(&destination, model.CheckReport{
+		Checks:    []model.Check{{Name: "probe"}},
+		Evidence:  []model.EvidenceRecord{{ID: "probe-evidence"}},
+		Artifacts: []model.ArtifactRef{{ID: "sha256:" + strings.Repeat("b", 64)}},
+	})
+
+	if len(destination.Checks) != 2 ||
+		destination.Checks[1].Name != "probe" ||
+		len(destination.Evidence) != 2 ||
+		destination.Evidence[1].ID != "probe-evidence" ||
+		len(destination.Artifacts) != 2 ||
+		destination.Artifacts[1].ID != "sha256:"+strings.Repeat("b", 64) {
+		t.Fatalf("merged check report = %#v", destination)
+	}
+}
+
 func TestServiceRequiresMutationConfirmation(t *testing.T) {
 	runner := &successRunner{}
 	_, err := (Service{Runner: runner}).Run(context.Background(), config.Config{}, Options{})

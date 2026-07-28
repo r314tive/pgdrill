@@ -109,6 +109,10 @@ func IsSHA256Digest(value string) bool {
 	if len(value) != len(prefix)+sha256.Size*2 || !strings.HasPrefix(value, prefix) {
 		return false
 	}
-	_, err := hex.DecodeString(strings.TrimPrefix(value, prefix))
+	digest := strings.TrimPrefix(value, prefix)
+	if digest != strings.ToLower(digest) {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
 	return err == nil
 }

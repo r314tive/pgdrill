@@ -173,8 +173,11 @@ func (i attemptSummaryIndex) validate(identity AttemptIdentity) error {
 	if summary.EventCount < 0 || summary.EventCount > MaxEventsPerAttempt {
 		return fmt.Errorf("attempt summary event_count is out of bounds")
 	}
-	if summary.ArtifactCount < 0 || summary.EvidenceCount < 0 || summary.BlockingPolicy < 0 {
-		return fmt.Errorf("attempt summary counts must not be negative")
+	if summary.ArtifactCount < 0 ||
+		summary.ArtifactCount > model.MaxArtifactsPerReport ||
+		summary.EvidenceCount < 0 ||
+		summary.BlockingPolicy < 0 {
+		return fmt.Errorf("attempt summary counts are out of bounds")
 	}
 	if !summary.StartedAt.IsZero() && !summary.FinishedAt.IsZero() && summary.FinishedAt.Before(summary.StartedAt) {
 		return fmt.Errorf("attempt summary finished_at must not precede started_at")

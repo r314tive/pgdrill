@@ -42,6 +42,71 @@ func TestDirectoryStoreVerifyFullyReadsCleanStore(t *testing.T) {
 	}
 }
 
+func TestVerificationResultValidateRejectsOutOfBoundsAccounting(t *testing.T) {
+	t.Parallel()
+
+	result := VerificationResult{
+		SchemaVersion:      CurrentVerificationSchema,
+		CompatibilityFloor: PreGACompatibilityFloor,
+		StoreSchemaVersion: CurrentStoreSchemaVersion,
+		LayoutVersion:      CurrentLayoutVersion,
+		Runs:               1,
+		Attempts:           1,
+		TerminalReports:    1,
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("valid verification result: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*VerificationResult)
+		want   string
+	}{
+		{
+			name: "attempts exceed run capacity",
+			mutate: func(result *VerificationResult) {
+				result.Attempts = MaxAttemptsPerRun + 1
+				result.TerminalReports = result.Attempts
+			},
+			want: "counts are inconsistent",
+		},
+		{
+			name: "events exceed run capacity",
+			mutate: func(result *VerificationResult) {
+				result.Events = MaxEventsPerRun + 1
+			},
+			want: "counts are inconsistent",
+		},
+		{
+			name: "artifacts exceed report capacity",
+			mutate: func(result *VerificationResult) {
+				result.ArtifactReferences = model.MaxArtifactsPerReport + 1
+			},
+			want: "counts are inconsistent",
+		},
+		{
+			name: "maintenance states overlap",
+			mutate: func(result *VerificationResult) {
+				digest := "sha256:" + strings.Repeat("a", 64)
+				result.PendingRetentionOperations = []string{digest}
+				result.PendingRetentionCleanup = []string{digest}
+				result.MaintenanceRequired = true
+			},
+			want: "overlapping",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			broken := result
+			test.mutate(&broken)
+			if err := broken.Validate(); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestDirectoryStoreVerifyDecodesReportsIgnoredByListIndex(t *testing.T) {
 	t.Parallel()
 

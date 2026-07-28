@@ -817,6 +817,68 @@ func TestDestroySkipsRemovalByDefault(t *testing.T) {
 	}
 }
 
+func TestFindRecoveredPostgresRejectsMultipleActiveReceipts(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	logPath := filepath.Join(workDir, "postgres.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for index := 1; index <= 2; index++ {
+		dataDirectory := filepath.Join(workDir, fmt.Sprintf("data-%d", index))
+		if err := os.Mkdir(dataDirectory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(dataDirectory, "postmaster.pid"),
+			[]byte(fmt.Sprintf("%d\n%s\n", os.Getpid(), dataDirectory)),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+		operation := beginLocalOperation(
+			t,
+			target,
+			model.OperationPostgresStart,
+			fmt.Sprintf("start-postgres-%d", index),
+			index,
+		)
+		port := 15431 + index
+		if err := target.writeOperationReceipt(operationReceipt{
+			OperationKey: operation.Key,
+			CompletedAt:  time.Now().UTC(),
+			Postgres: &model.RunningPostgres{
+				ConnString: fmt.Sprintf(
+					"postgresql://127.0.0.1:%d/postgres?sslmode=disable",
+					port,
+				),
+				DataDirectory: dataDirectory,
+				Host:          "127.0.0.1",
+				Port:          port,
+			},
+			PID:     os.Getpid(),
+			LogPath: logPath,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recovered, err := target.findRecoveredPostgres()
+	if err == nil || !strings.Contains(err.Error(), "multiple active postgres receipts") {
+		t.Fatalf("findRecoveredPostgres() = %#v, %v", recovered, err)
+	}
+	if recovered != nil {
+		t.Fatalf("ambiguous recovery returned process %#v", recovered)
+	}
+}
+
 func TestReconcileProvesPreparedTargetAfterProcessLoss(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	spec := model.TargetSpec{Type: model.RestoreTargetLocal, WorkDir: workDir}

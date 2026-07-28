@@ -91,6 +91,63 @@ func TestRetentionPlanIsDeterministicAndProtectsIncompleteLatestRecentAndAuditAt
 	}
 }
 
+func TestRetentionPlanValidateRejectsOutOfBoundsAccounting(t *testing.T) {
+	t.Parallel()
+
+	store := DirectoryStore{Path: filepath.Join(t.TempDir(), "history")}
+	result := validResult(t, "retention-bounds", "attempt-1", model.DrillStatusPassed)
+	saveHistoryReport(t, store, result)
+	plan, err := store.PlanRetention(
+		context.Background(),
+		RetentionPolicy{Before: result.FinishedAt.Add(time.Hour)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Attempts) != 1 {
+		t.Fatalf("plan attempts = %#v", plan.Attempts)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*RetentionPlan)
+		want   string
+	}{
+		{
+			name: "protected count exceeds store",
+			mutate: func(plan *RetentionPlan) {
+				plan.Summary.ProtectedAudit = MaxTotalAttempts + 1
+			},
+			want: "summary is inconsistent",
+		},
+		{
+			name: "artifact references exceed selected reports",
+			mutate: func(plan *RetentionPlan) {
+				plan.Attempts = append([]RetentionAttempt(nil), plan.Attempts...)
+				plan.Attempts[0].ArtifactCount = model.MaxArtifactsPerReport + 1
+				plan.Summary.RetainedArtifactReferences =
+					model.MaxArtifactsPerReport + 1
+			},
+			want: "summary is inconsistent",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			broken := plan
+			test.mutate(&broken)
+			digest, err := retentionPlanDigest(broken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			broken.Digest = digest
+			if err := broken.Validate(); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestApplyRetentionRequiresExactDigestAndRemovesOnlySelectedAttempts(t *testing.T) {
 	t.Parallel()
 
