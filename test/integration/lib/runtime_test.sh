@@ -41,6 +41,22 @@ if (
   fail "unsupported target architecture was accepted"
 fi
 
+[[ "$(pgdrill_integration_minio_image amd64)" == \
+  "quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb" ]] ||
+  fail "unexpected linux/amd64 MinIO image"
+[[ "$(pgdrill_integration_minio_image arm64)" == \
+  "quay.io/minio/minio@sha256:54d3d6a0a58fb25b4e9943d1db3828d3b4de44666f911381b4fda57175488194" ]] ||
+  fail "unexpected linux/arm64 MinIO image"
+[[ "$(pgdrill_integration_minio_client_image amd64)" == \
+  "quay.io/minio/mc@sha256:2582c2f48b1e31545143ba5285c67d7b38c8b8f6912142d0630686dc7aaac28b" ]] ||
+  fail "unexpected linux/amd64 MinIO Client image"
+[[ "$(pgdrill_integration_minio_client_image arm64)" == \
+  "quay.io/minio/mc@sha256:d798ef4fe8f417b814a8968682c1e172cdfabe59da81b39e4d9cc108a355b271" ]] ||
+  fail "unexpected linux/arm64 MinIO Client image"
+if (pgdrill_integration_minio_image ppc64le) >/dev/null 2>&1; then
+  fail "unsupported MinIO architecture was accepted"
+fi
+
 PGDRILL_INT_VERSION="${VERSION}"
 PGDRILL_INT_COMMIT="${COMMIT}"
 PGDRILL_INT_BUILD_DATE=""

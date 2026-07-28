@@ -65,6 +65,7 @@ Native tool changes have an additional opt-in local interoperability gate:
 ```sh
 make integration-check
 make test-integration-walg
+make test-integration-walg-s3
 make test-integration-barman
 make test-integration-pgbackrest
 make test-integration-pgprobackup
@@ -96,11 +97,13 @@ make -s release-candidate-check VERSION=v0.3.0-alpha.5
 Every integration process receives the same version and full Git commit.
 Native drills execute the corresponding deterministic Linux archive; the CNPG
 drivers execute the deterministic host archive while restoring into pinned
-Linux KinD targets. The WAL-G drill additionally kills the complete pgdrill
-process group after durable restore intent, requires digest-confirmed
-owned-target recovery, preserves the incomplete attempt, and passes a clean
-new attempt. Checksummed run artifacts remain under `.cache/integration`. They
-are reviewed release evidence, not automatic additions to the committed
+Linux KinD targets. Both WAL-G storage profiles additionally kill the complete
+pgdrill process group after durable restore intent, require digest-confirmed
+owned-target recovery, preserve the incomplete attempt, and pass a clean new
+attempt. The S3 profile uses pinned MinIO/MinIO Client images on an internal
+network, retains an object inventory, rejects credential leakage, and proves
+harness cleanup. Checksummed run artifacts remain under `.cache/integration`.
+They are reviewed release evidence, not automatic additions to the committed
 compatibility matrix.
 
 ## Release Artifacts

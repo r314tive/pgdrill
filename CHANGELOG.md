@@ -10,6 +10,11 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- A second real WAL-G 3.0.8 integration profile backed by pinned MinIO and
+  MinIO Client platform manifests on a private Docker network, with
+  execution-bound S3 credentials, latest and timestamp recovery, WAL
+  validation, process-loss reconciliation, retained object inventory,
+  credential-leak rejection, and explicit harness cleanup proof.
 - Real Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 timestamp-PITR
   integration paths with exact pre/post-target transactions, native WAL
   retrieval, independent reports, durable history verification, policy

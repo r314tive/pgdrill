@@ -16,8 +16,9 @@ result only after binding it to a clean release-candidate commit, reviewing the
 scope and artifacts, and updating the compatibility matrix deliberately.
 
 The tests may download pinned public tool artifacts and container images during
-preparation. The actual drill should run without network access whenever the
-provider permits it.
+preparation. The actual drill runs without external network access whenever the
+provider permits it. The WAL-G S3 profile uses only a disposable internal
+Docker network between PostgreSQL, WAL-G, MinIO, and MinIO Client containers.
 
 Host-side release-candidate binding, Docker isolation defaults, and artifact
 checksumming live in `lib/runtime.sh`. Provider setup, backup semantics,
@@ -56,7 +57,7 @@ evidence.
 
 Current scenarios:
 
-- [WAL-G to a local PostgreSQL target](walg/README.md)
+- [WAL-G with filesystem or S3-compatible storage to a local PostgreSQL target](walg/README.md)
 - [Barman to a local PostgreSQL target](barman/README.md)
 - [pgBackRest to a local PostgreSQL target](pgbackrest/README.md)
 - [pg_probackup to a local PostgreSQL target](pgprobackup/README.md)

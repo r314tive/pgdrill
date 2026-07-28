@@ -50,7 +50,8 @@ Every native-provider gate additionally proves timestamp PITR with a
 transaction on each side of the requested boundary. The WAL-G gate also kills
 the complete drill process group after durable restore intent, reconciles and
 cleans the interrupted attempt, then requires a passed retry under a new
-attempt ID.
+attempt ID. A separate WAL-G profile repeats that lifecycle against pinned
+MinIO over an internal S3-compatible network and rejects credential leakage.
 
 The compatibility matrix records narrow fixture, controlled, and exact-version
 field evidence. One clean `v0.1.0-alpha.10` commit has passed WAL-G 3.0.8,
@@ -212,6 +213,7 @@ in sequence:
 
 ```sh
 make test-integration-walg
+make test-integration-walg-s3
 make test-integration-barman
 make test-integration-pgbackrest
 make test-integration-pgprobackup
@@ -221,8 +223,10 @@ make test-integration-cnpg-plugin
 ```
 
 `make test-local` combines the normal checks, race detector, CLI smoke, and all
-network-isolated disposable native drills. Their artifacts remain under ignored
-`.cache`; they are not compatibility evidence by themselves. See
+filesystem-backed disposable native drills. The aggregate release-candidate
+gate additionally runs the WAL-G S3-compatible profile and both CNPG profiles.
+Artifacts remain under ignored `.cache`; they are not compatibility evidence
+by themselves. See
 [test/integration](test/integration/README.md) for the evidence boundary.
 
 For a clean release-candidate commit with Docker available, run the complete

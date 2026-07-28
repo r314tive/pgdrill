@@ -118,6 +118,42 @@ pgdrill_integration_postgres_18_3_image() {
   esac
 }
 
+pgdrill_integration_minio_image() {
+  local target_arch="$1"
+  case "${target_arch}" in
+    amd64)
+      printf '%s\n' \
+        "quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"
+      ;;
+    arm64)
+      printf '%s\n' \
+        "quay.io/minio/minio@sha256:54d3d6a0a58fb25b4e9943d1db3828d3b4de44666f911381b4fda57175488194"
+      ;;
+    *)
+      pgdrill_integration_die \
+        "MinIO image is not pinned for linux/${target_arch}"
+      ;;
+  esac
+}
+
+pgdrill_integration_minio_client_image() {
+  local target_arch="$1"
+  case "${target_arch}" in
+    amd64)
+      printf '%s\n' \
+        "quay.io/minio/mc@sha256:2582c2f48b1e31545143ba5285c67d7b38c8b8f6912142d0630686dc7aaac28b"
+      ;;
+    arm64)
+      printf '%s\n' \
+        "quay.io/minio/mc@sha256:d798ef4fe8f417b814a8968682c1e172cdfabe59da81b39e4d9cc108a355b271"
+      ;;
+    *)
+      pgdrill_integration_die \
+        "MinIO Client image is not pinned for linux/${target_arch}"
+      ;;
+  esac
+}
+
 pgdrill_integration_host_os() {
   case "$(uname -s)" in
     Darwin)
@@ -445,12 +481,27 @@ pgdrill_integration_docker_run() {
   local validation_size="$3"
   shift 3
 
+  pgdrill_integration_docker_run_on_network \
+    "${container_name}" \
+    "${target_arch}" \
+    "${validation_size}" \
+    none \
+    "$@"
+}
+
+pgdrill_integration_docker_run_on_network() {
+  local container_name="$1"
+  local target_arch="$2"
+  local validation_size="$3"
+  local network="$4"
+  shift 4
+
   docker run \
     --rm \
     --pull never \
     --name "${container_name}" \
     --platform "linux/${target_arch}" \
-    --network none \
+    --network "${network}" \
     --user 999:999 \
     --read-only \
     --cap-drop ALL \

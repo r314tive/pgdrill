@@ -230,10 +230,12 @@ Completed foundation:
   `internal/application/cnpgverify` and `core.ManagedEngine`.
 - Explicit engine/control-plane boundary in
   [ADR 0001](adr/0001-engine-v0.2-and-control-plane-boundary.md).
-- A pinned, rootless, network-isolated WAL-G/PostgreSQL Docker drill under
-  `test/integration` that recreates a real base backup, post-backup WAL replay,
-  provider validation, restored-server probes, policy evaluation, and cleanup
-  without coupling demo infrastructure to engine packages.
+- Pinned, rootless WAL-G/PostgreSQL Docker drills under `test/integration`
+  that recreate a real base backup, post-backup WAL replay, provider
+  validation, restored-server probes, policy evaluation, and cleanup against
+  both a network-free filesystem repository and pinned MinIO over a private
+  S3-compatible network, without coupling demo infrastructure to engine
+  packages.
 - A pinned Barman 3.19.1/PostgreSQL 18.3 companion drill that creates a real
   local-rsync backup, exercises archived WAL through Barman's generated
   `restore_command`, requires repeatable manifest verification, proves latest
@@ -260,8 +262,9 @@ Completed foundation:
   verify owned cleanup, remove ephemeral kubeconfig state, and retain
   checksummed artifacts.
 - A clean-tree `release-candidate-check` that runs the deterministic release
-  gate, ShellCheck, all four native-provider drills, and both disposable CNPG
-  protocol drills with one version and full Git commit.
+  gate, ShellCheck, all four native-provider drills, the additional WAL-G S3
+  profile, and both disposable CNPG protocol drills with one version and full
+  Git commit.
 - A deterministic real WAL-G executor-loss gate that sends `SIGKILL` to the
   complete drill process group after durable restore intent, preserves
   incomplete history, applies digest-confirmed observation-only recovery,
@@ -270,10 +273,12 @@ Completed foundation:
 
 Remaining external engine gate:
 
-1. Broaden every provider beyond local filesystem repositories and one
-   PostgreSQL/tool version across real object or remote storage, a second
-   PostgreSQL major, native Linux amd64 hardware, additional backup modes, and
-   non-timestamp PITR targets where the provider contract supports them.
+1. Retain a clean exact-candidate observation from the implemented WAL-G
+   S3-compatible profile, then broaden the other providers beyond local
+   repositories across appropriate remote storage.
+2. Exercise a second PostgreSQL major, native Linux amd64 hardware, additional
+   backup modes, and non-timestamp PITR targets where the provider contract
+   supports them.
 
 `pgdrill.report/v1` is now the durable terminal contract. Readers preserve the
 documented `v1alpha1` compatibility floor. The CLI remains journal-free by

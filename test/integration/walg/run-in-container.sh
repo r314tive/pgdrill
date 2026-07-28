@@ -9,8 +9,6 @@ source /opt/pgdrill/test/history.sh
 readonly PGBIN="/usr/lib/postgresql/18/bin"
 readonly PGDRILL="/opt/pgdrill/bin/pgdrill"
 readonly WALG="/opt/pgdrill/bin/wal-g"
-readonly CONFIG="/opt/pgdrill/test/pgdrill.yaml"
-readonly PITR_CONFIG_TEMPLATE="/opt/pgdrill/test/pgdrill-pitr.yaml.tmpl"
 readonly ROOT="/validation"
 readonly PITR_CONFIG="${ROOT}/pgdrill-pitr.yaml"
 readonly KILL_CONFIG="${ROOT}/pgdrill-kill.yaml"
@@ -26,6 +24,7 @@ readonly WORK_DIR="${ROOT}/work/restore"
 readonly SOURCE_PORT="55431"
 readonly EXPECTED_COMMIT="${PGDRILL_EXPECTED_COMMIT:?PGDRILL_EXPECTED_COMMIT is required}"
 readonly EXPECTED_VERSION="${PGDRILL_EXPECTED_VERSION:?PGDRILL_EXPECTED_VERSION is required}"
+readonly STORAGE_MODE="${PGDRILL_WALG_STORAGE:-file}"
 
 export HOME="${ROOT}/home"
 export TMPDIR="${ROOT}/tmp"
@@ -33,8 +32,32 @@ export PATH="/opt/pgdrill/bin:${PGBIN}:${PATH}"
 export PGHOST="${SOURCE_SOCKET}"
 export PGPORT="${SOURCE_PORT}"
 export PGDATABASE="postgres"
-export WALG_FILE_PREFIX="${REPOSITORY}"
 export WALG_COMPRESSION_METHOD="lz4"
+
+case "${STORAGE_MODE}" in
+  file)
+    CONFIG="/opt/pgdrill/test/pgdrill.yaml"
+    PITR_CONFIG_TEMPLATE="/opt/pgdrill/test/pgdrill-pitr.yaml.tmpl"
+    STORAGE_BACKEND="file"
+    export WALG_FILE_PREFIX="${REPOSITORY}"
+    ;;
+  s3)
+    CONFIG="/opt/pgdrill/test/pgdrill-s3.yaml"
+    PITR_CONFIG_TEMPLATE="/opt/pgdrill/test/pgdrill-s3-pitr.yaml.tmpl"
+    STORAGE_BACKEND="s3-compatible"
+    : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required for S3 storage}"
+    : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required for S3 storage}"
+    export AWS_ENDPOINT="http://minio:9000"
+    export AWS_REGION="us-east-1"
+    export AWS_S3_FORCE_PATH_STYLE="true"
+    export WALG_S3_PREFIX="s3://pgdrill-walg/integration"
+    ;;
+  *)
+    printf '[integration/walg] ERROR: unsupported storage mode: %s\n' "${STORAGE_MODE}" >&2
+    exit 1
+    ;;
+esac
+readonly CONFIG PITR_CONFIG_TEMPLATE STORAGE_BACKEND
 
 log() {
   printf '[integration/walg] %s\n' "$*"
@@ -119,7 +142,7 @@ listen_addresses = '127.0.0.1'
 port = 55431
 unix_socket_directories = '/validation/source-socket'
 archive_mode = on
-archive_command = 'env WALG_FILE_PREFIX=/validation/repository WALG_COMPRESSION_METHOD=lz4 /opt/pgdrill/bin/wal-g wal-push "%p"'
+archive_command = '/opt/pgdrill/bin/wal-g wal-push "%p"'
 archive_timeout = '10s'
 wal_level = replica
 shared_buffers = '32MB'
@@ -395,6 +418,7 @@ pgdrill_integration_capture_history_store "${PGDRILL}" "${HISTORY}" /output 4 1
   printf 'pgdrill=%s\n' "${pgdrill_version}"
   printf 'wal_g=%s\n' "${walg_version}"
   printf 'postgresql=%s\n' "${postgres_version}"
+  printf 'storage_backend=%s\n' "${STORAGE_BACKEND}"
   printf 'latest_recovery_source_rows=%s\n' "${latest_row_count}"
   printf 'timestamp_recovery_target=%s\n' "${pitr_target_time}"
   printf 'source_rows_after_target=%s\n' "${source_row_count}"
