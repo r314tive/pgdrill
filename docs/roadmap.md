@@ -296,25 +296,38 @@ On 2026-07-29, the exact locally built Linux amd64 `v0.3.0-dev` candidate at
 commit `444c525c8c104f70ada9b66e8c1b633c6d4e8a0d` completed bootstrap and two
 consecutive live Yandex Cloud WAL-G rehearsals. Both reports passed 13 checks,
 all five required policy assertions, post-backup WAL replay, operation
-checkpoint validation, and owned cleanup. This owner-only NFS observation is
-not a published-release, invited-administrator, customer-pilot, production
-RTO, or general Yandex Cloud compatibility claim.
+checkpoint validation, and owned cleanup.
+
+The same topology also completed two consecutive pgBackRest 2.58.0 rehearsals
+against PostgreSQL 18.4 from exact commit
+`92e8bfcc82165d4ad11a80dbda90790bdc4d0b7d` and Linux amd64 archive SHA-256
+`f3b1404d3404d689aa16a0f85060af077b6055e372efbfb2c9fecb39fb662552`.
+Both reports passed 13 checks and all five policy assertions, applied distinct
+post-backup WAL segments, and proved cleanup. Source evidence records two
+native `pgbackrest check` passes and selected-set verification; the
+repository-only runner records `pgbackrest check` as skipped because it has no
+PostgreSQL-host access, while its `pgbackrest verify` passes.
+
+These owner-only NFS observations are not published-release,
+invited-administrator, customer-pilot, production-RTO, or general Yandex Cloud
+compatibility claims.
 
 - Evidence-led demo contract with explicit proof and non-proof boundaries.
 - Customer discovery and one-scenario pilot acceptance checklist.
-- Three-VM Yandex Cloud WAL-G topology with one public runner, private source
-  and repository, allowlisted SSH, dedicated administrator identities, shared
-  egress NAT, and read-only repository access from the drill runner.
-- Pinned WAL-G download and checksum, PostgreSQL 18 host bootstrap, synthetic
-  base-backup/post-backup-WAL boundary, deterministic runner wrappers, and
-  local evidence retrieval.
+- Three-VM Yandex Cloud WAL-G/pgBackRest topology with one public runner,
+  private source and repository, allowlisted SSH, dedicated administrator
+  identities, shared egress NAT, provider-separated repository subtrees, and
+  read-only repository access from the drill runner.
+- Pinned WAL-G and pgBackRest versions, PostgreSQL 18 host bootstrap,
+  synthetic base-backup/post-backup-WAL boundaries, deterministic
+  provider-specific wrappers, and local success/failure evidence retrieval.
 - Provider-independent local-target startup override preventing a restored
   cluster from inheriting an active archive command and writing back to the
   source backup repository.
-- A local rehearsal that executes an exact checksum-verified published Linux
-  archive through real WAL-G/PostgreSQL latest and timestamp-PITR drills and
-  requires report, post-backup WAL, before/after boundary, policy, and cleanup
-  proof.
+- Local rehearsals that execute an exact checksum-verified Linux archive
+  through real WAL-G or pgBackRest latest and timestamp-PITR drills and require
+  report, provider checks, post-backup WAL, before/after boundary, policy, and
+  cleanup proof.
 - Explicit repository boundaries between disposable developer integration
   tests, operator-facing demo topology, and retained compatibility evidence.
 
@@ -322,8 +335,9 @@ Completed hosted-rehearsal gates:
 
 1. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
    retain infrastructure inventory plus a successful bootstrap transcript.
-2. Produce two consecutive passed reports from one exact candidate artifact,
-   including the post-backup WAL assertion and owned cleanup.
+2. Produce two consecutive passed reports for each hosted provider profile
+   from one exact candidate artifact per profile, including the post-backup WAL
+   assertion and owned cleanup.
 
 Remaining gates, in order:
 

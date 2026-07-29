@@ -30,11 +30,11 @@ terminal report.
 
 ## Demo Shape
 
-The initial hosted baseline is
-[WAL-G on isolated Yandex Cloud VMs](yandex-cloud/README.md). It deliberately
-keeps the engine and the demo infrastructure separate: the engine remains an
-ordinary CLI artifact, while Terraform and shell scripts only provision and
-adapt the disposable environment.
+The initial hosted baseline provides independent
+[WAL-G and pgBackRest profiles on isolated Yandex Cloud VMs](yandex-cloud/README.md).
+It deliberately keeps the engine and the demo infrastructure separate: the
+engine remains an ordinary CLI artifact, while Terraform and shell scripts
+only provision and adapt the disposable environment.
 
 The [local release-artifact rehearsals](local/README.md) run the same core
 recovery claim through network-isolated WAL-G or pgBackRest integration

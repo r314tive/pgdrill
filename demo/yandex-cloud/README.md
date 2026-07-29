@@ -1,35 +1,46 @@
-# Yandex Cloud WAL-G Demo
+# Yandex Cloud Provider Demo
 
-This directory defines a disposable three-VM demo of the WAL-G local restore
-path. It is intended for a controlled technical session with synthetic data.
-It is not a production deployment template.
+This directory defines a disposable three-VM demo with independent WAL-G and
+pgBackRest local-restore profiles. It is intended for a controlled technical
+session with synthetic data. It is not a production deployment template.
 
-Validation status: repository checks and the local release-artifact rehearsal
-pass. On 2026-07-29, the exact locally built Linux amd64 `v0.3.0-dev`
-candidate at commit `444c525c8c104f70ada9b66e8c1b633c6d4e8a0d`, archive SHA-256
+Validation status: repository checks and both local release-artifact rehearsals
+pass. On 2026-07-29 UTC, the exact locally built Linux amd64 `v0.3.0-dev`
+WAL-G candidate at commit `444c525c8c104f70ada9b66e8c1b633c6d4e8a0d`,
+archive SHA-256
 `c1bce1e0e9685365f9fc64f841414dd539f8af112e48f4741b2db73a855542c0`,
 completed bootstrap and two consecutive live rehearsals in `ru-central1-a`.
-Both reports passed 13 checks, all five required policy assertions, operation
-checkpoint validation, post-backup WAL replay, and owned cleanup. A final
-Terraform refresh reported no changes, and a destroy-only plan was reviewed.
+Both reports passed 13 checks and all five required policy assertions.
 
-This is one owner-operated WAL-G 3.0.8 / PostgreSQL 18.4 observation against
-an NFS repository, not a published-release, customer-pilot, cloud support, or
-production RTO claim. No invited administrator was provisioned for this run;
-the bounded-access audit remains required before a customer session.
+The exact pgBackRest candidate at commit
+`92e8bfcc82165d4ad11a80dbda90790bdc4d0b7d`, archive SHA-256
+`f3b1404d3404d689aa16a0f85060af077b6055e372efbfb2c9fecb39fb662552`,
+then completed two consecutive rehearsals with pgBackRest 2.58.0 and
+PostgreSQL 18.4. Both reports passed 13 checks, all five policy assertions,
+operation checkpoint validation, distinct post-backup WAL replay, and owned
+cleanup. Source evidence passed two native `check` commands and selected-set
+`verify`; runner evidence passed repository-level `verify` and explicitly
+skipped `check` because the runner has no PostgreSQL-host access. A final
+Terraform refresh reported no changes.
+
+These are owner-operated observations against one NFS topology, not
+published-release, customer-pilot, cloud-support, or production-RTO claims.
+No invited administrator was provisioned; the bounded-access audit remains
+required before a customer session.
 
 ## Topology
 
 ```mermaid
 flowchart LR
-    A["Presenter and invited admins"] -->|"SSH 22 from allowlisted CIDRs"| R["runner VM<br/>pgdrill + WAL-G + PostgreSQL binaries"]
-    R -->|"SSH ProxyJump"| S["source VM<br/>PostgreSQL 18 + WAL-G"]
+    A["Presenter and invited admins"] -->|"SSH 22 from allowlisted CIDRs"| R["runner VM<br/>pgdrill + provider CLIs + PostgreSQL"]
+    R -->|"SSH ProxyJump"| S["source VM<br/>PostgreSQL 18 + provider CLIs"]
     R -->|"SSH ProxyJump"| B["repository VM<br/>NFSv4"]
     S -->|"NFSv4 read-write"| B
     R -->|"NFSv4 read-only"| B
-    S -.->|"base backup + archived WAL"| B
-    B -.->|"catalog + backup + WAL"| R
-    R --> T["owned local restore target<br/>127.0.0.1:55432"]
+    S -.->|"provider-separated backup + WAL"| B
+    B -.->|"read-only catalog + backup + WAL"| R
+    R --> T1["WAL-G restore target<br/>127.0.0.1:55432"]
+    R --> T2["pgBackRest restore target<br/>127.0.0.1:55433"]
     R --> E["JSON report + checksums + logs"]
 ```
 
@@ -67,12 +78,16 @@ commands as `postgres`:
 sudo -u postgres /usr/local/sbin/pgdrill-demo-doctor
 sudo -u postgres /usr/local/sbin/pgdrill-demo-run
 sudo -u postgres /usr/local/sbin/pgdrill-demo-report
+sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-doctor
+sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-run
+sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-report
 ```
 
 On the source they may execute the fixed read-only status command:
 
 ```sh
 sudo -u postgres /usr/local/sbin/pgdrill-demo-source-status
+sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-source-status
 ```
 
 The security group rejects SSH source ranges broader than `/16`, including
@@ -191,7 +206,8 @@ else
 fi
 ```
 
-Then install PostgreSQL 18, pinned WAL-G, and that exact pgdrill archive:
+Then install PostgreSQL 18, pinned WAL-G and pgBackRest, and that exact
+pgdrill archive:
 
 ```sh
 demo/yandex-cloud/scripts/bootstrap.sh \
@@ -201,13 +217,14 @@ demo/yandex-cloud/scripts/bootstrap.sh \
 
 The remote bootstrap verifies the pgdrill archive SHA-256, downloads the
 official WAL-G `v3.0.8` Ubuntu 24.04 amd64 binary, verifies its pinned SHA-256,
-verifies the official PGDG repository-key fingerprint, installs the current
-PostgreSQL 18 patch release from PGDG, confirms the runner NFS mount is
-read-only, and finishes with `pgdrill doctor`. It also generates a temporary
-random credential for the synthetic `postgres` role, removes both staged
-copies after installation, and leaves only a `postgres:postgres` mode `0600`
-password file on the runner. The credential is not written to Terraform,
-pgdrill configuration, command arguments, reports, or bootstrap output.
+verifies the official PGDG repository-key fingerprint, installs exact
+pgBackRest `2.58.0` and the current PostgreSQL 18 patch release from PGDG,
+confirms the runner NFS mount is read-only, and finishes with both provider
+`pgdrill doctor` profiles. It also generates a temporary random credential for
+the synthetic `postgres` role, removes both staged copies after installation,
+and leaves only a `postgres:postgres` mode `0600` password file on the runner.
+The credential is not written to Terraform, pgdrill configuration, command
+arguments, reports, or bootstrap output.
 
 ## Rehearse The Complete Drill
 
@@ -217,25 +234,43 @@ The scenario reset is marker-guarded and requires an explicit confirmation:
 PGDRILL_DEMO_CONFIRM=YES \
   demo/yandex-cloud/scripts/scenario.sh \
   --identity ~/.ssh/pgdrill-demo-owner
+
+PGDRILL_DEMO_CONFIRM=YES \
+  demo/yandex-cloud/scripts/scenario.sh \
+  --provider pgbackrest \
+  --identity ~/.ssh/pgdrill-demo-owner
 ```
 
 It performs these observable steps:
 
-1. Reset only the disposable WAL-G repository.
+1. Reset only the selected provider's marker-guarded repository subtree.
 2. Create a table with 100 rows and take a real full backup.
 3. Commit row 101 with `post-backup-wal-sentinel` after the base backup.
 4. Switch and wait for that WAL segment to archive.
-5. Pass native `wal-g wal-verify integrity`.
+5. Pass native WAL-G integrity validation, or two source-side pgBackRest
+   `check` commands, one visible `archive-get`, and selected-set `verify`.
 6. Run pgdrill from the read-only runner mount.
 7. Require the restored target to contain all 101 rows and the sentinel.
 8. Require readiness, SQL, `pg_amcheck`, schema dump, policy, and cleanup
    checks to pass.
-9. Download the terminal report, source boundary, runner inventory, and
-   Terraform inventory into the ignored `.state/reports/` directory, cross-check
-   the selected backup and expected boundary, and print their SHA-256 digests.
+9. Download the terminal report, source boundary, source preparation log,
+   runner console log, runner inventory, and Terraform inventory into the
+   ignored `.state/reports/` directory, cross-check the selected backup and
+   expected boundary, and print their SHA-256 digests.
 
 Each run uses its own report path, checkpoint directory, artifact directory,
 console log, and immutable run ID. `current.json` is only a convenience copy.
+Failure reports and logs are downloaded before the scenario returns the
+original nonzero drill status.
+
+`pgbackrest check` is intentionally run on the source, where both PostgreSQL
+and the repository are available. The command still requires a configured
+PostgreSQL host when archive checks are disabled, so the repository-only
+runner cannot execute it honestly without receiving source-host control
+credentials. The hosted engine report therefore requires that check to be
+`skipped` and requires repository-level `pgbackrest verify` to pass; the
+scenario separately requires source-state proof for both native checks. The
+single-host local integration profile keeps engine-side `check` enabled.
 
 ## Customer Session Gate
 
@@ -245,12 +280,15 @@ and exact pgdrill commit that will be shown:
 - `terraform validate` passes with the committed provider lock file.
 - `terraform output demo_inventory` matches the intended folder and zone.
 - all three `cloud-init status --wait` calls report success;
-- bootstrap records exact pgdrill, WAL-G, and PostgreSQL versions;
+- bootstrap records exact pgdrill, WAL-G, pgBackRest, and PostgreSQL versions;
 - source state shows 100 base-backup rows and 101 expected recovered rows;
-- two consecutive scenario runs produce valid `passed` reports;
+- two consecutive runs of the selected provider profile produce valid
+  `passed` reports;
+- pgBackRest source state records both native checks and selected-set verify as
+  passed;
 - every required policy verdict is `passed`;
 - the work directory is absent after each run;
-- an invited administrator can log in and execute the three fixed runner
+- an invited administrator can log in and execute the six fixed runner
   commands, but cannot obtain general sudo;
 - that administrator cannot modify reports or directly read or write the NFS
   repository from either the source or runner shell;

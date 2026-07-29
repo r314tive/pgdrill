@@ -346,7 +346,7 @@ A local pg_probackup drill example is available in
 The evidence-led technical demo contract is documented in
 [demo/README.md](demo/README.md), with an exact-release-artifact local rehearsal
 under [demo/local](demo/local/README.md) and a reproducible, access-scoped
-Yandex Cloud WAL-G baseline under
+Yandex Cloud WAL-G/pgBackRest baseline under
 [demo/yandex-cloud](demo/yandex-cloud/README.md).
 
 Release discipline is described in [docs/release.md](docs/release.md), and

@@ -16,6 +16,17 @@ called out explicitly even while the major version is `0`.
   provider validation, structural probes, policy evaluation, report identity,
   and owned cleanup while provider discovery, validation, and restore logic
   remain in Go.
+- Retained exact `v0.3.0-dev` field evidence for two consecutive pgBackRest
+  2.58.0 latest-recovery drills against PostgreSQL 18.4 on Yandex Cloud Linux
+  amd64. The owner-operated NFS topology binds both passed reports to commit
+  `92e8bfcc82165d4ad11a80dbda90790bdc4d0b7d` and archive SHA-256
+  `f3b1404d3404d689aa16a0f85060af077b6055e372efbfb2c9fecb39fb662552`,
+  two source-side native checks, selected-set verification, distinct
+  post-backup WAL segments, all five required policy verdicts, operation
+  checkpoints, and owned cleanup. The repository-only runner records
+  `pgbackrest check` as skipped because that command requires PostgreSQL-host
+  access; this is a topology observation, not a published-release, customer,
+  cloud-support, or production-RTO claim.
 - Retained exact `v0.3.0-dev` field evidence for two consecutive WAL-G 3.0.8
   latest-recovery drills against PostgreSQL 18.4 on Yandex Cloud Linux amd64.
   The owner-operated three-VM NFS topology binds both passed reports to one
