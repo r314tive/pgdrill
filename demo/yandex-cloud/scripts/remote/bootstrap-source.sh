@@ -170,7 +170,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=${PGBACKREST_SOURCE_DATA} ${PGBACKREST_REPOSITORY} /var/run/postgresql /var/lib/pgdrill-demo/pgbackrest
+# Bind the export root: root_squash prevents systemd from traversing the
+# postgres-owned 0750 repository subtree while constructing the namespace.
+ReadWritePaths=${PGBACKREST_SOURCE_DATA} ${REPOSITORY_MOUNT} /var/run/postgresql /var/lib/pgdrill-demo/pgbackrest
 
 [Install]
 WantedBy=multi-user.target
