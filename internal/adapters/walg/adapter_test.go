@@ -555,6 +555,73 @@ func TestValidateCatalogRunsWALVerify(t *testing.T) {
 	}
 }
 
+func TestWALVerifyArgsUsesSelectedBackupWALRangeOffline(t *testing.T) {
+	adapter := New(Config{
+		WALVerify: WALVerifyConfig{Enabled: true, Checks: []string{"integrity"}},
+	}, &fakeRunner{})
+
+	args, err := adapter.walVerifyArgs(model.Backup{
+		ProviderID: "base_1",
+		WALRange: model.WALRange{
+			EndLSN:   "0/80000028",
+			Timeline: "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("walVerifyArgs() error = %v", err)
+	}
+
+	want := []string{
+		"wal-verify", "--json", "--backup-name", "base_1",
+		"--timeline", "1", "--lsn", "0/80000028", "integrity",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("walVerifyArgs():\ngot  %#v\nwant %#v", args, want)
+	}
+}
+
+func TestWALVerifyArgsRejectsIncompleteConfiguredTarget(t *testing.T) {
+	tests := []struct {
+		name   string
+		config WALVerifyConfig
+	}{
+		{name: "timeline only", config: WALVerifyConfig{Timeline: "1"}},
+		{name: "lsn only", config: WALVerifyConfig{LSN: "0/80000028"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := New(Config{
+				WALVerify: tt.config,
+			}, &fakeRunner{})
+
+			_, err := adapter.walVerifyArgs(model.Backup{ProviderID: "base_1"})
+			if err == nil || !strings.Contains(err.Error(), "timeline and lsn must both be available") {
+				t.Fatalf("walVerifyArgs() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestWALVerifyArgsKeepsWALGDiscoveryForIncompleteBackupRange(t *testing.T) {
+	adapter := New(Config{
+		WALVerify: WALVerifyConfig{Enabled: true, Checks: []string{"integrity"}},
+	}, &fakeRunner{})
+
+	args, err := adapter.walVerifyArgs(model.Backup{
+		ProviderID: "base_1",
+		WALRange:   model.WALRange{Timeline: "1"},
+	})
+	if err != nil {
+		t.Fatalf("walVerifyArgs() error = %v", err)
+	}
+
+	want := []string{"wal-verify", "--json", "--backup-name", "base_1", "integrity"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("walVerifyArgs():\ngot  %#v\nwant %#v", args, want)
+	}
+}
+
 func TestValidateCatalogReportsWALVerifyFailureStatus(t *testing.T) {
 	runner := &fakeRunner{result: successResult([]byte(`{"integrity":{"status":"FAILURE","details":[]}}`))}
 	report, err := New(Config{

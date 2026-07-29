@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/lib.sh"
 
 require_root
 [[ "$#" -eq 3 ]] || die "usage: bootstrap-runner.sh <pgdrill-archive> <sha256> <config>"
+cd /
 
 readonly PGDRILL_ARCHIVE="$1"
 readonly PGDRILL_SHA256="$2"
@@ -33,9 +34,11 @@ pgdrill_binary="$(find "${tmpdir}" -mindepth 2 -maxdepth 2 -type f -name pgdrill
 [[ -n "${pgdrill_binary}" ]] || die "pgdrill archive does not contain the expected binary"
 install -o root -g root -m 0755 "${pgdrill_binary}" /usr/local/bin/pgdrill
 
-install -d -o root -g pgdrill-demo-admins -m 0750 /etc/pgdrill
-install -o root -g pgdrill-demo-admins -m 0640 \
+install -d -o root -g postgres -m 0750 /etc/pgdrill
+install -o root -g postgres -m 0640 \
   "${PGDRILL_CONFIG}" /etc/pgdrill/demo.yaml
+runuser -u postgres -- test -r /etc/pgdrill/demo.yaml ||
+  die "postgres cannot read the installed pgdrill config"
 install -d -o postgres -g postgres -m 0700 /var/lib/pgdrill-demo/work
 install -d -o postgres -g pgdrill-demo-admins -m 2750 /var/lib/pgdrill-demo/reports
 

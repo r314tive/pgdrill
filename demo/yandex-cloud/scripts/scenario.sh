@@ -88,12 +88,16 @@ chmod 0600 "${known_hosts}"
 
 ssh_common=(
   -i "${identity}"
+  -o BatchMode=yes
   -o IdentitiesOnly=yes
   -o "UserKnownHostsFile=${known_hosts}"
   -o StrictHostKeyChecking=accept-new
   -o ConnectTimeout=10
 )
-jump=(-o "ProxyJump=${runner}")
+printf -v proxy_command \
+  'ssh -i %q -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=%q -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -W %%h:%%p %q' \
+  "${identity}" "${known_hosts}" "${runner}"
+jump=(-o "ProxyCommand=${proxy_command}")
 
 printf '[pgdrill-demo] preparing source backup and post-backup WAL\n'
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \

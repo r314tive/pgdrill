@@ -76,7 +76,9 @@ Implemented restore planning:
 Implemented provider validation:
 
 - optional `wal-g wal-verify --json --backup-name <backup-name> integrity`
-- optional `timeline`, `lsn`, and check list configuration
+- optional `timeline`, `lsn`, and check list configuration; when both explicit
+  values are absent, a complete selected-backup WAL range supplies the pair so
+  validation can run on a repository-only executor without a local PostgreSQL
 - JSON status mapping from `OK`, `WARNING`, and `FAILURE` into pgdrill checks
 - disabled by default so pgdrill does not claim WAL continuity without explicit
   operator intent

@@ -50,6 +50,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 [[ "${EUID}" -eq 0 ]] || die "this command must run as root"
 [[ "$#" -eq 1 && "$1" == "--reset" ]] || die "explicit --reset is required"
+cd /
 
 exec 9>/run/lock/pgdrill-demo-source.lock
 flock --nonblock 9 || die "another source preparation is active"

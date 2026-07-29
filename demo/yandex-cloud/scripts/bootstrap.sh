@@ -103,12 +103,16 @@ source="${owner_user}@${source_private_ip}"
 repository="${owner_user}@${repository_private_ip}"
 ssh_common=(
   -i "${identity}"
+  -o BatchMode=yes
   -o IdentitiesOnly=yes
   -o "UserKnownHostsFile=${known_hosts}"
   -o StrictHostKeyChecking=accept-new
   -o ConnectTimeout=10
 )
-jump=(-o "ProxyJump=${runner}")
+printf -v proxy_command \
+  'ssh -i %q -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=%q -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -W %%h:%%p %q' \
+  "${identity}" "${known_hosts}" "${runner}"
+jump=(-o "ProxyCommand=${proxy_command}")
 
 wait_for_ssh() {
   local target="$1"

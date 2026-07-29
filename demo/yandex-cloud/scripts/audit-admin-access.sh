@@ -87,7 +87,10 @@ ssh_common=(
   -o StrictHostKeyChecking=accept-new
   -o ConnectTimeout=10
 )
-jump=(-o "ProxyJump=${runner}")
+printf -v proxy_command \
+  'ssh -i %q -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=%q -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -W %%h:%%p %q' \
+  "${identity}" "${known_hosts}" "${runner}"
+jump=(-o "ProxyCommand=${proxy_command}")
 
 printf '[pgdrill-demo] checking invited runner login and fixed commands\n'
 ssh "${ssh_common[@]}" "${runner}" \

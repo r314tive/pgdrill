@@ -162,11 +162,15 @@ func (a *Adapter) walVerifyArgs(backup model.Backup) ([]string, error) {
 	if backupName != "" {
 		args = append(args, "--backup-name", backupName)
 	}
-	if a.cfg.WALVerify.Timeline != "" {
-		args = append(args, "--timeline", a.cfg.WALVerify.Timeline)
-	}
-	if a.cfg.WALVerify.LSN != "" {
-		args = append(args, "--lsn", a.cfg.WALVerify.LSN)
+	configuredTarget := a.cfg.WALVerify.Timeline != "" || a.cfg.WALVerify.LSN != ""
+	timeline := adapterutil.FirstNonEmpty(a.cfg.WALVerify.Timeline, backup.WALRange.Timeline)
+	lsn := adapterutil.FirstNonEmpty(a.cfg.WALVerify.LSN, backup.WALRange.EndLSN)
+	if timeline != "" && lsn != "" {
+		args = append(args, "--timeline", timeline, "--lsn", lsn)
+	} else if configuredTarget {
+		return nil, fmt.Errorf(
+			"wal-g wal_verify timeline and lsn must both be available from configuration or selected backup metadata",
+		)
 	}
 	args = append(args, checks...)
 	return args, nil

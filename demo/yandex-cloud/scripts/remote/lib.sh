@@ -134,7 +134,9 @@ mount_repository() {
   [[ "${required_mode}" == "ro" || "${required_mode}" == "rw" ]] ||
     die "mount_repository requires ro or rw"
 
-  install -d -m 0755 "${REPOSITORY_MOUNT}"
+  if ! mountpoint --quiet "${REPOSITORY_MOUNT}"; then
+    install -d -m 0755 "${REPOSITORY_MOUNT}"
+  fi
   for _ in {1..30}; do
     if ! mountpoint --quiet "${REPOSITORY_MOUNT}"; then
       mount "${REPOSITORY_MOUNT}" >/dev/null 2>&1 || true

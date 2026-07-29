@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/lib.sh"
 
 require_root
 require_no_args "$@"
+cd /
 
 readonly SOURCE_DATA="/var/lib/pgdrill-demo/source-data"
 
