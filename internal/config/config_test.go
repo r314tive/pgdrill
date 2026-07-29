@@ -194,12 +194,10 @@ func TestYandexCloudPGBackRestDemoConfigRemainsValid(t *testing.T) {
 		cfg.Provider.Stanza != "demo" {
 		t.Fatalf("unexpected pgBackRest demo provider config %#v", cfg.Provider)
 	}
-	if !cfg.Provider.PGBackRest.Enabled ||
-		!cfg.Provider.PGBackRest.NoArchiveCheck ||
-		!cfg.Provider.PGBackRest.NoArchiveModeCheck ||
+	if cfg.Provider.PGBackRest.Enabled ||
 		!cfg.Provider.PGBackRestVerify.Enabled ||
 		cfg.Provider.PGBackRestVerify.Output != "text" {
-		t.Fatalf("pgBackRest demo validation is not fail-closed: %#v", cfg.Provider)
+		t.Fatalf("unexpected pgBackRest demo validation boundary: %#v", cfg.Provider)
 	}
 	if cfg.Target.Type != model.RestoreTargetLocal ||
 		cfg.Target.WorkDir != "/var/lib/pgdrill-demo/work/pgbackrest-restore" ||

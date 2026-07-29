@@ -9,11 +9,11 @@ provider:
   env:
     PGBACKREST_CONFIG: /etc/pgdrill/pgbackrest.conf
   timeout: 10m
+  # pgBackRest check requires access to the configured PostgreSQL host even
+  # when archive checks are disabled. The repository-only runner cannot
+  # perform that check honestly; source preparation runs it twice instead.
   pgbackrest_check:
-    enabled: true
-    timeout: 10m
-    no_archive_check: true
-    no_archive_mode_check: true
+    enabled: false
   pgbackrest_verify:
     enabled: true
     timeout: 10m

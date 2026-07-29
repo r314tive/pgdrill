@@ -222,6 +222,11 @@ jq -n \
     expected_recovered_row_count: 101,
     post_backup_wal_sentinel: "post-backup-wal-sentinel",
     sentinel_wal: $sentinel_wal,
+    native_validation: {
+      pgbackrest_check_before_backup: "passed",
+      pgbackrest_check_after_backup_wal: "passed",
+      pgbackrest_verify_selected_backup: "passed"
+    },
     postgresql_version: $postgresql_version,
     pgbackrest_version: $pgbackrest_version
   }' >"${SOURCE_STATE}.tmp"
