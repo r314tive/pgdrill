@@ -230,4 +230,4 @@ chmod 0640 "${SOURCE_STATE}.tmp"
 mv "${SOURCE_STATE}.tmp" "${SOURCE_STATE}"
 
 log "backup preparation complete"
-runuser -u postgres -- jq . "${SOURCE_STATE}"
+jq . "${SOURCE_STATE}"
