@@ -319,12 +319,13 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
-- WAL-G catalog validation now derives a complete offline `timeline`/`lsn`
-  target from the selected backup when explicit values are absent, so a
-  repository-only executor does not require an unrelated local PostgreSQL
-  connection. Partial explicit targets still fail before command execution,
-  while incomplete backup metadata preserves WAL-G's co-located discovery
-  behavior.
+- WAL-G v3 `wal_file_name` detail output is now a conflict-checked alias for
+  `wal_segment_backup_start`. Catalog validation derives a complete offline
+  `timeline`/`lsn` target from the selected backup when explicit values are
+  absent, so a repository-only executor does not require an unrelated local
+  PostgreSQL connection. Partial explicit targets still fail before command
+  execution, while incomplete backup metadata preserves WAL-G's co-located
+  discovery behavior.
 - The Yandex Cloud demo now propagates the exact identity and isolated
   known-hosts policy through private-VM SSH hops, installs the engine config
   for its `postgres` service account, normalizes privileged wrapper working

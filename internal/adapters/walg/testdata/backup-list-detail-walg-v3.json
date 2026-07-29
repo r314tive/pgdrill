@@ -1,0 +1,16 @@
+[
+  {
+    "backup_name": "base_00000001000000000000000D",
+    "time": "2026-07-29T18:32:31.966944166Z",
+    "wal_file_name": "00000001000000000000000D",
+    "storage_name": "default",
+    "start_time": "2026-07-29T18:32:30.695584Z",
+    "finish_time": "2026-07-29T18:32:31.935202Z",
+    "hostname": "pgdrill-demo-source",
+    "data_dir": "/var/lib/pgdrill-demo/source-data",
+    "pg_version": 180004,
+    "start_lsn": 218103848,
+    "finish_lsn": 218104096,
+    "is_permanent": false
+  }
+]

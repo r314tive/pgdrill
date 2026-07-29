@@ -554,6 +554,7 @@ type backupListEntry struct {
 	Modified              optionalTime `json:"modified"`
 	Time                  optionalTime `json:"time"`
 	WALSegmentBackupStart string       `json:"wal_segment_backup_start"`
+	WALFileName           string       `json:"wal_file_name"`
 	StartTime             optionalTime `json:"start_time"`
 	FinishTime            optionalTime `json:"finish_time"`
 	Hostname              string       `json:"hostname"`
@@ -571,6 +572,7 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 		return model.Backup{}, err
 	}
 	name := adapterutil.FirstNonEmpty(e.Name, e.BackupName)
+	walSegment := adapterutil.FirstNonEmpty(e.WALSegmentBackupStart, e.WALFileName)
 	if name == "" {
 		return model.Backup{}, fmt.Errorf("missing backup name")
 	}
@@ -598,10 +600,10 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 		FinishedAt:     e.FinishTime.ptr(),
 		LastModifiedAt: firstTime(e.LastModified, e.Modified, e.Time).ptr(),
 		WALRange: model.WALRange{
-			StartSegment: e.WALSegmentBackupStart,
+			StartSegment: walSegment,
 			StartLSN:     startLSN,
 			EndLSN:       finishLSN,
-			Timeline:     walSegmentTimeline(e.WALSegmentBackupStart),
+			Timeline:     walSegmentTimeline(walSegment),
 		},
 		PostgreSQLVersion: adapterutil.FirstNonEmpty(e.PGVersion.Value, e.PostgresVersion.Value),
 		DataDirectory:     e.DataDir,
@@ -614,6 +616,13 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 func (e backupListEntry) validateAliases() error {
 	if e.Name != "" && e.BackupName != "" && e.Name != e.BackupName {
 		return fmt.Errorf(`backup name aliases "name" and "backup_name" conflict`)
+	}
+	if e.WALSegmentBackupStart != "" &&
+		e.WALFileName != "" &&
+		e.WALSegmentBackupStart != e.WALFileName {
+		return fmt.Errorf(
+			`WAL segment aliases "wal_segment_backup_start" and "wal_file_name" conflict`,
+		)
 	}
 	times := []struct {
 		key   string

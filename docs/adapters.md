@@ -59,9 +59,10 @@ Implemented normalization:
 - provider ID: WAL-G backup name
 - kind: `full` for `base_*`, `delta` for names containing `_D_`
 - timestamps: `start_time`, `finish_time`, `last_modified`/`modified`/`time`
-- WAL range: `wal_segment_backup_start`, `start_lsn`, `finish_lsn`; WAL-G's
-  numeric sentinel locations are converted to canonical PostgreSQL `X/Y`
-  notation and the timeline is derived from a valid WAL segment name
+- WAL range: `wal_segment_backup_start`/WAL-G v3 `wal_file_name`, `start_lsn`,
+  `finish_lsn`; WAL-G's numeric sentinel locations are converted to canonical
+  PostgreSQL `X/Y` notation and the timeline is derived from a valid WAL
+  segment name
 - PostgreSQL version, hostname, data directory, permanence flag
 
 Implemented restore planning:

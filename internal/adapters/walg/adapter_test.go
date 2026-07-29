@@ -94,6 +94,29 @@ func TestParseBackupListDetail(t *testing.T) {
 	}
 }
 
+func TestParseBackupListDetailWALGV3(t *testing.T) {
+	data := readFixture(t, "testdata/backup-list-detail-walg-v3.json")
+
+	backups, err := ParseBackupList(data)
+	if err != nil {
+		t.Fatalf("parse WAL-G v3 backup list: %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("expected one backup, got %d", len(backups))
+	}
+
+	backup := backups[0]
+	if got, want := backup.WALRange.StartSegment, "00000001000000000000000D"; got != want {
+		t.Fatalf("start segment: got %q want %q", got, want)
+	}
+	if got, want := backup.WALRange.Timeline, "1"; got != want {
+		t.Fatalf("timeline: got %q want %q", got, want)
+	}
+	if got, want := backup.WALRange.EndLSN, "0/D000120"; got != want {
+		t.Fatalf("end LSN: got %q want %q", got, want)
+	}
+}
+
 func TestParseBackupListNormalizesWALLocations(t *testing.T) {
 	backups, err := ParseBackupList([]byte(`[
   {
@@ -147,6 +170,11 @@ func TestParseBackupListRejectsConflictingAliases(t *testing.T) {
 			name:  "PostgreSQL version",
 			input: `[{"name":"base_a","pg_version":"16","postgres_version":"17"}]`,
 			want:  "PostgreSQL version aliases",
+		},
+		{
+			name:  "WAL segment",
+			input: `[{"name":"base_a","wal_segment_backup_start":"000000010000000000000001","wal_file_name":"000000010000000000000002"}]`,
+			want:  "WAL segment aliases",
 		},
 	}
 	for _, test := range tests {
