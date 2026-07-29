@@ -66,7 +66,7 @@ archive_name="$(basename -- "${archive}")"
   exit 2
 }
 
-for command in terraform ssh scp; do
+for command in openssl terraform ssh scp; do
   command -v "${command}" >/dev/null || {
     printf 'required local command is missing: %s\n' "${command}" >&2
     exit 1
@@ -97,6 +97,13 @@ known_hosts="${state_dir}/known_hosts"
 mkdir -p "${state_dir}"
 touch "${known_hosts}"
 chmod 0600 "${known_hosts}"
+postgres_password_file="$(mktemp "${state_dir}/postgres-password.XXXXXX")"
+cleanup_password() {
+  rm -f -- "${postgres_password_file}"
+}
+trap cleanup_password EXIT
+openssl rand -hex 32 >"${postgres_password_file}"
+chmod 0600 "${postgres_password_file}"
 
 runner="${owner_user}@${runner_public_ip}"
 source="${owner_user}@${source_private_ip}"
@@ -139,14 +146,17 @@ ssh "${ssh_common[@]}" "${jump[@]}" "${source}" 'cloud-init status --wait'
 ssh "${ssh_common[@]}" "${jump[@]}" "${repository}" 'cloud-init status --wait'
 
 remote_stage="/tmp/pgdrill-demo-bootstrap"
+remote_password="${remote_stage}/postgres-password"
 ssh "${ssh_common[@]}" "${runner}" 'rm -rf /tmp/pgdrill-demo-bootstrap'
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" 'rm -rf /tmp/pgdrill-demo-bootstrap'
 scp "${ssh_common[@]}" -r "${SCRIPT_DIR}/remote" "${runner}:${remote_stage}"
 scp "${ssh_common[@]}" "${jump[@]}" -r "${SCRIPT_DIR}/remote" "${source}:${remote_stage}"
+scp "${ssh_common[@]}" "${postgres_password_file}" "${runner}:${remote_password}"
+scp "${ssh_common[@]}" "${jump[@]}" "${postgres_password_file}" "${source}:${remote_password}"
 
 printf '[pgdrill-demo] bootstrapping source\n'
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
-  'sudo /tmp/pgdrill-demo-bootstrap/bootstrap-source.sh'
+  'sudo /tmp/pgdrill-demo-bootstrap/bootstrap-source.sh /tmp/pgdrill-demo-bootstrap/postgres-password'
 
 remote_archive="${remote_stage}/${archive_name}"
 scp "${ssh_common[@]}" "${archive}" "${runner}:${remote_archive}"
@@ -156,7 +166,7 @@ printf '[pgdrill-demo] bootstrapping runner\n'
 # The archive name is restricted above and the digest is lowercase hex.
 # shellcheck disable=SC2029
 ssh "${ssh_common[@]}" "${runner}" \
-  "sudo '${remote_stage}/bootstrap-runner.sh' '${remote_archive}' '${archive_sha256}' '${remote_stage}/pgdrill.yaml'"
+  "sudo '${remote_stage}/bootstrap-runner.sh' '${remote_archive}' '${archive_sha256}' '${remote_stage}/pgdrill.yaml' '${remote_password}'"
 
 printf '[pgdrill-demo] running read-only pgdrill doctor\n'
 ssh "${ssh_common[@]}" "${runner}" \

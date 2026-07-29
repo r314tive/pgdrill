@@ -16,6 +16,7 @@ readonly CONFIG="/etc/pgdrill/demo.yaml"
 readonly REPORT_DIR="/var/lib/pgdrill-demo/reports"
 readonly CURRENT_REPORT="${REPORT_DIR}/current.json"
 readonly WORK_DIR="/var/lib/pgdrill-demo/work/restore"
+export PGPASSFILE="/etc/pgdrill/pgpass"
 
 exec 9>"${REPORT_DIR}/.run.lock"
 flock --nonblock 9 || {

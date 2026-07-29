@@ -8,10 +8,18 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/lib.sh"
 
 require_root
-require_no_args "$@"
+[[ "$#" -eq 1 ]] || die "usage: bootstrap-source.sh <postgres-password-file>"
 cd /
 
+readonly POSTGRES_PASSWORD_FILE="$1"
 readonly SOURCE_DATA="/var/lib/pgdrill-demo/source-data"
+
+[[ -f "${POSTGRES_PASSWORD_FILE}" ]] ||
+  die "PostgreSQL password file does not exist: ${POSTGRES_PASSWORD_FILE}"
+postgres_password="$(tr -d '\r\n' <"${POSTGRES_PASSWORD_FILE}")"
+rm -f -- "${POSTGRES_PASSWORD_FILE}"
+[[ "${postgres_password}" =~ ^[0-9a-f]{64}$ ]] ||
+  die "PostgreSQL password file does not contain the expected generated secret"
 
 log "installing PostgreSQL ${PG_MAJOR} and WAL-G ${WALG_VERSION} on the source"
 install_postgresql
@@ -114,6 +122,11 @@ systemctl daemon-reload
 systemctl enable pgdrill-demo-source.service
 systemctl restart pgdrill-demo-source.service
 wait_for_postgres
+printf "ALTER ROLE postgres PASSWORD '%s';\n" "${postgres_password}" |
+  runuser -u postgres -- "${PGBIN}/psql" \
+    --host /var/run/postgresql --port 5432 --dbname postgres \
+    --set ON_ERROR_STOP=1 >/dev/null
+unset postgres_password
 
 log "source bootstrap complete"
 systemctl --no-pager --full status pgdrill-demo-source.service | sed -n '1,12p'

@@ -94,7 +94,7 @@ jump=(-o "ProxyCommand=${proxy_command}")
 
 printf '[pgdrill-demo] checking invited runner login and fixed commands\n'
 ssh "${ssh_common[@]}" "${runner}" \
-  'test "$(id -un)" != root && test ! -w /var/lib/pgdrill-demo/reports && test ! -r /mnt/pgdrill-repository/.pgdrill-demo-repository'
+  'test "$(id -un)" != root && test ! -w /var/lib/pgdrill-demo/reports && test ! -r /mnt/pgdrill-repository/.pgdrill-demo-repository && test ! -r /etc/pgdrill/pgpass'
 if ssh "${ssh_common[@]}" "${runner}" 'sudo -n /usr/bin/true' >/dev/null 2>&1; then
   die "administrator unexpectedly has general sudo on the runner"
 fi

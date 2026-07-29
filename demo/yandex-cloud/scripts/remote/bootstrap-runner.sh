@@ -8,15 +8,19 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/lib.sh"
 
 require_root
-[[ "$#" -eq 3 ]] || die "usage: bootstrap-runner.sh <pgdrill-archive> <sha256> <config>"
+[[ "$#" -eq 4 ]] ||
+  die "usage: bootstrap-runner.sh <pgdrill-archive> <sha256> <config> <postgres-password-file>"
 cd /
 
 readonly PGDRILL_ARCHIVE="$1"
 readonly PGDRILL_SHA256="$2"
 readonly PGDRILL_CONFIG="$3"
+readonly POSTGRES_PASSWORD_FILE="$4"
 
 [[ -f "${PGDRILL_ARCHIVE}" ]] || die "pgdrill archive does not exist: ${PGDRILL_ARCHIVE}"
 [[ -f "${PGDRILL_CONFIG}" ]] || die "pgdrill config does not exist: ${PGDRILL_CONFIG}"
+[[ -f "${POSTGRES_PASSWORD_FILE}" ]] ||
+  die "PostgreSQL password file does not exist: ${POSTGRES_PASSWORD_FILE}"
 [[ "${PGDRILL_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "pgdrill SHA-256 is invalid"
 printf '%s  %s\n' "${PGDRILL_SHA256}" "${PGDRILL_ARCHIVE}" | sha256sum --check --status ||
   die "pgdrill archive checksum verification failed"
@@ -37,8 +41,17 @@ install -o root -g root -m 0755 "${pgdrill_binary}" /usr/local/bin/pgdrill
 install -d -o root -g postgres -m 0750 /etc/pgdrill
 install -o root -g postgres -m 0640 \
   "${PGDRILL_CONFIG}" /etc/pgdrill/demo.yaml
+postgres_password="$(tr -d '\r\n' <"${POSTGRES_PASSWORD_FILE}")"
+rm -f -- "${POSTGRES_PASSWORD_FILE}"
+[[ "${postgres_password}" =~ ^[0-9a-f]{64}$ ]] ||
+  die "PostgreSQL password file does not contain the expected generated secret"
+install -o postgres -g postgres -m 0600 /dev/null /etc/pgdrill/pgpass
+printf '127.0.0.1:*:*:postgres:%s\n' "${postgres_password}" >/etc/pgdrill/pgpass
+unset postgres_password
 runuser -u postgres -- test -r /etc/pgdrill/demo.yaml ||
   die "postgres cannot read the installed pgdrill config"
+runuser -u postgres -- test -s /etc/pgdrill/pgpass ||
+  die "postgres cannot read the installed PostgreSQL password file"
 install -d -o postgres -g postgres -m 0700 /var/lib/pgdrill-demo/work
 install -d -o postgres -g pgdrill-demo-admins -m 2750 /var/lib/pgdrill-demo/reports
 

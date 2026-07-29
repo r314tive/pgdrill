@@ -194,7 +194,11 @@ The remote bootstrap verifies the pgdrill archive SHA-256, downloads the
 official WAL-G `v3.0.8` Ubuntu 24.04 amd64 binary, verifies its pinned SHA-256,
 verifies the official PGDG repository-key fingerprint, installs the current
 PostgreSQL 18 patch release from PGDG, confirms the runner NFS mount is
-read-only, and finishes with `pgdrill doctor`.
+read-only, and finishes with `pgdrill doctor`. It also generates a temporary
+random credential for the synthetic `postgres` role, removes both staged
+copies after installation, and leaves only a `postgres:postgres` mode `0600`
+password file on the runner. The credential is not written to Terraform,
+pgdrill configuration, command arguments, reports, or bootstrap output.
 
 ## Rehearse The Complete Drill
 
