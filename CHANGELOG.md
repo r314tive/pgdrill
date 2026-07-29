@@ -316,6 +316,9 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- Latest-recovery proof now guards PostgreSQL recovery-control functions after
+  replay has completed, allowing PostgreSQL 18 to report the required
+  `recovery_complete` observation instead of failing the evidence query.
 - Fleet and drill-set `max_runs` now count every selected source before policy
   and target-placement rejection, so incompatible broad selectors cannot
   bypass the documented complete-expansion bounds. Plan validation

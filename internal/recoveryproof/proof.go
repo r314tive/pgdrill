@@ -30,11 +30,20 @@ const (
 	defaultPollInterval = 500 * time.Millisecond
 )
 
-const observationQuery = `SELECT json_build_object(
+const observationQuery = `WITH recovery_state AS MATERIALIZED (
+  SELECT pg_is_in_recovery() AS in_recovery
+)
+SELECT json_build_object(
   'schema_version', 'pgdrill.recovery-observation/v2',
-  'in_recovery', pg_is_in_recovery(),
-  'replay_paused', pg_is_wal_replay_paused(),
-  'replay_pause_state', pg_get_wal_replay_pause_state(),
+  'in_recovery', in_recovery,
+  'replay_paused', CASE
+    WHEN in_recovery THEN pg_is_wal_replay_paused()
+    ELSE false
+  END,
+  'replay_pause_state', CASE
+    WHEN in_recovery THEN pg_get_wal_replay_pause_state()
+    ELSE 'not paused'
+  END,
   'recovery_target', current_setting('recovery_target', true),
   'recovery_target_time', current_setting('recovery_target_time', true),
   'recovery_target_lsn', current_setting('recovery_target_lsn', true),
@@ -43,7 +52,8 @@ const observationQuery = `SELECT json_build_object(
   'recovery_target_timeline', current_setting('recovery_target_timeline', true),
   'recovery_target_inclusive', current_setting('recovery_target_inclusive', true),
   'recovery_target_action', current_setting('recovery_target_action', true)
-)::text;`
+)::text
+FROM recovery_state;`
 
 type Config struct {
 	Binary       string

@@ -20,6 +20,21 @@ func TestNewProvidesDefaultRunner(t *testing.T) {
 	}
 }
 
+func TestObservationQueryGuardsRecoveryControlFunctions(t *testing.T) {
+	for _, guardedExpression := range []string{
+		"WHEN in_recovery THEN pg_is_wal_replay_paused()",
+		"WHEN in_recovery THEN pg_get_wal_replay_pause_state()",
+	} {
+		if !strings.Contains(observationQuery, guardedExpression) {
+			t.Fatalf("observation query does not guard %q", guardedExpression)
+		}
+	}
+	if !strings.Contains(observationQuery, "ELSE false") ||
+		!strings.Contains(observationQuery, "ELSE 'not paused'") {
+		t.Fatal("observation query does not provide completed-recovery pause state")
+	}
+}
+
 func TestVerifierFailsClosedOnInvalidPreconditions(t *testing.T) {
 	tests := []struct {
 		name     string
