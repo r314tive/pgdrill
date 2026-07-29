@@ -332,7 +332,8 @@ called out explicitly even while the major version is `0`.
   directories, leaves an already-mounted root-squashed NFS export untouched
   during repeated bootstrap, and provisions a temporary generated SCRAM
   credential plus service-only runner password file for authenticated
-  loopback recovery probes.
+  loopback recovery probes. Its local evidence gate now accepts the current
+  stable `pgdrill.report/v2` schema.
 - Latest-recovery proof now guards PostgreSQL recovery-control functions after
   replay has completed, allowing PostgreSQL 18 to report the required
   `recovery_complete` observation instead of failing the evidence query.
