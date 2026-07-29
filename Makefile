@@ -1,4 +1,4 @@
-.PHONY: build check container-check container-smoke coverage cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format fuzz integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot shellcheck smoke stress test test-integration-all test-integration-barman test-integration-cnpg test-integration-cnpg-plugin test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-postgresql-17 test-integration-walg test-integration-walg-s3 test-local toolchain-check torture vet workflow-check
+.PHONY: build check container-check container-smoke coverage cross-compile-check demo-check demo-infra-check demo-rehearsal demo-rehearsal-pgbackrest fmt format fuzz integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot shellcheck smoke stress test test-integration-all test-integration-barman test-integration-cnpg test-integration-cnpg-plugin test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-postgresql-17 test-integration-walg test-integration-walg-s3 test-local toolchain-check torture vet workflow-check
 
 VERSION ?= v0.3.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -22,6 +22,7 @@ TERRAFORM ?= terraform
 DEMO_RELEASE_ARCHIVE ?=
 DEMO_RELEASE_COMMIT ?=
 DEMO_RELEASE_SHA256 ?=
+DEMO_PROVIDER ?= wal-g
 FUZZ_TIME ?= 10s
 STRESS_COUNT ?= 10
 COVERAGE_MIN ?= 72.0
@@ -120,10 +121,14 @@ demo-rehearsal: demo-check integration-syntax-check
 	@test -n "$(DEMO_RELEASE_COMMIT)" || { printf 'DEMO_RELEASE_COMMIT is required\n'; exit 2; }
 	@test -n "$(DEMO_RELEASE_SHA256)" || { printf 'DEMO_RELEASE_SHA256 is required\n'; exit 2; }
 	demo/local/rehearse.sh \
+		--provider "$(DEMO_PROVIDER)" \
 		--archive "$(DEMO_RELEASE_ARCHIVE)" \
 		--archive-sha256 "$(DEMO_RELEASE_SHA256)" \
 		--commit "$(DEMO_RELEASE_COMMIT)" \
 		--version "$(VERSION)"
+
+demo-rehearsal-pgbackrest:
+	$(MAKE) -s demo-rehearsal DEMO_PROVIDER=pgbackrest
 
 integration-syntax-check:
 	@for script in $$(find test/integration -type f -name '*.sh' -print | sort); do \

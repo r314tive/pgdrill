@@ -1,0 +1,74 @@
+cluster:
+  name: yc-pgbackrest-demo-postgresql-18
+
+provider:
+  type: pgbackrest
+  binary: /usr/bin/pgbackrest
+  config_path: /etc/pgdrill/pgbackrest.conf
+  stanza: demo
+  env:
+    PGBACKREST_CONFIG: /etc/pgdrill/pgbackrest.conf
+  timeout: 10m
+  pgbackrest_check:
+    enabled: true
+    timeout: 10m
+    no_archive_check: true
+    no_archive_mode_check: true
+  pgbackrest_verify:
+    enabled: true
+    timeout: 10m
+    output: text
+
+target:
+  type: local
+  work_dir: /var/lib/pgdrill-demo/work/pgbackrest-restore
+  postgres_binary: /usr/lib/postgresql/18/bin/postgres
+  postgres_port: 55433
+  startup_timeout: 1m
+  shutdown_timeout: 30s
+  remove_work_dir: true
+  env:
+    PGPASSFILE: /etc/pgdrill/pgpass
+
+restore:
+  timeout: 30m
+  verify_backup:
+    enabled: false
+
+recovery:
+  target: latest
+
+# These are demo policy values, not a proposed customer SLO. Replace them with
+# measured and approved values in a pilot.
+policy:
+  maximum_rto: 10m
+  maximum_rpo: 24h
+  maximum_backup_age: 24h
+  require_recovery_target: true
+  require_cleanup: true
+
+probes:
+  - type: pg_isready
+    binary: /usr/lib/postgresql/18/bin/pg_isready
+    timeout: 1m
+  - type: sql
+    name: post_backup_wal_replayed
+    binary: /usr/lib/postgresql/18/bin/psql
+    query: "select 1 / case when count(*) = 101 and bool_or(payload = 'post-backup-wal-sentinel') then 1 else 0 end from public.pgdrill_demo_probe"
+    timeout: 1m
+  - type: amcheck
+    name: structural_amcheck
+    binary: /usr/lib/postgresql/18/bin/pg_amcheck
+    mode: database
+    args:
+      on_error_stop: "true"
+    timeout: 5m
+  - type: pg_dump
+    name: schema_dump
+    binary: /usr/lib/postgresql/18/bin/pg_dump
+    mode: schema
+    timeout: 5m
+
+report:
+  format: json
+  path: /var/lib/pgdrill-demo/reports/pgbackrest-current.json

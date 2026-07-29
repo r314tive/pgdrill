@@ -17,8 +17,8 @@ usage() {
   cat <<'EOF'
 Usage: bootstrap.sh --archive PATH --identity PATH [--terraform-dir PATH]
 
-Installs PostgreSQL 18, pinned WAL-G, and a supplied pgdrill Linux amd64
-release archive on an already-applied Terraform demo topology.
+Installs PostgreSQL 18, pinned WAL-G and pgBackRest, and a supplied pgdrill
+Linux amd64 release archive on an already-applied Terraform demo topology.
 EOF
 }
 
@@ -147,30 +147,43 @@ ssh "${ssh_common[@]}" "${jump[@]}" "${repository}" 'cloud-init status --wait'
 
 remote_stage="/tmp/pgdrill-demo-bootstrap"
 remote_password="${remote_stage}/postgres-password"
+remote_pgbackrest_source_config="${remote_stage}/pgbackrest-source.conf"
 ssh "${ssh_common[@]}" "${runner}" 'rm -rf /tmp/pgdrill-demo-bootstrap'
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" 'rm -rf /tmp/pgdrill-demo-bootstrap'
 scp "${ssh_common[@]}" -r "${SCRIPT_DIR}/remote" "${runner}:${remote_stage}"
 scp "${ssh_common[@]}" "${jump[@]}" -r "${SCRIPT_DIR}/remote" "${source}:${remote_stage}"
 scp "${ssh_common[@]}" "${postgres_password_file}" "${runner}:${remote_password}"
 scp "${ssh_common[@]}" "${jump[@]}" "${postgres_password_file}" "${source}:${remote_password}"
+scp "${ssh_common[@]}" "${jump[@]}" \
+  "${DEMO_DIR}/config/pgbackrest-source.conf" \
+  "${source}:${remote_pgbackrest_source_config}"
 
 printf '[pgdrill-demo] bootstrapping source\n'
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
-  'sudo /tmp/pgdrill-demo-bootstrap/bootstrap-source.sh /tmp/pgdrill-demo-bootstrap/postgres-password'
+  'sudo /tmp/pgdrill-demo-bootstrap/bootstrap-source.sh /tmp/pgdrill-demo-bootstrap/postgres-password /tmp/pgdrill-demo-bootstrap/pgbackrest-source.conf'
 
 remote_archive="${remote_stage}/${archive_name}"
 scp "${ssh_common[@]}" "${archive}" "${runner}:${remote_archive}"
 scp "${ssh_common[@]}" "${DEMO_DIR}/config/pgdrill.yaml" "${runner}:${remote_stage}/pgdrill.yaml"
+scp "${ssh_common[@]}" \
+  "${DEMO_DIR}/config/pgbackrest.yaml" \
+  "${runner}:${remote_stage}/pgbackrest.yaml"
+scp "${ssh_common[@]}" \
+  "${DEMO_DIR}/config/pgbackrest-runner.conf" \
+  "${runner}:${remote_stage}/pgbackrest-runner.conf"
 
 printf '[pgdrill-demo] bootstrapping runner\n'
 # The archive name is restricted above and the digest is lowercase hex.
 # shellcheck disable=SC2029
 ssh "${ssh_common[@]}" "${runner}" \
-  "sudo '${remote_stage}/bootstrap-runner.sh' '${remote_archive}' '${archive_sha256}' '${remote_stage}/pgdrill.yaml' '${remote_password}'"
+  "sudo '${remote_stage}/bootstrap-runner.sh' '${remote_archive}' '${archive_sha256}' '${remote_stage}/pgdrill.yaml' '${remote_stage}/pgbackrest.yaml' '${remote_stage}/pgbackrest-runner.conf' '${remote_password}'"
 
-printf '[pgdrill-demo] running read-only pgdrill doctor\n'
+printf '[pgdrill-demo] running read-only WAL-G pgdrill doctor\n'
 ssh "${ssh_common[@]}" "${runner}" \
   'sudo -u postgres /usr/local/sbin/pgdrill-demo-doctor'
+printf '[pgdrill-demo] running read-only pgBackRest pgdrill doctor\n'
+ssh "${ssh_common[@]}" "${runner}" \
+  'sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-doctor'
 
 cat <<EOF
 
@@ -182,4 +195,5 @@ archive:    ${archive_sha256}
 
 Prepare and exercise the complete scenario with:
   PGDRILL_DEMO_CONFIRM=YES ${SCRIPT_DIR}/scenario.sh --identity ${identity}
+  PGDRILL_DEMO_CONFIRM=YES ${SCRIPT_DIR}/scenario.sh --provider pgbackrest --identity ${identity}
 EOF

@@ -36,12 +36,14 @@ keeps the engine and the demo infrastructure separate: the engine remains an
 ordinary CLI artifact, while Terraform and shell scripts only provision and
 adapt the disposable environment.
 
-The [local release-artifact rehearsal](local/README.md) runs the same core
-recovery claim through the network-isolated WAL-G integration environment. It
-proves both latest recovery and a timestamp boundary between two archived
-transactions. Use it for presenter practice and as a fallback proof of the
-exact candidate or release binary, but label it as local Docker evidence
-rather than publication, hosted, or customer compatibility.
+The [local release-artifact rehearsals](local/README.md) run the same core
+recovery claim through network-isolated WAL-G or pgBackRest integration
+environments. Both profiles prove latest recovery and a timestamp boundary
+between two archived transactions. The pgBackRest profile additionally
+requires `check` and selected-set `verify`. Use them for presenter practice
+and as fallback proof of the exact candidate or release binary, but label the
+result as local Docker evidence rather than publication, hosted, or customer
+compatibility.
 
 A useful 25-minute session is:
 
@@ -67,9 +69,9 @@ Demo infrastructure is deliberately not a test framework or an engine package:
 - `internal` and `cmd` contain the Go control plane and do not import any of
   these environment definitions.
 
-The local WAL-G integration drill should pass before provisioning the hosted
-demo, but it cannot prove VM isolation, administrator access controls, NFS
-permissions, or cloud networking.
+The matching local provider integration drill should pass before provisioning
+a hosted demo, but it cannot prove VM isolation, administrator access
+controls, NFS permissions, or cloud networking.
 
 ## Health Check Boundary
 

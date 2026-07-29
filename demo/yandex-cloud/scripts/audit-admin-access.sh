@@ -104,6 +104,12 @@ ssh "${ssh_common[@]}" "${runner}" \
   'sudo -n -u postgres /usr/local/sbin/pgdrill-demo-report >/dev/null'
 ssh "${ssh_common[@]}" "${runner}" \
   'sudo -n -l | grep -Fq /usr/local/sbin/pgdrill-demo-run'
+ssh "${ssh_common[@]}" "${runner}" \
+  'sudo -n -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-doctor >/dev/null'
+ssh "${ssh_common[@]}" "${runner}" \
+  'sudo -n -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-report >/dev/null'
+ssh "${ssh_common[@]}" "${runner}" \
+  'sudo -n -l | grep -Fq /usr/local/sbin/pgdrill-demo-pgbackrest-run'
 
 printf '[pgdrill-demo] checking invited source login and fixed command\n'
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
@@ -114,6 +120,8 @@ if ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
 fi
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
   'sudo -n -u postgres /usr/local/sbin/pgdrill-demo-source-status >/dev/null'
+ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
+  'sudo -n -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-source-status >/dev/null'
 
 printf '[pgdrill-demo] checking owner-only repository login\n'
 if ssh "${ssh_common[@]}" "${jump[@]}" "${repository}" true >/dev/null 2>&1; then

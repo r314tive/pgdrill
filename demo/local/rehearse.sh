@@ -7,30 +7,33 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 readonly ROOT
-readonly WALG_CACHE="${ROOT}/.cache/integration/walg"
 
 archive=""
 archive_sha256=""
 commit=""
+provider="${DEMO_PROVIDER:-wal-g}"
 version=""
+provider_artifacts=()
+provider_checks=()
 
 usage() {
   cat <<'EOF'
 Usage:
   rehearse.sh \
+    --provider wal-g|pgbackrest \
     --archive PATH \
     --archive-sha256 SHA256 \
     --commit FULL_GIT_OBJECT_ID \
     --version VERSION
 
-Runs the real local WAL-G restore drill with an exact Linux release archive,
-then verifies the retained report and artifact checksums. The archive may be a
-clean local release candidate or a published release.
+Runs the selected real local provider restore drill with an exact Linux
+release archive, then verifies the retained report and artifact checksums. The
+archive may be a clean local release candidate or a published release.
 EOF
 }
 
 die() {
-  printf '[demo/local] ERROR: %s\n' "$*" >&2
+  printf '[demo/local/%s] ERROR: %s\n' "${provider}" "$*" >&2
   exit 1
 }
 
@@ -60,6 +63,10 @@ verify_checksums() {
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
+    --provider)
+      provider="${2:-}"
+      shift 2
+      ;;
     --archive)
       archive="${2:-}"
       shift 2
@@ -86,6 +93,28 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+case "${provider}" in
+  wal-g)
+    integration_name="walg"
+    provider_label="WAL-G"
+    provider_checks=("wal-g-wal-verify-integrity")
+    ;;
+  pgbackrest)
+    integration_name="pgbackrest"
+    provider_label="pgBackRest"
+    provider_checks=("pgbackrest-check" "pgbackrest-verify")
+    provider_artifacts=("pgbackrest-info.json")
+    ;;
+  *)
+    die "--provider must be wal-g or pgbackrest"
+    ;;
+esac
+readonly integration_name provider_label
+readonly -a provider_checks
+readonly -a provider_artifacts
+cache_root="${ROOT}/.cache/integration/${integration_name}"
+readonly cache_root
+
 for command in awk docker git grep sed tar; do
   command -v "${command}" >/dev/null 2>&1 ||
     die "required command is missing: ${command}"
@@ -108,20 +137,21 @@ docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
 archive_dir="$(cd -- "$(dirname -- "${archive}")" && pwd -P)"
 archive="${archive_dir}/$(basename -- "${archive}")"
 
-printf '[demo/local] running exact-release-artifact WAL-G rehearsal\n'
+printf '[demo/local/%s] running exact-release-artifact %s rehearsal\n' \
+  "${provider}" "${provider_label}"
 env \
   PGDRILL_INTEGRATION_COMMIT="${commit}" \
   PGDRILL_INTEGRATION_RELEASE_ARCHIVE="${archive}" \
   PGDRILL_INTEGRATION_RELEASE_ARCHIVE_SHA256="${archive_sha256}" \
   PGDRILL_INTEGRATION_VERSION="${version}" \
-  "${ROOT}/test/integration/walg/run.sh"
+  "${ROOT}/test/integration/${integration_name}/run.sh"
 
-latest_run_file="${WALG_CACHE}/latest-run.txt"
+latest_run_file="${cache_root}/latest-run.txt"
 [[ -f "${latest_run_file}" ]] ||
   die "integration drill did not record latest-run.txt"
 run_dir="$(sed -n '1p' "${latest_run_file}")"
 case "${run_dir}" in
-  "${WALG_CACHE}/runs/"*) ;;
+  "${cache_root}/runs/"*) ;;
   *) die "integration drill returned an unexpected artifact directory: ${run_dir}" ;;
 esac
 
@@ -134,6 +164,10 @@ for artifact in \
   report.txt \
   runtime.txt \
   source-state.txt; do
+  [[ -f "${run_dir}/${artifact}" ]] ||
+    die "integration drill did not retain ${artifact}"
+done
+for artifact in "${provider_artifacts[@]}"; do
   [[ -f "${run_dir}/${artifact}" ]] ||
     die "integration drill did not retain ${artifact}"
 done
@@ -159,8 +193,15 @@ grep -Eq '^cleanup[[:space:]]+true[[:space:]]+passed' "${run_dir}/pitr-report.tx
   die "retained timestamp PITR report does not prove owned cleanup"
 grep -F '"type": "timestamp"' "${run_dir}/pitr-report.json" >/dev/null ||
   die "retained timestamp PITR report has the wrong recovery target"
+for check in "${provider_checks[@]}"; do
+  grep -Eq "^${check}[[:space:]]+-[[:space:]]+passed" "${run_dir}/report.txt" ||
+    die "retained latest report does not prove ${check}"
+  grep -Eq "^${check}[[:space:]]+-[[:space:]]+passed" "${run_dir}/pitr-report.txt" ||
+    die "retained timestamp PITR report does not prove ${check}"
+done
 
-printf '\n[demo/local] PASS\n'
+printf '\n[demo/local/%s] PASS\n' "${provider}"
+printf 'provider=%s\n' "${provider}"
 printf 'release_archive_sha256=%s\n' "${archive_sha256}"
 printf 'latest_report_sha256=%s\n' "$(sha256_file "${run_dir}/report.json")"
 printf 'pitr_report_sha256=%s\n' "$(sha256_file "${run_dir}/pitr-report.json")"

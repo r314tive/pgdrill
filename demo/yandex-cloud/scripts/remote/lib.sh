@@ -10,10 +10,15 @@ readonly REPOSITORY_MOUNT="/mnt/pgdrill-repository"
 # Used by scripts that source this helper.
 # shellcheck disable=SC2034
 readonly WALG_REPOSITORY="${REPOSITORY_MOUNT}/walg"
+# Used by scripts that source this helper.
+# shellcheck disable=SC2034
+readonly PGBACKREST_REPOSITORY="${REPOSITORY_MOUNT}/pgbackrest/repository"
 readonly WALG_VERSION="3.0.8"
 readonly WALG_ASSET="wal-g-pg-24.04-amd64"
 readonly WALG_SHA256="342574292b1907af738d48ff2d1d771ad90a63e441b40a85208022144253f6b8"
 readonly WALG_URL="https://github.com/wal-g/wal-g/releases/download/v${WALG_VERSION}/${WALG_ASSET}"
+readonly PGBACKREST_VERSION="2.58.0"
+readonly PGBACKREST_PACKAGE_VERSION="${PGBACKREST_VERSION}-1.pgdg24.04+1"
 readonly PGDG_KEY_FINGERPRINT="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
 
 log() {
@@ -125,6 +130,20 @@ install_walg() {
 
   /usr/local/bin/wal-g --version | grep -F "v${WALG_VERSION}" >/dev/null ||
     die "installed WAL-G did not report v${WALG_VERSION}"
+}
+
+install_pgbackrest() {
+  local installed_version
+
+  require_root
+
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    "pgbackrest=${PGBACKREST_PACKAGE_VERSION}"
+  installed_version="$(dpkg-query -W -f='${Version}' pgbackrest)"
+  [[ "${installed_version}" == "${PGBACKREST_PACKAGE_VERSION}" ]] ||
+    die "installed pgBackRest package ${installed_version} does not match ${PGBACKREST_PACKAGE_VERSION}"
+  [[ "$(/usr/bin/pgbackrest version)" == "pgBackRest ${PGBACKREST_VERSION}" ]] ||
+    die "installed pgBackRest did not report ${PGBACKREST_VERSION}"
 }
 
 mount_repository() {

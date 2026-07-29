@@ -12,10 +12,28 @@ umask 027
   exit 1
 }
 
-readonly CONFIG="/etc/pgdrill/demo.yaml"
+case "$(basename -- "$0")" in
+  pgdrill-demo-run | run-drill.sh)
+    readonly PROVIDER="wal-g"
+    readonly RUN_PREFIX="yc-walg-demo"
+    readonly CONFIG="/etc/pgdrill/demo.yaml"
+    readonly CURRENT_REPORT="/var/lib/pgdrill-demo/reports/current.json"
+    readonly WORK_DIR="/var/lib/pgdrill-demo/work/restore"
+    ;;
+  pgdrill-demo-pgbackrest-run)
+    readonly PROVIDER="pgbackrest"
+    readonly RUN_PREFIX="yc-pgbackrest-demo"
+    readonly CONFIG="/etc/pgdrill/pgbackrest.yaml"
+    readonly CURRENT_REPORT="/var/lib/pgdrill-demo/reports/pgbackrest-current.json"
+    readonly WORK_DIR="/var/lib/pgdrill-demo/work/pgbackrest-restore"
+    ;;
+  *)
+    printf 'unsupported demo run wrapper: %s\n' "$0" >&2
+    exit 1
+    ;;
+esac
+
 readonly REPORT_DIR="/var/lib/pgdrill-demo/reports"
-readonly CURRENT_REPORT="${REPORT_DIR}/current.json"
-readonly WORK_DIR="/var/lib/pgdrill-demo/work/restore"
 export PGPASSFILE="/etc/pgdrill/pgpass"
 
 exec 9>"${REPORT_DIR}/.run.lock"
@@ -31,13 +49,13 @@ if [[ -e "${WORK_DIR}" ]]; then
 fi
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-run_id="yc-walg-demo-${stamp}"
+run_id="${RUN_PREFIX}-${stamp}"
 console_log="${REPORT_DIR}/${run_id}.console.log"
 archived_report="${REPORT_DIR}/${run_id}.report.json"
 run_config="${REPORT_DIR}/${run_id}.config.yaml"
 
 sed \
-  "s#path: /var/lib/pgdrill-demo/reports/current.json#path: ${archived_report}#" \
+  "s#path: ${CURRENT_REPORT}#path: ${archived_report}#" \
   "${CONFIG}" >"${run_config}"
 grep -qF "path: ${archived_report}" "${run_config}" || {
   printf 'could not bind the run-specific report path\n' >&2
@@ -70,6 +88,11 @@ if [[ -f "${archived_report}" ]]; then
   fi
   if [[ "${status}" -eq 0 ]] && ! jq -e '.status == "passed"' "${CURRENT_REPORT}" >/dev/null; then
     printf 'pgdrill report status is not passed\n' >&2
+    status=1
+  fi
+  if [[ "${status}" -eq 0 ]] &&
+    ! jq -e --arg provider "${PROVIDER}" '.provider == $provider' "${CURRENT_REPORT}" >/dev/null; then
+    printf 'pgdrill report provider does not match %s\n' "${PROVIDER}" >&2
     status=1
   fi
 else

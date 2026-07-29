@@ -10,6 +10,12 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Local exact-release-artifact pgBackRest rehearsal and an isolated
+  three-VM Yandex Cloud pgBackRest demo profile alongside the existing WAL-G
+  path. Both require a real full backup, post-backup WAL replay, native
+  provider validation, structural probes, policy evaluation, report identity,
+  and owned cleanup while provider discovery, validation, and restore logic
+  remain in Go.
 - Retained exact `v0.3.0-dev` field evidence for two consecutive WAL-G 3.0.8
   latest-recovery drills against PostgreSQL 18.4 on Yandex Cloud Linux amd64.
   The owner-operated three-VM NFS topology binds both passed reports to one
@@ -325,6 +331,11 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- pgBackRest catalog discovery once again accepts the protocol's `null`
+  `prior` value for a full backup while continuing to reject non-string,
+  non-null parent labels. The real integration profile now retains the raw
+  `pgbackrest info --output=json` response so this compatibility boundary is
+  checksummed before parsing.
 - WAL-G v3 `wal_file_name` detail output is now a conflict-checked alias for
   `wal_segment_backup_start`. Catalog validation derives a complete offline
   `timeline`/`lsn` target from the selected backup when explicit values are

@@ -8,27 +8,33 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/lib.sh"
 
 require_root
-[[ "$#" -eq 4 ]] ||
-  die "usage: bootstrap-runner.sh <pgdrill-archive> <sha256> <config> <postgres-password-file>"
+[[ "$#" -eq 6 ]] ||
+  die "usage: bootstrap-runner.sh <pgdrill-archive> <sha256> <wal-g-config> <pgbackrest-config> <pgbackrest-native-config> <postgres-password-file>"
 cd /
 
 readonly PGDRILL_ARCHIVE="$1"
 readonly PGDRILL_SHA256="$2"
 readonly PGDRILL_CONFIG="$3"
-readonly POSTGRES_PASSWORD_FILE="$4"
+readonly PGDRILL_PGBACKREST_CONFIG="$4"
+readonly PGBACKREST_CONFIG="$5"
+readonly POSTGRES_PASSWORD_FILE="$6"
 
 [[ -f "${PGDRILL_ARCHIVE}" ]] || die "pgdrill archive does not exist: ${PGDRILL_ARCHIVE}"
 [[ -f "${PGDRILL_CONFIG}" ]] || die "pgdrill config does not exist: ${PGDRILL_CONFIG}"
+[[ -f "${PGDRILL_PGBACKREST_CONFIG}" ]] ||
+  die "pgdrill pgBackRest config does not exist: ${PGDRILL_PGBACKREST_CONFIG}"
+[[ -f "${PGBACKREST_CONFIG}" ]] || die "pgBackRest config does not exist: ${PGBACKREST_CONFIG}"
 [[ -f "${POSTGRES_PASSWORD_FILE}" ]] ||
   die "PostgreSQL password file does not exist: ${POSTGRES_PASSWORD_FILE}"
 [[ "${PGDRILL_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "pgdrill SHA-256 is invalid"
 printf '%s  %s\n' "${PGDRILL_SHA256}" "${PGDRILL_ARCHIVE}" | sha256sum --check --status ||
   die "pgdrill archive checksum verification failed"
 
-log "installing PostgreSQL ${PG_MAJOR}, WAL-G ${WALG_VERSION}, and pgdrill on the runner"
+log "installing PostgreSQL ${PG_MAJOR}, WAL-G ${WALG_VERSION}, pgBackRest ${PGBACKREST_VERSION}, and pgdrill on the runner"
 install_postgresql
 remove_default_postgresql_cluster
 install_walg
+install_pgbackrest
 mount_repository ro
 
 tmpdir="$(mktemp -d)"
@@ -41,6 +47,10 @@ install -o root -g root -m 0755 "${pgdrill_binary}" /usr/local/bin/pgdrill
 install -d -o root -g postgres -m 0750 /etc/pgdrill
 install -o root -g postgres -m 0640 \
   "${PGDRILL_CONFIG}" /etc/pgdrill/demo.yaml
+install -o root -g postgres -m 0640 \
+  "${PGDRILL_PGBACKREST_CONFIG}" /etc/pgdrill/pgbackrest.yaml
+install -o root -g postgres -m 0640 \
+  "${PGBACKREST_CONFIG}" /etc/pgdrill/pgbackrest.conf
 postgres_password="$(tr -d '\r\n' <"${POSTGRES_PASSWORD_FILE}")"
 rm -f -- "${POSTGRES_PASSWORD_FILE}"
 [[ "${postgres_password}" =~ ^[0-9a-f]{64}$ ]] ||
@@ -50,9 +60,18 @@ printf '127.0.0.1:*:*:postgres:%s\n' "${postgres_password}" >/etc/pgdrill/pgpass
 unset postgres_password
 runuser -u postgres -- test -r /etc/pgdrill/demo.yaml ||
   die "postgres cannot read the installed pgdrill config"
+runuser -u postgres -- test -r /etc/pgdrill/pgbackrest.yaml ||
+  die "postgres cannot read the installed pgdrill pgBackRest config"
+runuser -u postgres -- test -r /etc/pgdrill/pgbackrest.conf ||
+  die "postgres cannot read the installed pgBackRest config"
 runuser -u postgres -- test -s /etc/pgdrill/pgpass ||
   die "postgres cannot read the installed PostgreSQL password file"
 install -d -o postgres -g postgres -m 0700 /var/lib/pgdrill-demo/work
+install -d -o postgres -g postgres -m 0700 \
+  /var/lib/pgdrill-demo/pgbackrest \
+  /var/lib/pgdrill-demo/pgbackrest/spool \
+  /var/lib/pgdrill-demo/pgbackrest/lock \
+  /var/lib/pgdrill-demo/pgbackrest/log
 install -d -o postgres -g pgdrill-demo-admins -m 2750 /var/lib/pgdrill-demo/reports
 
 install -o root -g root -m 0755 \
@@ -61,9 +80,15 @@ install -o root -g root -m 0755 \
   "${SCRIPT_DIR}/doctor.sh" /usr/local/sbin/pgdrill-demo-doctor
 install -o root -g root -m 0755 \
   "${SCRIPT_DIR}/report.sh" /usr/local/sbin/pgdrill-demo-report
+install -o root -g root -m 0755 \
+  "${SCRIPT_DIR}/run-drill.sh" /usr/local/sbin/pgdrill-demo-pgbackrest-run
+install -o root -g root -m 0755 \
+  "${SCRIPT_DIR}/doctor.sh" /usr/local/sbin/pgdrill-demo-pgbackrest-doctor
+install -o root -g root -m 0755 \
+  "${SCRIPT_DIR}/report.sh" /usr/local/sbin/pgdrill-demo-pgbackrest-report
 
 cat >/etc/sudoers.d/pgdrill-demo-runner <<'EOF'
-%pgdrill-demo-admins ALL=(postgres) NOPASSWD: /usr/local/sbin/pgdrill-demo-run, /usr/local/sbin/pgdrill-demo-doctor, /usr/local/sbin/pgdrill-demo-report
+%pgdrill-demo-admins ALL=(postgres) NOPASSWD: /usr/local/sbin/pgdrill-demo-run, /usr/local/sbin/pgdrill-demo-doctor, /usr/local/sbin/pgdrill-demo-report, /usr/local/sbin/pgdrill-demo-pgbackrest-run, /usr/local/sbin/pgdrill-demo-pgbackrest-doctor, /usr/local/sbin/pgdrill-demo-pgbackrest-report
 EOF
 chmod 0440 /etc/sudoers.d/pgdrill-demo-runner
 visudo --check --file=/etc/sudoers.d/pgdrill-demo-runner >/dev/null
@@ -71,6 +96,7 @@ visudo --check --file=/etc/sudoers.d/pgdrill-demo-runner >/dev/null
 pgdrill_version="$(/usr/local/bin/pgdrill version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 postgresql_version="$("${PGBIN}/postgres" --version)"
 walg_version="$(/usr/local/bin/wal-g --version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+pgbackrest_version="$(/usr/bin/pgbackrest version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
 jq -n \
   --arg schema_version "pgdrill.demo-runner-inventory/v1alpha1" \
   --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -78,6 +104,7 @@ jq -n \
   --arg pgdrill_version "${pgdrill_version}" \
   --arg postgresql_version "${postgresql_version}" \
   --arg walg_version "${walg_version}" \
+  --arg pgbackrest_version "${pgbackrest_version}" \
   --arg pgdg_key_fingerprint "${PGDG_KEY_FINGERPRINT}" \
   --argjson postgres_uid "$(id -u postgres)" \
   --argjson postgres_gid "$(id -g postgres)" \
@@ -88,6 +115,7 @@ jq -n \
     pgdrill_version: $pgdrill_version,
     postgresql_version: $postgresql_version,
     walg_version: $walg_version,
+    pgbackrest_version: $pgbackrest_version,
     pgdg_key_fingerprint: $pgdg_key_fingerprint,
     postgres_uid: $postgres_uid,
     postgres_gid: $postgres_gid,

@@ -1,14 +1,16 @@
-# Local Release-Artifact Rehearsal
+# Local Release-Artifact Rehearsals
 
-This rehearsal runs the real WAL-G/PostgreSQL integration scenario with an
-exact pgdrill Linux release archive from a clean commit. The archive may be a
-local release candidate or a published release. This is the fastest
-end-to-end fallback for presenter practice and release verification when the
-hosted Yandex Cloud environment is not yet available.
+These rehearsals run the real WAL-G or pgBackRest PostgreSQL integration
+scenario with an exact pgdrill Linux release archive from a clean commit. The
+archive may be a local release candidate or a published release. This is the
+fastest end-to-end fallback for presenter practice and release verification
+when a hosted environment is unavailable.
 
 It proves the exact binary can:
 
-- discover and validate a real WAL-G backup;
+- discover and validate a real backup through the selected provider;
+- require WAL-G WAL integrity or both pgBackRest `check` and selected-set
+  `verify`, depending on the profile;
 - restore a separate PostgreSQL target;
 - replay a row committed only after the base backup;
 - perform timestamp PITR to a boundary between two archived transactions,
@@ -17,8 +19,8 @@ It proves the exact binary can:
 - evaluate RTO, RPO, backup-age, recovery-target, and cleanup policy;
 - retain a checksummed report and command evidence.
 
-It does not prove Yandex Cloud networking, VM isolation, NFS permissions,
-administrator access controls, or customer compatibility.
+It does not prove Yandex Cloud networking, multi-VM isolation, NFS
+permissions, administrator access controls, or customer compatibility.
 
 ## Prerequisites
 
@@ -54,6 +56,17 @@ make -s demo-rehearsal \
   DEMO_RELEASE_SHA256="$ARCHIVE_SHA256"
 ```
 
+`demo-rehearsal` uses WAL-G by default. Run the same exact artifact through
+pgBackRest with:
+
+```sh
+make -s demo-rehearsal-pgbackrest \
+  VERSION="$VERSION" \
+  DEMO_RELEASE_COMMIT="$COMMIT" \
+  DEMO_RELEASE_ARCHIVE="$ARCHIVE" \
+  DEMO_RELEASE_SHA256="$ARCHIVE_SHA256"
+```
+
 For a published release, download the archive and checksum file first. For
 example, with an authenticated GitHub CLI and an arm64 Docker daemon:
 
@@ -83,8 +96,9 @@ make -s demo-rehearsal \
 Use the `linux_amd64` archive on an amd64 Docker daemon. The command rejects a
 wrong filename, target architecture, digest, version, or commit. It retains
 the complete latest and timestamp-PITR runs under
-`.cache/integration/walg/runs/` and prints the exact artifact and text-report
-paths.
+`.cache/integration/walg/runs/` or
+`.cache/integration/pgbackrest/runs/` and prints the exact artifact and
+text-report paths.
 
 The current published prerelease is
 [`v0.2.0-rc.2`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.2).

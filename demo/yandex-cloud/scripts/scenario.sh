@@ -10,15 +10,16 @@ readonly DEMO_DIR
 readonly DEFAULT_TERRAFORM_DIR="${DEMO_DIR}/terraform"
 
 identity="${SSH_IDENTITY_FILE:-}"
+provider="wal-g"
 terraform_dir="${TERRAFORM_DIR:-${DEFAULT_TERRAFORM_DIR}}"
 
 usage() {
   cat <<'EOF'
-Usage: PGDRILL_DEMO_CONFIRM=YES scenario.sh --identity PATH [--terraform-dir PATH]
+Usage: PGDRILL_DEMO_CONFIRM=YES scenario.sh [--provider wal-g|pgbackrest] --identity PATH [--terraform-dir PATH]
 
-Resets the marker-guarded disposable repository, creates the source backup and
-post-backup WAL sentinel, runs pgdrill, validates the report, and downloads the
-evidence into demo/yandex-cloud/.state/reports/.
+Resets only the selected provider's marker-guarded disposable repository,
+creates the source backup and post-backup WAL sentinel, runs pgdrill, validates
+the report, and downloads evidence into demo/yandex-cloud/.state/reports/.
 EOF
 }
 
@@ -37,6 +38,10 @@ sha256_files() {
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
+    --provider)
+      provider="${2:-}"
+      shift 2
+      ;;
     --identity)
       identity="${2:-}"
       shift 2
@@ -56,6 +61,36 @@ while [[ "$#" -gt 0 ]]; do
       ;;
   esac
 done
+
+case "${provider}" in
+  wal-g)
+    source_prepare="/usr/local/sbin/pgdrill-demo-prepare-backup"
+    source_status="/usr/local/sbin/pgdrill-demo-source-status"
+    runner_doctor="/usr/local/sbin/pgdrill-demo-doctor"
+    runner_run="/usr/local/sbin/pgdrill-demo-run"
+    remote_report="/var/lib/pgdrill-demo/reports/current.json"
+    remote_source_state="/var/lib/pgdrill-demo/source-state.json"
+    local_suffix=""
+    required_provider_checks=("wal-g-wal-verify-integrity")
+    ;;
+  pgbackrest)
+    source_prepare="/usr/local/sbin/pgdrill-demo-pgbackrest-prepare-backup"
+    source_status="/usr/local/sbin/pgdrill-demo-pgbackrest-source-status"
+    runner_doctor="/usr/local/sbin/pgdrill-demo-pgbackrest-doctor"
+    runner_run="/usr/local/sbin/pgdrill-demo-pgbackrest-run"
+    remote_report="/var/lib/pgdrill-demo/reports/pgbackrest-current.json"
+    remote_source_state="/var/lib/pgdrill-demo/pgbackrest-source-state.json"
+    local_suffix=".pgbackrest"
+    required_provider_checks=("pgbackrest-check" "pgbackrest-verify")
+    ;;
+  *)
+    printf '%s\n' '--provider must be wal-g or pgbackrest' >&2
+    exit 2
+    ;;
+esac
+readonly provider source_prepare source_status runner_doctor runner_run
+readonly remote_report remote_source_state local_suffix
+readonly -a required_provider_checks
 
 [[ "${PGDRILL_DEMO_CONFIRM:-}" == "YES" ]] || {
   printf 'PGDRILL_DEMO_CONFIRM=YES is required because this resets the disposable repository\n' >&2
@@ -99,32 +134,40 @@ printf -v proxy_command \
   "${identity}" "${known_hosts}" "${runner}"
 jump=(-o "ProxyCommand=${proxy_command}")
 
-printf '[pgdrill-demo] preparing source backup and post-backup WAL\n'
+printf '[pgdrill-demo/%s] preparing source backup and post-backup WAL\n' "${provider}"
+# Command paths are selected only from the closed provider mapping above.
+# shellcheck disable=SC2029
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
-  'sudo /usr/local/sbin/pgdrill-demo-prepare-backup --reset'
+  "sudo '${source_prepare}' --reset"
 
-printf '[pgdrill-demo] source boundary evidence\n'
+printf '[pgdrill-demo/%s] source boundary evidence\n' "${provider}"
+# shellcheck disable=SC2029
 ssh "${ssh_common[@]}" "${jump[@]}" "${source}" \
-  'sudo -u postgres /usr/local/sbin/pgdrill-demo-source-status'
+  "sudo -u postgres '${source_status}'"
 
-printf '[pgdrill-demo] read-only dependency preflight\n'
+printf '[pgdrill-demo/%s] read-only dependency preflight\n' "${provider}"
+# shellcheck disable=SC2029
 ssh "${ssh_common[@]}" "${runner}" \
-  'sudo -u postgres /usr/local/sbin/pgdrill-demo-doctor'
+  "sudo -u postgres '${runner_doctor}'"
 
-printf '[pgdrill-demo] running restore drill\n'
+printf '[pgdrill-demo/%s] running restore drill\n' "${provider}"
+# shellcheck disable=SC2029
 ssh "${ssh_common[@]}" "${runner}" \
-  'sudo -u postgres /usr/local/sbin/pgdrill-demo-run'
+  "sudo -u postgres '${runner_run}'"
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-local_report="${report_dir}/${stamp}.report.json"
-local_source_state="${report_dir}/${stamp}.source-state.json"
-local_runner_inventory="${report_dir}/${stamp}.runner-inventory.json"
-local_terraform_inventory="${report_dir}/${stamp}.terraform-inventory.json"
+local_report="${report_dir}/${stamp}${local_suffix}.report.json"
+local_source_state="${report_dir}/${stamp}${local_suffix}.source-state.json"
+local_runner_inventory="${report_dir}/${stamp}${local_suffix}.runner-inventory.json"
+local_terraform_inventory="${report_dir}/${stamp}${local_suffix}.terraform-inventory.json"
+# Paths are selected only from the closed provider mapping above.
+# shellcheck disable=SC2029
 scp "${ssh_common[@]}" \
-  "${runner}:/var/lib/pgdrill-demo/reports/current.json" \
+  "${runner}:${remote_report}" \
   "${local_report}"
+# shellcheck disable=SC2029
 scp "${ssh_common[@]}" "${jump[@]}" \
-  "${source}:/var/lib/pgdrill-demo/source-state.json" \
+  "${source}:${remote_source_state}" \
   "${local_source_state}"
 scp "${ssh_common[@]}" \
   "${runner}:/var/lib/pgdrill-demo/runner-inventory.json" \
@@ -134,21 +177,31 @@ terraform -chdir="${terraform_dir}" output -json demo_inventory \
 
 backup_name="$(jq -er '.backup_name' "${local_source_state}")"
 jq -e \
-  --arg backup_name "${backup_name}" '
+  --arg backup_name "${backup_name}" \
+  --arg provider "${provider}" '
   .schema_version == "pgdrill.report/v2" and
   .status == "passed" and
-  .backup.provider == "wal-g" and
+  .backup.provider == $provider and
   .backup.provider_id == $backup_name and
   ([.checks[] | select(.name == "post_backup_wal_replayed" and .status == "passed")] | length) == 1 and
   ([.policy_evaluation.verdicts[] | select(.required == true and .status != "passed")] | length) == 0
 ' "${local_report}" >/dev/null
-jq -e '
+jq -e --arg provider "${provider}" '
   .schema_version == "pgdrill.demo-source-state/v1alpha1" and
-  .provider == "wal-g" and
+  .provider == $provider and
   .base_backup_row_count == 100 and
   .expected_recovered_row_count == 101 and
   .post_backup_wal_sentinel == "post-backup-wal-sentinel"
 ' "${local_source_state}" >/dev/null
+for check in "${required_provider_checks[@]}"; do
+  jq -e --arg check "${check}" \
+    '([.checks[] | select(.name == $check and .status == "passed")] | length) == 1' \
+    "${local_report}" >/dev/null ||
+    {
+      printf 'required provider check did not pass: %s\n' "${check}" >&2
+      exit 1
+    }
+done
 jq -e '
   .schema_version == "pgdrill.demo-runner-inventory/v1alpha1" and
   .repository_mode == "read_only" and
@@ -157,6 +210,10 @@ jq -e '
   .pgdg_key_fingerprint == "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8" and
   (.pgdrill_archive_sha256 | test("^[0-9a-f]{64}$"))
 ' "${local_runner_inventory}" >/dev/null
+if [[ "${provider}" == "pgbackrest" ]]; then
+  jq -e '.pgbackrest_version == "pgBackRest 2.58.0"' \
+    "${local_runner_inventory}" >/dev/null
+fi
 jq -e '
   .runner_public_ip != "" and
   .runner_private_ip != "" and
@@ -165,7 +222,7 @@ jq -e '
   (.preemptible | type) == "boolean"
 ' "${local_terraform_inventory}" >/dev/null
 
-printf '[pgdrill-demo] terminal report and policy gates passed\n'
+printf '[pgdrill-demo/%s] terminal report and policy gates passed\n' "${provider}"
 printf 'report:              %s\n' "${local_report}"
 printf 'source state:         %s\n' "${local_source_state}"
 printf 'runner inventory:     %s\n' "${local_runner_inventory}"

@@ -11,4 +11,17 @@ set -Eeuo pipefail
   exit 1
 }
 
-exec /usr/local/bin/pgdrill doctor -f /etc/pgdrill/demo.yaml
+case "$(basename -- "$0")" in
+  pgdrill-demo-doctor | doctor.sh)
+    readonly CONFIG="/etc/pgdrill/demo.yaml"
+    ;;
+  pgdrill-demo-pgbackrest-doctor)
+    readonly CONFIG="/etc/pgdrill/pgbackrest.yaml"
+    ;;
+  *)
+    printf 'unsupported demo doctor wrapper: %s\n' "$0" >&2
+    exit 1
+    ;;
+esac
+
+exec /usr/local/bin/pgdrill doctor -f "${CONFIG}"

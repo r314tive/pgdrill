@@ -11,7 +11,19 @@ set -Eeuo pipefail
   exit 1
 }
 
-readonly REPORT="/var/lib/pgdrill-demo/reports/current.json"
+case "$(basename -- "$0")" in
+  pgdrill-demo-report | report.sh)
+    readonly REPORT="/var/lib/pgdrill-demo/reports/current.json"
+    ;;
+  pgdrill-demo-pgbackrest-report)
+    readonly REPORT="/var/lib/pgdrill-demo/reports/pgbackrest-current.json"
+    ;;
+  *)
+    printf 'unsupported demo report wrapper: %s\n' "$0" >&2
+    exit 1
+    ;;
+esac
+
 [[ -f "${REPORT}" ]] || {
   printf 'no current demo report exists\n' >&2
   exit 1

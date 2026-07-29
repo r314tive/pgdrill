@@ -78,6 +78,7 @@ func TestNewProbesExpandsPresetBeforeConstruction(t *testing.T) {
 
 func TestCommittedDrillConfigsResolveProbes(t *testing.T) {
 	paths := []string{
+		"../../demo/yandex-cloud/config/pgbackrest.yaml",
 		"../../demo/yandex-cloud/config/pgdrill.yaml",
 		"../../test/integration/barman/pgdrill.yaml",
 		"../../test/integration/pgbackrest/pgdrill.yaml",
