@@ -1,11 +1,12 @@
-# Local Published-Artifact Rehearsal
+# Local Release-Artifact Rehearsal
 
 This rehearsal runs the real WAL-G/PostgreSQL integration scenario with an
-already-published pgdrill Linux archive. It is the fastest end-to-end fallback
-for presenter practice and release verification when the hosted Yandex Cloud
-environment is not yet available.
+exact pgdrill Linux release archive from a clean commit. The archive may be a
+local release candidate or a published release. This is the fastest
+end-to-end fallback for presenter practice and release verification when the
+hosted Yandex Cloud environment is not yet available.
 
-It proves the published binary can:
+It proves the exact binary can:
 
 - discover and validate a real WAL-G backup;
 - restore a separate PostgreSQL target;
@@ -26,15 +27,35 @@ administrator access controls, or customer compatibility.
 - `curl`, `git`, `tar`, and either `sha256sum` or `shasum`.
 - The release archive matching the Docker daemon architecture.
 
-Go is not required when the published archive is supplied. WAL-G and the
+Go is not required when a prebuilt archive is supplied. WAL-G and the
 immutable PostgreSQL image are downloaded only when their pinned local caches
 are absent; the restore drill itself runs in a network-isolated container.
 
 ## Run
 
-Download the release archive for the architecture used by the local Docker
-daemon and obtain its SHA-256 digest from the matching release checksum file.
-For example, with an authenticated GitHub CLI and an arm64 Docker daemon:
+Supply the archive for the architecture used by the local Docker daemon, its
+SHA-256 digest, and the full commit embedded in that archive. For a local
+candidate, build from a clean checkout with the pinned Go toolchain:
+
+```sh
+VERSION=v0.3.0-dev
+COMMIT="$(git rev-parse HEAD)"
+make -s release-check VERSION="$VERSION" RELEASE_COMMIT="$COMMIT"
+ARCH="$(go env GOARCH)"
+ARCHIVE="$PWD/dist/pgdrill_${VERSION#v}_linux_${ARCH}.tar.gz"
+ARCHIVE_SHA256="$(
+  awk -v archive="${ARCHIVE##*/}" '$2 == archive { print $1 }' \
+    "$PWD/dist/pgdrill_${VERSION#v}_checksums.txt"
+)"
+make -s demo-rehearsal \
+  VERSION="$VERSION" \
+  DEMO_RELEASE_COMMIT="$COMMIT" \
+  DEMO_RELEASE_ARCHIVE="$ARCHIVE" \
+  DEMO_RELEASE_SHA256="$ARCHIVE_SHA256"
+```
+
+For a published release, download the archive and checksum file first. For
+example, with an authenticated GitHub CLI and an arm64 Docker daemon:
 
 ```sh
 VERSION=v0.2.0-rc.2
@@ -68,4 +89,5 @@ paths.
 The current published prerelease is
 [`v0.2.0-rc.2`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.2).
 Always take the digest from that release instead of copying the example when
-rehearsing another version.
+rehearsing another published version. A local candidate rehearsal is not
+publication evidence and must be described as local Docker evidence.

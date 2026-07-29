@@ -159,6 +159,9 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- The local demo rehearsal now accepts either a clean local release candidate
+  or a published archive and labels the result as local Docker evidence without
+  implying publication.
 - Native provider adapters now share exact evidence, alias, duration, and map
   helpers; native and managed engines share result, preflight, attempt, and
   policy lifecycle scaffolding. Provider-specific parsing semantics and

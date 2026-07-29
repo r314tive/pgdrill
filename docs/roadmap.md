@@ -291,7 +291,7 @@ explicit `-history-dir`.
 
 ## Demo And Pilot Readiness
 
-Status: repository baseline and local published-artifact rehearsal implemented;
+Status: repository baseline and local release-artifact rehearsal implemented;
 the first live Yandex Cloud rehearsal is pending and no cloud compatibility
 claim is recorded yet.
 

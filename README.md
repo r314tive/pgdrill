@@ -344,7 +344,7 @@ with the CronJob/RBAC surface in
 A local pg_probackup drill example is available in
 [examples/pgprobackup.yaml](examples/pgprobackup.yaml).
 The evidence-led technical demo contract is documented in
-[demo/README.md](demo/README.md), with a published-artifact local rehearsal
+[demo/README.md](demo/README.md), with an exact-release-artifact local rehearsal
 under [demo/local](demo/local/README.md) and a reproducible, access-scoped
 Yandex Cloud WAL-G baseline under
 [demo/yandex-cloud](demo/yandex-cloud/README.md).

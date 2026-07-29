@@ -4,7 +4,7 @@ This directory defines a disposable three-VM demo of the WAL-G local restore
 path. It is intended for a controlled technical session with synthetic data.
 It is not a production deployment template.
 
-Validation status: repository checks and the local published-artifact rehearsal
+Validation status: repository checks and the local release-artifact rehearsal
 pass. The Terraform plan and scripts have not yet been applied to a live Yandex
 Cloud folder. A successful live rehearsal and retained report are required
 before using this environment in a customer session.
@@ -135,7 +135,7 @@ validates its Terraform schema. It needs registry network access on a fresh
 checkout but neither cloud credentials nor a state backend.
 
 Before provisioning the hosted topology, pass the
-[local published-artifact rehearsal](../local/README.md) on the architecture
+[local release-artifact rehearsal](../local/README.md) on the architecture
 used by the local Docker daemon. It proves the selected release archive can
 complete the recovery claim, but it does not replace any cloud gate below.
 

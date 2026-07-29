@@ -36,12 +36,12 @@ keeps the engine and the demo infrastructure separate: the engine remains an
 ordinary CLI artifact, while Terraform and shell scripts only provision and
 adapt the disposable environment.
 
-The [local published-artifact rehearsal](local/README.md) runs the same core
+The [local release-artifact rehearsal](local/README.md) runs the same core
 recovery claim through the network-isolated WAL-G integration environment. It
 proves both latest recovery and a timestamp boundary between two archived
 transactions. Use it for presenter practice and as a fallback proof of the
-published binary, but label it as local Docker evidence rather than hosted or
-customer compatibility.
+exact candidate or release binary, but label it as local Docker evidence
+rather than publication, hosted, or customer compatibility.
 
 A useful 25-minute session is:
 

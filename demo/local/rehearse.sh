@@ -23,8 +23,9 @@ Usage:
     --commit FULL_GIT_OBJECT_ID \
     --version VERSION
 
-Runs the real local WAL-G restore drill with an already-published Linux
-release archive, then verifies the retained report and artifact checksums.
+Runs the real local WAL-G restore drill with an exact Linux release archive,
+then verifies the retained report and artifact checksums. The archive may be a
+clean local release candidate or a published release.
 EOF
 }
 
@@ -107,7 +108,7 @@ docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
 archive_dir="$(cd -- "$(dirname -- "${archive}")" && pwd -P)"
 archive="${archive_dir}/$(basename -- "${archive}")"
 
-printf '[demo/local] running published-artifact WAL-G rehearsal\n'
+printf '[demo/local] running exact-release-artifact WAL-G rehearsal\n'
 env \
   PGDRILL_INTEGRATION_COMMIT="${commit}" \
   PGDRILL_INTEGRATION_RELEASE_ARCHIVE="${archive}" \
