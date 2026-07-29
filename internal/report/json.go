@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -21,6 +22,9 @@ type JSONFileSink struct {
 func (s JSONFileSink) Write(ctx context.Context, result model.DrillResult) error {
 	if s.Path == "" {
 		return fmt.Errorf("report path is required")
+	}
+	if ctx == nil {
+		return fmt.Errorf("report context is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -68,19 +72,10 @@ func (s JSONFileSink) Write(ctx context.Context, result model.DrillResult) error
 		return fmt.Errorf("replace report file %s: %w", s.Path, err)
 	}
 	keepTemp = true
-	if err := syncDirectory(dir); err != nil {
+	if err := durablefs.SyncDirectory(dir); err != nil {
 		return fmt.Errorf("sync report directory %s: %w", dir, err)
 	}
 	return nil
-}
-
-func syncDirectory(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
 }
 
 func ReadJSONFile(path string) (model.DrillResult, error) {

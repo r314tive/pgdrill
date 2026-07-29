@@ -100,6 +100,13 @@ func TestWritePrometheus(t *testing.T) {
 	}
 }
 
+func TestWritePrometheusRequiresOutput(t *testing.T) {
+	err := WritePrometheus(nil, model.DrillResult{})
+	if err == nil || err.Error() != "Prometheus output is required" {
+		t.Fatalf("WritePrometheus() error = %v", err)
+	}
+}
+
 func TestWritePrometheusExportsFailureStage(t *testing.T) {
 	var buf bytes.Buffer
 	result := model.DrillResult{

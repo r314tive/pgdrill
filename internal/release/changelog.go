@@ -10,6 +10,9 @@ import (
 )
 
 func ExtractChangelog(reader io.Reader, version string) (string, error) {
+	if reader == nil {
+		return "", fmt.Errorf("changelog input is required")
+	}
 	if err := ValidateVersion(version); err != nil {
 		return "", err
 	}

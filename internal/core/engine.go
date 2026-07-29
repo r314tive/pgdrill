@@ -56,28 +56,19 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		reportedProvider = ""
 	}
 	targetType := e.Target.Type()
-	clock := e.clock()
+	clock := clockOrNow(e.Clock)
 	startedAt := clock().UTC()
 	specDocument := req.Spec.Document()
 	recoveryTarget := specDocument.RecoveryTarget
-	var persistedSpec *model.DrillSpec
-	if req.Spec.Digest() != "" {
-		copy := specDocument
-		persistedSpec = &copy
-	}
-	result := model.DrillResult{
-		SchemaVersion:  model.CurrentReportSchemaVersion,
-		PGDrillVersion: e.PGDrillVersion,
-		ID:             drillID(req.ID, startedAt),
-		SpecDigest:     req.Spec.Digest(),
-		Spec:           persistedSpec,
-		Cluster:        specDocument.Cluster,
-		Provider:       reportedProvider,
-		Target:         specDocument.Target.Spec,
-		RecoveryTarget: recoveryTarget,
-		StartedAt:      startedAt,
-		Status:         model.DrillStatusUnknown,
-	}
+	result := initialDrillResult(
+		e.PGDrillVersion,
+		req.ID,
+		req.Spec.Digest(),
+		specDocument,
+		reportedProvider,
+		model.Backup{},
+		startedAt,
+	)
 
 	lifecycle, err := newRunLifecycle(
 		&result,
@@ -99,11 +90,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return lifecycle.Finish(ctx, status, err)
 	}
 
-	specValidationErr := error(nil)
-	specValidated := true
 	var recoveryProvenAt time.Time
 	fail := func(stage model.DrillStage, runErr error) (model.DrillResult, error) {
-		if specValidated && result.PolicyEvaluation == nil {
+		if result.PolicyEvaluation == nil {
 			policyErr := recordRecoveryPolicyEvaluation(&result, specDocument.Policy, recoveryTarget, recoveryProvenAt, clock)
 			if policyErr != nil {
 				runErr = errors.Join(runErr, fmt.Errorf("evaluate recovery policy: %w", policyErr))
@@ -116,15 +105,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		}
 		return lifecycle.Finish(ctx, status, runErr)
 	}
-	attempt := model.AttemptContext{
-		Identity: model.AttemptIdentity{
-			RunID:      result.ID,
-			AttemptID:  result.AttemptID,
-			SpecDigest: result.SpecDigest,
-		},
-		Target:         specDocument.Target.Spec,
-		RecoveryTarget: recoveryTarget,
-	}
+	attempt := attemptContext(result, specDocument)
 	var operations *operationExecutor
 	var recoveryVerifier RecoveryTargetVerifier
 
@@ -134,9 +115,6 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		}
 		if !providerType.IsKnown() {
 			return fmt.Errorf("backup provider type %q is unsupported", providerType)
-		}
-		if specValidationErr != nil {
-			return fmt.Errorf("validate drill spec: %w", specValidationErr)
 		}
 		if specDocument.Mode != model.DrillModeNative {
 			return fmt.Errorf("native engine requires drill mode %q, got %q", model.DrillModeNative, specDocument.Mode)
@@ -183,36 +161,8 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return fail(model.DrillStageRequestValidation, err)
 	}
 
-	if e.Preflight != nil {
-		err = lifecycle.RunStage(ctx, model.DrillStagePreflight, func() error {
-			preflightReport, preflightErr := e.Preflight.Check(ctx)
-			artifactErr := appendCheckReportOutput(&result, preflightReport)
-			if preflightErr != nil {
-				preflightErr = errors.Join(preflightErr, artifactErr)
-				if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
-					preflightErr = errors.Join(preflightErr, appendChecks(&result.Checks, preflightReport.Checks))
-				} else {
-					preflightErr = errors.Join(preflightErr, fmt.Errorf("invalid partial preflight report: %w", reportErr))
-				}
-				return fmt.Errorf("run preflight: %w", preflightErr)
-			}
-			if artifactErr != nil {
-				return fmt.Errorf("collect preflight artifacts: %w", artifactErr)
-			}
-			if err := validateCheckReport(preflightReport, true); err != nil {
-				return fmt.Errorf("validate preflight report: %w", err)
-			}
-			if err := appendChecks(&result.Checks, preflightReport.Checks); err != nil {
-				return fmt.Errorf("collect preflight checks: %w", err)
-			}
-			if hasFailedChecks(preflightReport.Checks) {
-				return fmt.Errorf("preflight failed")
-			}
-			return nil
-		})
-		if err != nil {
-			return fail(model.DrillStagePreflight, err)
-		}
+	if err := runPreflight(ctx, lifecycle, e.Preflight, &result, "preflight"); err != nil {
+		return fail(model.DrillStagePreflight, err)
 	}
 
 	var catalog model.BackupCatalog
@@ -471,23 +421,19 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if err := cleanup(); err != nil {
 		return fail(model.DrillStageTargetCleanup, err)
 	}
-	err = lifecycle.RunStage(ctx, model.DrillStagePolicyEvaluation, func() error {
-		if err := recordRecoveryPolicyEvaluation(&result, specDocument.Policy, recoveryTarget, recoveryProvenAt, clock); err != nil {
-			return fmt.Errorf("evaluate recovery policy: %w", err)
-		}
-		return enforceRecoveryPolicy(&result)
-	})
+	err = runPolicyEvaluation(
+		ctx,
+		lifecycle,
+		&result,
+		specDocument.Policy,
+		recoveryTarget,
+		recoveryProvenAt,
+		clock,
+	)
 	if err != nil {
 		return fail(model.DrillStagePolicyEvaluation, err)
 	}
 	return lifecycle.Finish(ctx, model.DrillStatusPassed, nil)
-}
-
-func (e Engine) clock() func() time.Time {
-	if e.Clock != nil {
-		return e.Clock
-	}
-	return func() time.Time { return time.Now().UTC() }
 }
 
 func drillID(id string, startedAt time.Time) string {

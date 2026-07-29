@@ -260,6 +260,7 @@ func Build(fleet Fleet) (Plan, error) {
 		Runs:          []PlannedRun{},
 	}
 	assignments := map[string]int{}
+	fleetExpansion := 0
 	for _, set := range fleet.DrillSets {
 		pool := pools[set.TargetPool]
 		profile := profiles[set.ProbeProfile]
@@ -274,8 +275,16 @@ func Build(fleet Fleet) (Plan, error) {
 			continue
 		}
 
-		setRuns := 0
+		setExpansion := 0
 		for _, source := range selectedSources {
+			if setExpansion >= set.MaxRuns {
+				return Plan{}, fmt.Errorf("drill set %q expansion exceeds max_runs %d", set.ID, set.MaxRuns)
+			}
+			if fleetExpansion >= fleet.MaxRuns {
+				return Plan{}, fmt.Errorf("fleet expansion exceeds max_runs %d", fleet.MaxRuns)
+			}
+			setExpansion++
+			fleetExpansion++
 			if !slices.Contains(policy.Modes, source.Mode) {
 				plan.Rejections = append(plan.Rejections, Rejection{
 					DrillSetID: set.ID,
@@ -295,14 +304,6 @@ func Build(fleet Fleet) (Plan, error) {
 				})
 				continue
 			}
-			setRuns++
-			if setRuns > set.MaxRuns {
-				return Plan{}, fmt.Errorf("drill set %q expansion exceeds max_runs %d", set.ID, set.MaxRuns)
-			}
-			if len(plan.Runs)+1 > fleet.MaxRuns {
-				return Plan{}, fmt.Errorf("fleet expansion exceeds max_runs %d", fleet.MaxRuns)
-			}
-
 			run, err := compileRun(inputDigest, set, source, pool, target, profile, policy)
 			if err != nil {
 				return Plan{}, fmt.Errorf("compile drill set %q source %q: %w", set.ID, source.ID, err)
@@ -354,6 +355,9 @@ func (p Plan) Validate() error {
 	}
 	if len(p.Runs) > p.MaxRuns {
 		return fmt.Errorf("runs exceed max_runs %d", p.MaxRuns)
+	}
+	if len(p.Rejections) > p.MaxRuns-len(p.Runs) {
+		return fmt.Errorf("complete expansion exceeds max_runs %d", p.MaxRuns)
 	}
 	if p.MutationCount != len(p.Runs) {
 		return fmt.Errorf("mutation_count %d does not match run count %d", p.MutationCount, len(p.Runs))

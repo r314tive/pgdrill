@@ -436,7 +436,7 @@ func buildGCPlan(
 func newGCBlob(blob blobState) (GCBlob, error) {
 	classes := make([]model.ArtifactRetentionClass, 0)
 	for _, claim := range blob.Claims {
-		classes = appendUniqueSortedRetention(classes, claim.RetentionClass)
+		classes = appendUniqueSorted(classes, claim.RetentionClass)
 	}
 	item := GCBlob{
 		ID:               blob.ID,

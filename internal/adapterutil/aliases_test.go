@@ -34,6 +34,40 @@ func TestOptionalStringAliasAcceptsEquivalentTrimmedValues(t *testing.T) {
 	}
 }
 
+func TestRequiredStringAliases(t *testing.T) {
+	raw, err := RequiredStringAlias(
+		map[string]any{"backup_id": " value "},
+		"backup id",
+		"backup_id",
+	)
+	if err != nil || raw != " value " {
+		t.Fatalf("RequiredStringAlias() = %q, %v", raw, err)
+	}
+
+	trimmed, err := RequiredTrimmedStringAlias(
+		map[string]any{"backup_id": " value "},
+		"backup id",
+		"backup_id",
+	)
+	if err != nil || trimmed != "value" {
+		t.Fatalf("RequiredTrimmedStringAlias() = %q, %v", trimmed, err)
+	}
+}
+
+func TestRequiredStringAliasRejectsMissingOrBlankValues(t *testing.T) {
+	for name, object := range map[string]map[string]any{
+		"missing": {},
+		"blank":   {"backup_id": " \t "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := RequiredStringAlias(object, "backup id", "backup_id")
+			if err == nil || err.Error() != "missing backup id" {
+				t.Fatalf("RequiredStringAlias() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestOptionalBoolAliasRejectsConflictingValues(t *testing.T) {
 	_, _, err := OptionalBoolAlias(
 		map[string]any{"is_permanent": true, "permanent": false},

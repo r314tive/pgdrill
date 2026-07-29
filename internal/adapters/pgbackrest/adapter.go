@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"math"
 	"path/filepath"
 	"strconv"
@@ -84,7 +83,7 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 	catalog := model.BackupCatalog{
 		Provider: model.ProviderPGBackRest,
 		Evidence: []model.EvidenceRecord{
-			commandEvidence("info", result.Evidence),
+			adapterutil.CommandEvidence(model.ProviderPGBackRest, "info", result.Evidence),
 		},
 	}
 	if err != nil {
@@ -187,9 +186,9 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 			Tool:       model.ToolPGBackRest,
 			Path:       a.binary(),
 			Args:       restoreArgs,
-			Env:        copyStringMap(a.cfg.Env),
+			Env:        adapterutil.CloneStringMap(a.cfg.Env),
 			WorkDir:    a.cfg.WorkDir,
-			Timeout:    durationString(a.restoreTimeout()),
+			Timeout:    adapterutil.DurationString(a.restoreTimeout()),
 			Redactions: append([]string{}, a.cfg.RedactValues...),
 		},
 		Inputs: map[string]string{
@@ -217,10 +216,10 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 		RecoveryTarget: target,
 		Runtime: model.RuntimeConfig{
 			DataDirectory: dataDir,
-			Environment:   copyStringMap(a.cfg.Env),
+			Environment:   adapterutil.CloneStringMap(a.cfg.Env),
 		},
 		Steps:    steps,
-		Evidence: []model.EvidenceRecord{planEvidence("restore-plan")},
+		Evidence: []model.EvidenceRecord{adapterutil.PlanEvidence(model.ProviderPGBackRest, "restore-plan")},
 	}, nil
 }
 
@@ -309,7 +308,7 @@ func (a *Adapter) runValidationCommandWith(ctx context.Context, name string, ope
 		Timeout:      timeout,
 		RedactValues: redactions,
 	})
-	evidence := commandEvidence(operation, result.Evidence)
+	evidence := adapterutil.CommandEvidence(model.ProviderPGBackRest, operation, result.Evidence)
 	check := model.Check{
 		Name:        name,
 		Status:      model.CheckStatusPassed,
@@ -449,13 +448,6 @@ func (a *Adapter) backupLabel(backup model.Backup) (label string, stanza string,
 	return label, stanza, nil
 }
 
-func durationString(value time.Duration) string {
-	if value == 0 {
-		return ""
-	}
-	return value.String()
-}
-
 func durationSeconds(duration time.Duration) string {
 	seconds := int64(duration / time.Second)
 	if seconds <= 0 {
@@ -481,7 +473,7 @@ func ParseInfo(data []byte, defaultStanza string) ([]model.Backup, error) {
 
 	backups := []model.Backup{}
 	for i, stanza := range stanzas {
-		stanzaNameValue, _, err := optionalStringField(stanza, "stanza name", "name", "stanza")
+		stanzaNameValue, _, err := adapterutil.OptionalStringAlias(stanza, "stanza name", "name", "stanza")
 		if err != nil {
 			return nil, fmt.Errorf("parse pgbackrest stanza %d: %w", i, err)
 		}
@@ -562,19 +554,19 @@ func mapBackup(
 	dbVersions map[string]string,
 	dbSystemIDs map[string]string,
 ) (model.Backup, error) {
-	label, err := requiredStringField(object, "backup label", "label", "set")
+	label, err := adapterutil.RequiredStringAlias(object, "backup label", "label", "set")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	prior, _, err := optionalStringField(object, "prior backup label", "prior")
+	prior, _, err := adapterutil.OptionalStringAlias(object, "prior backup label", "prior")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	backupType, _, err := optionalStringField(object, "backup type", "type")
+	backupType, _, err := adapterutil.OptionalStringAlias(object, "backup type", "type")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	failed, errorPresent, err := optionalBoolField(object, "backup error", "error")
+	failed, errorPresent, err := adapterutil.OptionalBoolAlias(object, "backup error", "error")
 	if err != nil {
 		return model.Backup{}, err
 	}
@@ -625,7 +617,7 @@ func mapBackup(
 		},
 		PostgreSQLVersion: databaseValue(dbVersions, dbID),
 		Permanent:         false,
-		Metadata:          metadataOrNil(withSystemID(metadata, databaseValue(dbSystemIDs, dbID))),
+		Metadata:          adapterutil.StringMapOrNil(withSystemID(metadata, databaseValue(dbSystemIDs, dbID))),
 	}, nil
 }
 
@@ -665,7 +657,7 @@ func statusMessage(value any) (string, bool, error) {
 	if !ok {
 		return "", false, fmt.Errorf("stanza status must be an object")
 	}
-	message, found, err := optionalStringField(object, "stanza status message", "message")
+	message, found, err := adapterutil.OptionalStringAlias(object, "stanza status message", "message")
 	if err != nil {
 		return "", false, err
 	}
@@ -699,37 +691,6 @@ func mapBackupKind(kind string) model.BackupKind {
 		return model.BackupKindIncremental
 	default:
 		return model.BackupKindUnknown
-	}
-}
-
-func commandEvidence(operation string, evidence model.CommandEvidence) model.EvidenceRecord {
-	collectedAt := evidence.FinishedAt
-	if collectedAt.IsZero() {
-		collectedAt = time.Now().UTC()
-	}
-
-	return model.EvidenceRecord{
-		ID:          string(model.ProviderPGBackRest) + ":" + operation + ":" + collectedAt.Format(time.RFC3339Nano),
-		Kind:        model.EvidenceCommand,
-		Source:      string(model.ProviderPGBackRest),
-		CollectedAt: collectedAt,
-		Command:     &evidence,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
-	}
-}
-
-func planEvidence(operation string) model.EvidenceRecord {
-	now := time.Now().UTC()
-	return model.EvidenceRecord{
-		ID:          string(model.ProviderPGBackRest) + ":" + operation + ":" + now.Format(time.RFC3339Nano),
-		Kind:        model.EvidencePlan,
-		Source:      string(model.ProviderPGBackRest),
-		CollectedAt: now,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
 	}
 }
 
@@ -769,37 +730,6 @@ func getString(object map[string]any, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func requiredStringField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (string, error) {
-	value, found, err := optionalStringField(object, name, keys...)
-	if err != nil {
-		return "", err
-	}
-	if !found || strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("missing %s", name)
-	}
-	return value, nil
-}
-
-func optionalStringField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (string, bool, error) {
-	return adapterutil.OptionalStringAlias(object, name, keys...)
-}
-
-func optionalBoolField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (bool, bool, error) {
-	return adapterutil.OptionalBoolAlias(object, name, keys...)
 }
 
 func numberString(value any) string {
@@ -891,18 +821,4 @@ func databaseValue(values map[string]string, databaseID string) string {
 		return value
 	}
 	return ""
-}
-
-func metadataOrNil(metadata map[string]string) map[string]string {
-	if len(metadata) == 0 {
-		return nil
-	}
-	return metadata
-}
-
-func copyStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	return maps.Clone(values)
 }

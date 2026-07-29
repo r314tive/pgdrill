@@ -3,6 +3,7 @@ package planner
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -110,15 +111,75 @@ func TestBuildRecordsCapacityRejectionWithoutPartialIdentityDrift(t *testing.T) 
 	}
 }
 
-func TestBuildRejectsExpansionBeyondBound(t *testing.T) {
+func TestBuildUsesEveryTargetCapacitySlot(t *testing.T) {
 	t.Parallel()
 
 	fleet := fixtureFleet(t)
-	fleet.MaxRuns = 1
+	fleet.TargetPools[0].Targets = fleet.TargetPools[0].Targets[:1]
+	fleet.TargetPools[0].Targets[0].Capacity = 2
+
+	plan, err := Build(fleet)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(plan.Runs) != 2 || plan.MutationCount != 2 || len(plan.Rejections) != 0 {
+		t.Fatalf(
+			"plan counts = mutations %d, runs %d, rejections %d; want 2, 2, 0",
+			plan.MutationCount,
+			len(plan.Runs),
+			len(plan.Rejections),
+		)
+	}
+	for index, run := range plan.Runs {
+		if run.TargetRef.ID != "demo-local/restore-a" {
+			t.Fatalf("run %d target = %q", index, run.TargetRef.ID)
+		}
+	}
+}
+
+func TestBuildRejectsDrillSetExpansionBeyondBound(t *testing.T) {
+	t.Parallel()
+
+	fleet := fixtureFleet(t)
 	fleet.DrillSets[0].MaxRuns = 1
 	_, err := Build(fleet)
-	if err == nil || !strings.Contains(err.Error(), "expansion exceeds max_runs 1") {
-		t.Fatalf("Build() error = %v, want expansion bound", err)
+	if err == nil || !strings.Contains(err.Error(), `drill set "critical-daily" expansion exceeds max_runs 1`) {
+		t.Fatalf("Build() error = %v, want drill-set expansion bound", err)
+	}
+}
+
+func TestBuildRejectsFleetExpansionBeyondBound(t *testing.T) {
+	t.Parallel()
+
+	fleet := twoSingleSourceDrillSets(t)
+	_, err := Build(fleet)
+	if err == nil || !strings.Contains(err.Error(), "fleet expansion exceeds max_runs 1") {
+		t.Fatalf("Build() error = %v, want fleet expansion bound", err)
+	}
+}
+
+func TestBuildCountsRejectedSourcesTowardDrillSetExpansionBound(t *testing.T) {
+	t.Parallel()
+
+	fleet := fixtureFleet(t)
+	fleet.DrillSets[0].MaxRuns = 1
+	fleet.RecoveryPolicies[0].Modes = []model.DrillMode{model.DrillModeManaged}
+
+	_, err := Build(fleet)
+	if err == nil || !strings.Contains(err.Error(), `drill set "critical-daily" expansion exceeds max_runs 1`) {
+		t.Fatalf("Build() error = %v, want rejected-source drill-set expansion bound", err)
+	}
+}
+
+func TestBuildCountsRejectedSourcesTowardFleetExpansionBound(t *testing.T) {
+	t.Parallel()
+
+	fleet := twoSingleSourceDrillSets(t)
+	fleet.RecoveryPolicies[0].Modes = []model.DrillMode{model.DrillModeManaged}
+
+	_, err := Build(fleet)
+	if err == nil || !strings.Contains(err.Error(), "fleet expansion exceeds max_runs 1") {
+		t.Fatalf("Build() error = %v, want rejected-source fleet expansion bound", err)
 	}
 }
 
@@ -274,6 +335,28 @@ func TestPlanValidateRejectsTampering(t *testing.T) {
 			t.Fatalf("Validate() error = %v, want deterministic run identity mismatch", err)
 		}
 	})
+
+	t.Run("complete expansion", func(t *testing.T) {
+		plan, err := Build(fixtureFleet(t))
+		if err != nil {
+			t.Fatalf("Build() error = %v", err)
+		}
+		for index := len(plan.Runs); index <= plan.MaxRuns; index++ {
+			plan.Rejections = append(plan.Rejections, Rejection{
+				DrillSetID: "critical-daily",
+				SourceID:   fmt.Sprintf("source-%d", index),
+				Code:       "no_compatible_target",
+				Message:    "no compatible target",
+			})
+		}
+		plan.Digest, err = planDigest(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := plan.Validate(); err == nil || !strings.Contains(err.Error(), "complete expansion exceeds") {
+			t.Fatalf("Validate() error = %v, want complete expansion bound", err)
+		}
+	})
 }
 
 func TestFleetJSONRoundTripIsStrictAndSecretFree(t *testing.T) {
@@ -302,6 +385,20 @@ func fixtureFleet(t *testing.T) Fleet {
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
+	return fleet
+}
+
+func twoSingleSourceDrillSets(t *testing.T) Fleet {
+	t.Helper()
+	fleet := fixtureFleet(t)
+	fleet.MaxRuns = 1
+	first := fleet.DrillSets[0]
+	first.MaxRuns = 1
+	first.SourceSelector = Selector{IDs: []string{fleet.Sources[0].ID}}
+	second := first
+	second.ID = "secondary-daily"
+	second.SourceSelector = Selector{IDs: []string{fleet.Sources[1].ID}}
+	fleet.DrillSets = []DrillSet{first, second}
 	return fleet
 }
 

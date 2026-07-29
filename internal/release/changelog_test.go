@@ -38,6 +38,13 @@ func TestExtractChangelog(t *testing.T) {
 	}
 }
 
+func TestExtractChangelogRequiresInput(t *testing.T) {
+	_, err := ExtractChangelog(nil, "v0.1.0")
+	if err == nil || err.Error() != "changelog input is required" {
+		t.Fatalf("ExtractChangelog() error = %v", err)
+	}
+}
+
 func TestExtractChangelogRejectsMissingOrEmptyEntry(t *testing.T) {
 	for name, changelog := range map[string]string{
 		"missing": "## [0.1.0-alpha.5]\n\n- Old.\n",

@@ -83,7 +83,7 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 	catalog := model.BackupCatalog{
 		Provider: model.ProviderBarman,
 		Evidence: []model.EvidenceRecord{
-			commandEvidence(model.ProviderBarman, "list-backups", result.Evidence),
+			adapterutil.CommandEvidence(model.ProviderBarman, "list-backups", result.Evidence),
 		},
 	}
 	if err != nil {
@@ -227,9 +227,9 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 			Tool:       model.ToolBarman,
 			Path:       a.binary(),
 			Args:       restoreArgs,
-			Env:        copyStringMap(a.cfg.Env),
+			Env:        adapterutil.CloneStringMap(a.cfg.Env),
 			WorkDir:    a.cfg.WorkDir,
-			Timeout:    durationString(a.restoreTimeout()),
+			Timeout:    adapterutil.DurationString(a.restoreTimeout()),
 			Redactions: append([]string{}, a.cfg.RedactValues...),
 		},
 		Inputs: map[string]string{
@@ -256,10 +256,10 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 		RecoveryTarget: target,
 		Runtime: model.RuntimeConfig{
 			DataDirectory: dataDir,
-			Environment:   copyStringMap(a.cfg.Env),
+			Environment:   adapterutil.CloneStringMap(a.cfg.Env),
 		},
 		Steps:    steps,
-		Evidence: []model.EvidenceRecord{planEvidence("restore-plan")},
+		Evidence: []model.EvidenceRecord{adapterutil.PlanEvidence(model.ProviderBarman, "restore-plan")},
 	}, nil
 }
 
@@ -350,7 +350,7 @@ func (a *Adapter) runValidationCommandWith(ctx context.Context, name string, arg
 		Timeout:      timeout,
 		RedactValues: redactions,
 	})
-	evidence := commandEvidence(model.ProviderBarman, name, result.Evidence)
+	evidence := adapterutil.CommandEvidence(model.ProviderBarman, name, result.Evidence)
 	check := model.Check{
 		Name:        name,
 		Status:      model.CheckStatusPassed,
@@ -453,19 +453,19 @@ func showBackupAttributes(data []byte) (map[string]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("barman show-backup JSON must be a backup object")
 	}
-	backupID, err := requiredStringField(object, "backup id", "backup_id", "id", "backupId")
+	backupID, err := adapterutil.RequiredStringAlias(object, "backup id", "backup_id", "id", "backupId")
 	if err != nil {
 		return nil, err
 	}
-	server, err := requiredStringField(object, "server", "server_name", "server", "serverName")
+	server, err := adapterutil.RequiredStringAlias(object, "server", "server_name", "server", "serverName")
 	if err != nil {
 		return nil, err
 	}
-	status, err := requiredStringField(object, "status", "status")
+	status, err := adapterutil.RequiredStringAlias(object, "status", "status")
 	if err != nil {
 		return nil, err
 	}
-	backupType, _, err := optionalStringField(object, "backup type", "backup_type", "type", "kind")
+	backupType, _, err := adapterutil.OptionalStringAlias(object, "backup type", "backup_type", "type", "kind")
 	if err != nil {
 		return nil, err
 	}
@@ -583,15 +583,15 @@ func ParseBackupList(data []byte, defaultServer string) ([]model.Backup, error) 
 }
 
 func mapBackup(object map[string]any, defaultServer string) (model.Backup, error) {
-	backupID, err := requiredStringField(object, "backup id", "backup_id", "id", "backupId")
+	backupID, err := adapterutil.RequiredStringAlias(object, "backup id", "backup_id", "id", "backupId")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	serverValue, _, err := optionalStringField(object, "server", "server_name", "server", "serverName")
+	serverValue, _, err := adapterutil.OptionalStringAlias(object, "server", "server_name", "server", "serverName")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	parentID, _, err := optionalStringField(
+	parentID, _, err := adapterutil.OptionalStringAlias(
 		object,
 		"parent backup id",
 		"parent_backup_id",
@@ -601,24 +601,24 @@ func mapBackup(object map[string]any, defaultServer string) (model.Backup, error
 	if err != nil {
 		return model.Backup{}, err
 	}
-	status, err := requiredStringField(object, "status", "status")
+	status, err := adapterutil.RequiredStringAlias(object, "status", "status")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	backupType, _, err := optionalStringField(object, "backup type", "backup_type", "type", "kind")
+	backupType, _, err := adapterutil.OptionalStringAlias(object, "backup type", "backup_type", "type", "kind")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	permanent, _, err := optionalBoolField(object, "permanent", "is_permanent", "permanent")
+	permanent, _, err := adapterutil.OptionalBoolAlias(object, "permanent", "is_permanent", "permanent")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	keep, _, err := optionalStringField(object, "keep status", "keep", "keep_status")
+	keep, _, err := adapterutil.OptionalStringAlias(object, "keep status", "keep", "keep_status")
 	if err != nil {
 		return model.Backup{}, err
 	}
 
-	server := firstNonEmpty(serverValue, defaultServer)
+	server := adapterutil.FirstNonEmpty(serverValue, defaultServer)
 	providerID := backupID
 	if server != "" {
 		providerID = server + "/" + backupID
@@ -807,7 +807,7 @@ func backupListObjects(root map[string]any, defaultServer string) ([]map[string]
 			if !ok {
 				return nil, "", fmt.Errorf("server %q backup %q must be an object", server, backupID)
 			}
-			explicitID, found, err := optionalStringField(
+			explicitID, found, err := adapterutil.OptionalStringAlias(
 				object,
 				"backup id",
 				"backup_id",
@@ -870,37 +870,6 @@ func inferBarmanKind(kind string, parentID string) model.BackupKind {
 	return model.BackupKindUnknown
 }
 
-func commandEvidence(provider model.ProviderType, operation string, evidence model.CommandEvidence) model.EvidenceRecord {
-	collectedAt := evidence.FinishedAt
-	if collectedAt.IsZero() {
-		collectedAt = time.Now().UTC()
-	}
-
-	return model.EvidenceRecord{
-		ID:          string(provider) + ":" + operation + ":" + collectedAt.Format(time.RFC3339Nano),
-		Kind:        model.EvidenceCommand,
-		Source:      string(provider),
-		CollectedAt: collectedAt,
-		Command:     &evidence,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
-	}
-}
-
-func planEvidence(operation string) model.EvidenceRecord {
-	now := time.Now().UTC()
-	return model.EvidenceRecord{
-		ID:          string(model.ProviderBarman) + ":" + operation + ":" + now.Format(time.RFC3339Nano),
-		Kind:        model.EvidencePlan,
-		Source:      string(model.ProviderBarman),
-		CollectedAt: now,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
-	}
-}
-
 func getString(object map[string]any, keys ...string) string {
 	for _, key := range keys {
 		value, ok := object[key]
@@ -957,37 +926,6 @@ func consistentString(
 		}
 	}
 	return selectedValue, nil
-}
-
-func requiredStringField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (string, error) {
-	value, found, err := optionalStringField(object, name, keys...)
-	if err != nil {
-		return "", err
-	}
-	if !found || strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("missing %s", name)
-	}
-	return value, nil
-}
-
-func optionalStringField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (string, bool, error) {
-	return adapterutil.OptionalStringAlias(object, name, keys...)
-}
-
-func optionalBoolField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (bool, bool, error) {
-	return adapterutil.OptionalBoolAlias(object, name, keys...)
 }
 
 func getTime(object map[string]any, keys ...string) (*time.Time, error) {
@@ -1069,27 +1007,4 @@ func addAttribute(attributes map[string]string, key string, value string) {
 
 func copyMap(input map[string]any) map[string]any {
 	return maps.Clone(input)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func durationString(value time.Duration) string {
-	if value == 0 {
-		return ""
-	}
-	return value.String()
-}
-
-func copyStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	return maps.Clone(values)
 }

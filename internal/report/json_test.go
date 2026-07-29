@@ -113,6 +113,13 @@ func TestJSONFileSinkRequiresPath(t *testing.T) {
 	}
 }
 
+func TestJSONFileSinkRequiresContext(t *testing.T) {
+	err := (JSONFileSink{Path: "report.json"}).Write(nil, model.DrillResult{})
+	if err == nil || err.Error() != "report context is required" {
+		t.Fatalf("JSONFileSink.Write() error = %v", err)
+	}
+}
+
 func TestJSONFileSinkCanceledBeforeWriteDoesNotCreateDirectory(t *testing.T) {
 	reportDir := filepath.Join(t.TempDir(), "reports")
 	ctx, cancel := context.WithCancel(context.Background())

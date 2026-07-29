@@ -159,6 +159,13 @@ called out explicitly even while the major version is `0`.
 
 ### Changed
 
+- Native provider adapters now share exact evidence, alias, duration, and map
+  helpers; native and managed engines share result, preflight, attempt, and
+  policy lifecycle scaffolding. Provider-specific parsing semantics and
+  persistence state machines remain explicit.
+- Artifact inventory uses one type-constrained unique-sort implementation for
+  media types, retention classes, and redaction states without changing
+  canonical ordering.
 - Native targeted recovery now configures `recovery_target_action=pause` and
   accepts attainment only when PostgreSQL proves an actual paused replay state;
   a pending pause request or an already-promoted server fails closed. Plain
@@ -309,6 +316,14 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- Fleet and drill-set `max_runs` now count every selected source before policy
+  and target-placement rejection, so incompatible broad selectors cannot
+  bypass the documented complete-expansion bounds. Plan validation
+  independently rejects an oversized run-plus-rejection expansion.
+- Prometheus/report and changelog writer boundaries return explicit errors for
+  absent output, context, or input instead of panicking. JSON report
+  publication uses the shared directory-sync implementation and retains both
+  sync and close failures.
 - CNPG cleanup re-observes owned PVCs after foreground Cluster deletion and
   deletes only resources that still exist, so a garbage-collected PVC cannot
   turn successful cleanup into a stale-UID failure. Cluster, Pod, and PVC

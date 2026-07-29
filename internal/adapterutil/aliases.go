@@ -13,12 +13,44 @@ func OptionalStringAlias(
 	return optionalStringAlias(object, name, false, keys...)
 }
 
+func RequiredStringAlias(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, error) {
+	return requiredStringAlias(object, name, false, keys...)
+}
+
 func OptionalTrimmedStringAlias(
 	object map[string]any,
 	name string,
 	keys ...string,
 ) (string, bool, error) {
 	return optionalStringAlias(object, name, true, keys...)
+}
+
+func RequiredTrimmedStringAlias(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, error) {
+	return requiredStringAlias(object, name, true, keys...)
+}
+
+func requiredStringAlias(
+	object map[string]any,
+	name string,
+	trim bool,
+	keys ...string,
+) (string, error) {
+	value, found, err := optionalStringAlias(object, name, trim, keys...)
+	if err != nil {
+		return "", err
+	}
+	if !found || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("missing %s", name)
+	}
+	return value, nil
 }
 
 func optionalStringAlias(

@@ -17,6 +17,9 @@ type metricLabel struct {
 }
 
 func WritePrometheus(writer io.Writer, result model.DrillResult) error {
+	if writer == nil {
+		return fmt.Errorf("Prometheus output is required")
+	}
 	if err := normalizeSchemaVersion(&result); err != nil {
 		return err
 	}
@@ -368,91 +371,59 @@ func labelOrUnknown(value string) string {
 }
 
 func providerLabel(value model.ProviderType) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func targetTypeLabel(value model.RestoreTargetType) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func recoveryTargetLabel(value model.RecoveryTargetType) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func policyAssertionLabel(value model.PolicyAssertion) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func policyVerdictStatusLabel(value model.PolicyVerdictStatus) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func policyVerdictBasisLabel(value model.PolicyVerdictBasis) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func probeLabel(value model.ProbeType) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func checkStatusLabel(value model.CheckStatus) string {
-	if !value.IsTerminal() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsTerminal())
 }
 
 func evidenceKindLabel(value model.EvidenceKind) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func operationKindLabel(value model.OperationKind) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func operationStateLabel(value model.OperationState) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func artifactRetentionLabel(value model.ArtifactRetentionClass) string {
-	if !value.IsKnown() {
-		return "unknown"
-	}
-	return string(value)
+	return knownLabel(value, value.IsKnown())
 }
 
 func artifactRedactionLabel(value model.ArtifactRedactionState) string {
-	if !value.IsKnown() {
+	return knownLabel(value, value.IsKnown())
+}
+
+func knownLabel[T ~string](value T, known bool) string {
+	if !known {
 		return "unknown"
 	}
 	return string(value)

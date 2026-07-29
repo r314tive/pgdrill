@@ -526,12 +526,12 @@ func indexReferences(
 				ref.ID,
 			)
 		}
-		aggregate.MediaTypes = appendUniqueSortedString(aggregate.MediaTypes, ref.MediaType)
-		aggregate.RetentionClasses = appendUniqueSortedRetention(
+		aggregate.MediaTypes = appendUniqueSorted(aggregate.MediaTypes, ref.MediaType)
+		aggregate.RetentionClasses = appendUniqueSorted(
 			aggregate.RetentionClasses,
 			ref.RetentionClass,
 		)
-		aggregate.RedactionStates = appendUniqueSortedRedaction(
+		aggregate.RedactionStates = appendUniqueSorted(
 			aggregate.RedactionStates,
 			ref.RedactionState,
 		)
@@ -553,35 +553,7 @@ func indexReferences(
 	return index, nil
 }
 
-func appendUniqueSortedString(values []string, value string) []string {
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	values = append(values, value)
-	sort.Strings(values)
-	return values
-}
-
-func appendUniqueSortedRetention(
-	values []model.ArtifactRetentionClass,
-	value model.ArtifactRetentionClass,
-) []model.ArtifactRetentionClass {
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	values = append(values, value)
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-	return values
-}
-
-func appendUniqueSortedRedaction(
-	values []model.ArtifactRedactionState,
-	value model.ArtifactRedactionState,
-) []model.ArtifactRedactionState {
+func appendUniqueSorted[T ~string](values []T, value T) []T {
 	for _, existing := range values {
 		if existing == value {
 			return values

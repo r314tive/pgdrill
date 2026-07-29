@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -77,7 +76,7 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 	catalog := model.BackupCatalog{
 		Provider: model.ProviderWALG,
 		Evidence: []model.EvidenceRecord{
-			commandEvidence(model.ProviderWALG, "backup-list", result.Evidence),
+			adapterutil.CommandEvidence(model.ProviderWALG, "backup-list", result.Evidence),
 		},
 	}
 	if err != nil {
@@ -125,7 +124,7 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 		Timeout:      a.walVerifyTimeout(),
 		RedactValues: append(append([]string{}, a.cfg.RedactValues...), a.cfg.WALVerify.RedactValues...),
 	})
-	evidence := commandEvidence(model.ProviderWALG, "wal-verify", result.Evidence)
+	evidence := adapterutil.CommandEvidence(model.ProviderWALG, "wal-verify", result.Evidence)
 	checks, err := adapterutil.RedactChecks(
 		walVerifyChecks(result.Raw.Stdout, a.walVerifyChecks(), evidence.ID, result.Evidence.ExitStatus, runErr),
 		result,
@@ -154,7 +153,7 @@ func (a *Adapter) walVerifyArgs(backup model.Backup) ([]string, error) {
 			return nil, err
 		}
 	}
-	backupName := firstNonEmpty(a.cfg.WALVerify.BackupName, backup.ProviderID)
+	backupName := adapterutil.FirstNonEmpty(a.cfg.WALVerify.BackupName, backup.ProviderID)
 	if slices.Contains(checks, "integrity") && backupName == "" {
 		return nil, fmt.Errorf("wal-g wal_verify integrity check requires selected backup provider_id or provider.wal_verify.backup_name")
 	}
@@ -391,9 +390,9 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 				Tool:       model.ToolWALG,
 				Path:       a.binary(),
 				Args:       []string{"backup-fetch", dataDir, backup.ProviderID},
-				Env:        copyStringMap(a.cfg.Env),
+				Env:        adapterutil.CloneStringMap(a.cfg.Env),
 				WorkDir:    a.cfg.WorkDir,
-				Timeout:    durationString(a.restoreTimeout()),
+				Timeout:    adapterutil.DurationString(a.restoreTimeout()),
 				Redactions: append([]string{}, a.cfg.RedactValues...),
 			},
 			Inputs: map[string]string{
@@ -444,10 +443,10 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 		RecoveryTarget: target,
 		Runtime: model.RuntimeConfig{
 			DataDirectory: dataDir,
-			Environment:   copyStringMap(a.cfg.Env),
+			Environment:   adapterutil.CloneStringMap(a.cfg.Env),
 		},
 		Steps:    steps,
-		Evidence: []model.EvidenceRecord{planEvidence("restore-plan")},
+		Evidence: []model.EvidenceRecord{adapterutil.PlanEvidence(model.ProviderWALG, "restore-plan")},
 	}
 	return plan, nil
 }
@@ -567,7 +566,7 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 	if err := e.validateAliases(); err != nil {
 		return model.Backup{}, err
 	}
-	name := firstNonEmpty(e.Name, e.BackupName)
+	name := adapterutil.FirstNonEmpty(e.Name, e.BackupName)
 	if name == "" {
 		return model.Backup{}, fmt.Errorf("missing backup name")
 	}
@@ -600,11 +599,11 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 			EndLSN:       finishLSN,
 			Timeline:     walSegmentTimeline(e.WALSegmentBackupStart),
 		},
-		PostgreSQLVersion: firstNonEmpty(e.PGVersion.Value, e.PostgresVersion.Value),
+		PostgreSQLVersion: adapterutil.FirstNonEmpty(e.PGVersion.Value, e.PostgresVersion.Value),
 		DataDirectory:     e.DataDir,
 		Hostname:          e.Hostname,
 		Permanent:         e.IsPermanent,
-		Metadata:          metadataOrNil(metadata),
+		Metadata:          adapterutil.StringMapOrNil(metadata),
 	}, nil
 }
 
@@ -703,38 +702,6 @@ func inferWALGKind(name string) model.BackupKind {
 	return model.BackupKindUnknown
 }
 
-func commandEvidence(provider model.ProviderType, operation string, evidence model.CommandEvidence) model.EvidenceRecord {
-	collectedAt := evidence.FinishedAt
-	if collectedAt.IsZero() {
-		collectedAt = time.Now().UTC()
-	}
-
-	idTime := collectedAt.Format(time.RFC3339Nano)
-	return model.EvidenceRecord{
-		ID:          string(provider) + ":" + operation + ":" + idTime,
-		Kind:        model.EvidenceCommand,
-		Source:      string(provider),
-		CollectedAt: collectedAt,
-		Command:     &evidence,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
-	}
-}
-
-func planEvidence(operation string) model.EvidenceRecord {
-	now := time.Now().UTC()
-	return model.EvidenceRecord{
-		ID:          string(model.ProviderWALG) + ":" + operation + ":" + now.Format(time.RFC3339Nano),
-		Kind:        model.EvidencePlan,
-		Source:      string(model.ProviderWALG),
-		CollectedAt: now,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
-	}
-}
-
 type optionalTime struct {
 	Time  time.Time
 	Valid bool
@@ -830,13 +797,6 @@ func firstTime(values ...optionalTime) optionalTime {
 	return optionalTime{}
 }
 
-func durationString(value time.Duration) string {
-	if value == 0 {
-		return ""
-	}
-	return value.String()
-}
-
 func postgresString(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
@@ -853,27 +813,4 @@ func boolString(value bool) string {
 		return "true"
 	}
 	return "false"
-}
-
-func copyStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	return maps.Clone(values)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func metadataOrNil(metadata map[string]string) map[string]string {
-	if len(metadata) == 0 {
-		return nil
-	}
-	return metadata
 }

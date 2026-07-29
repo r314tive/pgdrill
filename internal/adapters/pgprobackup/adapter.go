@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -73,7 +72,9 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 		Timeout:      a.cfg.Timeout,
 		RedactValues: a.cfg.RedactValues,
 	})
-	catalog.Evidence = []model.EvidenceRecord{commandEvidence("show", result.Evidence)}
+	catalog.Evidence = []model.EvidenceRecord{
+		adapterutil.CommandEvidence(model.ProviderPGProbackup, "show", result.Evidence),
+	}
 	if runErr != nil {
 		return catalog, fmt.Errorf("run pg_probackup show: %w", runErr)
 	}
@@ -117,7 +118,7 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 		Timeout:      a.validateTimeout(),
 		RedactValues: append(append([]string{}, a.cfg.RedactValues...), a.cfg.Validate.RedactValues...),
 	})
-	evidence := commandEvidence("validate", result.Evidence)
+	evidence := adapterutil.CommandEvidence(model.ProviderPGProbackup, "validate", result.Evidence)
 	check := model.Check{
 		Name:        "pg-probackup-validate",
 		Status:      model.CheckStatusPassed,
@@ -169,9 +170,9 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 			Tool:       model.ToolPGProbackup,
 			Path:       a.binary(),
 			Args:       args,
-			Env:        copyStringMap(a.cfg.Env),
+			Env:        adapterutil.CloneStringMap(a.cfg.Env),
 			WorkDir:    a.cfg.WorkDir,
-			Timeout:    durationString(a.restoreTimeout()),
+			Timeout:    adapterutil.DurationString(a.restoreTimeout()),
 			Redactions: append([]string{}, a.cfg.RedactValues...),
 		},
 		Inputs: map[string]string{
@@ -202,9 +203,9 @@ func (a *Adapter) PlanRestore(_ context.Context, backup model.Backup, target mod
 		Steps:          steps,
 		Runtime: model.RuntimeConfig{
 			DataDirectory: dataDir,
-			Environment:   copyStringMap(a.cfg.Env),
+			Environment:   adapterutil.CloneStringMap(a.cfg.Env),
 		},
-		Evidence: []model.EvidenceRecord{planEvidence("restore-plan")},
+		Evidence: []model.EvidenceRecord{adapterutil.PlanEvidence(model.ProviderPGProbackup, "restore-plan")},
 	}, nil
 }
 
@@ -394,7 +395,7 @@ func ParseShow(data []byte, defaultInstance string) ([]model.Backup, error) {
 
 	backups := []model.Backup{}
 	for i, object := range instances {
-		instanceValue, _, err := optionalStringField(object, "instance name", "instance")
+		instanceValue, _, err := adapterutil.OptionalTrimmedStringAlias(object, "instance name", "instance")
 		if err != nil {
 			return nil, fmt.Errorf("parse pg_probackup instance %d: %w", i, err)
 		}
@@ -457,11 +458,11 @@ func instanceObjects(root any) ([]map[string]any, error) {
 }
 
 func mapBackup(object map[string]any, instance string) (model.Backup, error) {
-	backupID, err := requiredStringField(object, "backup id", "id", "backup-id", "backup_id")
+	backupID, err := adapterutil.RequiredTrimmedStringAlias(object, "backup id", "id", "backup-id", "backup_id")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	parentID, _, err := optionalStringField(
+	parentID, _, err := adapterutil.OptionalTrimmedStringAlias(
 		object,
 		"parent backup id",
 		"parent-backup-id",
@@ -470,11 +471,11 @@ func mapBackup(object map[string]any, instance string) (model.Backup, error) {
 	if err != nil {
 		return model.Backup{}, err
 	}
-	status, _, err := optionalStringField(object, "backup status", "status")
+	status, _, err := adapterutil.OptionalTrimmedStringAlias(object, "backup status", "status")
 	if err != nil {
 		return model.Backup{}, err
 	}
-	backupMode, _, err := optionalStringField(object, "backup mode", "backup-mode", "backup_mode")
+	backupMode, _, err := adapterutil.OptionalTrimmedStringAlias(object, "backup mode", "backup-mode", "backup_mode")
 	if err != nil {
 		return model.Backup{}, err
 	}
@@ -667,29 +668,6 @@ func parseTime(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unsupported time format %q", value)
 }
 
-func requiredStringField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (string, error) {
-	value, found, err := optionalStringField(object, name, keys...)
-	if err != nil {
-		return "", err
-	}
-	if !found || strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("missing %s", name)
-	}
-	return strings.TrimSpace(value), nil
-}
-
-func optionalStringField(
-	object map[string]any,
-	name string,
-	keys ...string,
-) (string, bool, error) {
-	return adapterutil.OptionalTrimmedStringAlias(object, name, keys...)
-}
-
 func getString(object map[string]any, keys ...string) string {
 	for _, key := range keys {
 		value, ok := object[key]
@@ -725,36 +703,6 @@ func metadata(object map[string]any, keys ...string) map[string]string {
 	return result
 }
 
-func commandEvidence(operation string, evidence model.CommandEvidence) model.EvidenceRecord {
-	collectedAt := evidence.FinishedAt
-	if collectedAt.IsZero() {
-		collectedAt = time.Now().UTC()
-	}
-	return model.EvidenceRecord{
-		ID:          string(model.ProviderPGProbackup) + ":" + operation + ":" + collectedAt.Format(time.RFC3339Nano),
-		Kind:        model.EvidenceCommand,
-		Source:      string(model.ProviderPGProbackup),
-		CollectedAt: collectedAt,
-		Command:     &evidence,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
-	}
-}
-
-func planEvidence(operation string) model.EvidenceRecord {
-	now := time.Now().UTC()
-	return model.EvidenceRecord{
-		ID:          string(model.ProviderPGProbackup) + ":" + operation + ":" + now.Format(time.RFC3339Nano),
-		Kind:        model.EvidencePlan,
-		Source:      string(model.ProviderPGProbackup),
-		CollectedAt: now,
-		Attributes: map[string]string{
-			"operation": operation,
-		},
-	}
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -762,18 +710,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func copyStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	return maps.Clone(values)
-}
-
-func durationString(value time.Duration) string {
-	if value == 0 {
-		return ""
-	}
-	return value.String()
 }
