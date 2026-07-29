@@ -23,8 +23,8 @@ func TestCommittedMatrix(t *testing.T) {
 	if err := matrix.ValidateReferences(root); err != nil {
 		t.Fatalf("validate committed matrix references: %v", err)
 	}
-	if len(matrix.Entries) != 39 {
-		t.Fatalf("matrix entry count = %d, want 39", len(matrix.Entries))
+	if len(matrix.Entries) != 40 {
+		t.Fatalf("matrix entry count = %d, want 40", len(matrix.Entries))
 	}
 
 	levels := make(map[string]EvidenceLevel, len(matrix.Entries))
@@ -90,6 +90,7 @@ func TestCommittedMatrix(t *testing.T) {
 		"provider.pgbackrest.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr",
 		"provider.wal-g.field.v0-3-0-alpha-14-postgresql-17-linux-arm64",
 		"provider.wal-g.field.v0-3-0-alpha-14-postgresql-17-linux-arm64-pitr",
+		"provider.wal-g.field.v0-3-0-dev-postgresql-18-4-yandex-cloud-linux-amd64",
 	} {
 		if levels[id] != EvidenceLevelField {
 			t.Fatalf("%s level = %q, want field", id, levels[id])

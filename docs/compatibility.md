@@ -235,6 +235,26 @@ provider. It does not establish a PostgreSQL version range, another 17.x
 patch release, native Linux amd64, remote repositories, production RTO, or a
 published-artifact claim. The candidate archive was not published or signed.
 
+### v0.3.0-dev Yandex Cloud WAL-G Gate
+
+On 2026-07-29, the exact Linux amd64 `v0.3.0-dev` candidate at commit
+`444c525c8c104f70ada9b66e8c1b633c6d4e8a0d` completed two consecutive WAL-G
+3.0.8 latest-recovery drills against PostgreSQL 18.4 in a disposable
+three-VM Yandex Cloud environment. Source and repository VMs were private,
+the source NFSv4 mount was read-write, and the runner mount was read-only.
+
+Each run recovered a post-backup WAL sentinel, passed 13 checks, all five
+required policy verdicts, all five operation checkpoints, and owned cleanup.
+The exact reports, source boundaries, secret-free configuration, endpoint-free
+cloud inventory, runtime inventory, limitations, and checksums are retained
+under
+[`compatibility/evidence/wal-g-v3.0.8-postgresql-18.4-yandex-cloud-linux-amd64-pgdrill-v0.3.0-dev`](../compatibility/evidence/wal-g-v3.0.8-postgresql-18.4-yandex-cloud-linux-amd64-pgdrill-v0.3.0-dev/README.md).
+
+This adds one owner-operated WAL-G / PostgreSQL / Linux amd64 / NFS field
+point. It does not establish Yandex Object Storage, timestamp PITR, another
+cloud topology, production RTO, or customer access. No invited administrator
+was provisioned, and the candidate was not published or signed.
+
 ### WAL-G Field Validation
 
 On 2026-07-21, pgdrill `v0.1.0-dev` at commit

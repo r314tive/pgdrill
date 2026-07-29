@@ -5,9 +5,18 @@ path. It is intended for a controlled technical session with synthetic data.
 It is not a production deployment template.
 
 Validation status: repository checks and the local release-artifact rehearsal
-pass. The Terraform plan and scripts have not yet been applied to a live Yandex
-Cloud folder. A successful live rehearsal and retained report are required
-before using this environment in a customer session.
+pass. On 2026-07-29, the exact locally built Linux amd64 `v0.3.0-dev`
+candidate at commit `444c525c8c104f70ada9b66e8c1b633c6d4e8a0d`, archive SHA-256
+`c1bce1e0e9685365f9fc64f841414dd539f8af112e48f4741b2db73a855542c0`,
+completed bootstrap and two consecutive live rehearsals in `ru-central1-a`.
+Both reports passed 13 checks, all five required policy assertions, operation
+checkpoint validation, post-backup WAL replay, and owned cleanup. A final
+Terraform refresh reported no changes, and a destroy-only plan was reviewed.
+
+This is one owner-operated WAL-G 3.0.8 / PostgreSQL 18.4 observation against
+an NFS repository, not a published-release, customer-pilot, cloud support, or
+production RTO claim. No invited administrator was provisioned for this run;
+the bounded-access audit remains required before a customer session.
 
 ## Topology
 

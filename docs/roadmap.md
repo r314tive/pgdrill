@@ -284,16 +284,21 @@ Remaining external engine gate:
    modes, and non-timestamp PITR targets where the provider contract supports
    them.
 
-`pgdrill.report/v1` is now the durable terminal contract. Readers preserve the
-documented `v1alpha1` compatibility floor. The CLI remains journal-free by
-default and can persist ordered events plus terminal snapshots through
-explicit `-history-dir`.
+`pgdrill.report/v2` is now the durable terminal producer contract. Readers
+preserve the previous `v1` contract and documented `v1alpha1` compatibility
+floor. The CLI remains journal-free by default and can persist ordered events
+plus terminal snapshots through explicit `-history-dir`.
 
 ## Demo And Pilot Readiness
 
-Status: repository baseline and local release-artifact rehearsal implemented;
-the first live Yandex Cloud rehearsal is pending and no cloud compatibility
-claim is recorded yet.
+Status: repository baseline and local release-artifact rehearsal implemented.
+On 2026-07-29, the exact locally built Linux amd64 `v0.3.0-dev` candidate at
+commit `444c525c8c104f70ada9b66e8c1b633c6d4e8a0d` completed bootstrap and two
+consecutive live Yandex Cloud WAL-G rehearsals. Both reports passed 13 checks,
+all five required policy assertions, post-backup WAL replay, operation
+checkpoint validation, and owned cleanup. This owner-only NFS observation is
+not a published-release, invited-administrator, customer-pilot, production
+RTO, or general Yandex Cloud compatibility claim.
 
 - Evidence-led demo contract with explicit proof and non-proof boundaries.
 - Customer discovery and one-scenario pilot acceptance checklist.
@@ -313,17 +318,23 @@ claim is recorded yet.
 - Explicit repository boundaries between disposable developer integration
   tests, operator-facing demo topology, and retained compatibility evidence.
 
-Remaining gates, in order:
+Completed hosted-rehearsal gates:
 
 1. Apply the exact Terraform plan in a disposable Yandex Cloud folder and
    retain infrastructure inventory plus a successful bootstrap transcript.
-2. Produce two consecutive passed reports from the same published release
-   artifact, including the post-backup WAL assertion and owned cleanup.
-3. Exercise a dedicated invited-administrator account and confirm its bounded
+2. Produce two consecutive passed reports from one exact candidate artifact,
+   including the post-backup WAL assertion and owned cleanup.
+
+Remaining gates, in order:
+
+1. Publish or otherwise freeze the exact artifact selected for the customer
+   session and repeat the final rehearsal if it differs from the observed
+   candidate.
+2. Exercise a dedicated invited-administrator account and confirm its bounded
    sudo surface before the customer session.
-4. Add Yandex Object Storage only as a separate compatibility profile with
+3. Add Yandex Object Storage only as a separate compatibility profile with
    executor-local credentials and explicit secret/state review.
-5. Convert one real customer topology into a bounded pilot spec before adding
+4. Convert one real customer topology into a bounded pilot spec before adding
    generalized fleet or UI features.
 
 ## Phase 6: Fleet Control Plane

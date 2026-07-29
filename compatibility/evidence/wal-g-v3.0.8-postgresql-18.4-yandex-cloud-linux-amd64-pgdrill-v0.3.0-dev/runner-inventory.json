@@ -1,0 +1,13 @@
+{
+  "schema_version": "pgdrill.demo-runner-inventory/v1alpha1",
+  "captured_at": "2026-07-29T18:46:10Z",
+  "pgdrill_archive_sha256": "c1bce1e0e9685365f9fc64f841414dd539f8af112e48f4741b2db73a855542c0",
+  "pgdrill_version": "pgdrill v0.3.0-dev (444c525c8c104f70ada9b66e8c1b633c6d4e8a0d, 2026-07-29T18:43:50Z)",
+  "postgresql_version": "postgres (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",
+  "walg_version": "wal-g version v3.0.8\tf81943e\t2026.01.21_14:26:12\tPostgreSQL",
+  "pgdg_key_fingerprint": "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8",
+  "postgres_uid": 2000,
+  "postgres_gid": 2000,
+  "repository_mount": "/mnt/pgdrill-repository",
+  "repository_mode": "read_only"
+}

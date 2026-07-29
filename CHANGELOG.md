@@ -10,6 +10,12 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- Retained exact `v0.3.0-dev` field evidence for two consecutive WAL-G 3.0.8
+  latest-recovery drills against PostgreSQL 18.4 on Yandex Cloud Linux amd64.
+  The owner-operated three-VM NFS topology binds both passed reports to one
+  candidate archive and commit, post-backup WAL replay, authenticated probes,
+  required policy verdicts, operation checkpoints, cleanup, endpoint-free
+  infrastructure inventory, and explicit customer-access limitations.
 - A fail-closed second PostgreSQL-major integration profile: all four native
   provider drills now run against either the default PostgreSQL 18.3 or pinned
   PostgreSQL 17.10 platform manifests, with isolated caches, exact runtime
@@ -427,9 +433,10 @@ called out explicitly even while the major version is `0`.
 - Redaction configuration that overlaps a canonical identifier now causes the
   relevant discovery or check to fail instead of emitting a redacted
   identifier that cannot be used for restore planning.
-- Machine consumers that matched `v1alpha1` as the current output identifier
-  must accept `v1`. The alpha identifiers remain reader inputs only for the
-  documented compatibility generation.
+- Machine consumers that matched `v1` or `v1alpha1` as the current report
+  identifier must accept `pgdrill.report/v2`. Current execution report sinks
+  emit only `v2`; `v1` and `v1alpha1` remain reader inputs under their
+  documented compatibility contracts.
 - The stable writer will not append to a
   `pgdrill.history-store/v1alpha1` directory. Operators must plan and confirm
   `history migrate` to a separate destination, verify it, and then switch the

@@ -1,0 +1,30 @@
+{
+  "schema_version": "pgdrill.demo-source-state/v1alpha1",
+  "created_at": "2026-07-29T18:46:35Z",
+  "provider": "wal-g",
+  "backup_name": "base_00000001000000000000001C",
+  "backup": {
+    "backup_name": "base_00000001000000000000001C",
+    "time": "2026-07-29T18:46:33.645389499Z",
+    "wal_file_name": "00000001000000000000001C",
+    "storage_name": "default",
+    "start_time": "2026-07-29T18:46:32.252836Z",
+    "finish_time": "2026-07-29T18:46:33.618083Z",
+    "date_fmt": "%Y-%m-%dT%H:%M:%S.%fZ",
+    "hostname": "pgdrill-demo-source",
+    "data_dir": "/var/lib/pgdrill-demo/source-data",
+    "pg_version": 180004,
+    "start_lsn": 469762088,
+    "finish_lsn": 469762336,
+    "is_permanent": false,
+    "system_identifier": 7668015733994747063,
+    "uncompressed_size": 24022583,
+    "compressed_size": 4409347
+  },
+  "base_backup_row_count": 100,
+  "expected_recovered_row_count": 101,
+  "post_backup_wal_sentinel": "post-backup-wal-sentinel",
+  "sentinel_wal": "00000001000000000000001D",
+  "postgresql_version": "postgres (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",
+  "walg_version": "wal-g version v3.0.8\tf81943e\t2026.01.21_14:26:12\tPostgreSQL"
+}

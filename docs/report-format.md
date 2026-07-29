@@ -9,18 +9,25 @@ consumers.
 Current schema:
 
 ```text
-pgdrill.report/v1
+pgdrill.report/v2
 ```
 
-Every new report includes `schema_version`. Readers accept the documented
-`pgdrill.report/v1alpha1` pre-GA generation and older reports with the field
-absent. New producers emit only `v1`. A non-empty unknown schema is rejected
-instead of being interpreted optimistically.
+Every new report includes `schema_version`. Readers accept the previous
+`pgdrill.report/v1` contract, the documented `pgdrill.report/v1alpha1` pre-GA
+generation, and older reports with the field absent. Execution report sinks
+emit only `v2`; explicit compatibility re-encoding preserves a recognized
+reader-only schema. A non-empty unknown schema is rejected instead of being
+interpreted optimistically.
 
-Readers may ignore unknown fields within `v1`; producers may add optional
+Readers may ignore unknown fields within `v2`; producers may add optional
 fields without changing the schema identifier. Removing fields, changing field
 types or meanings, or changing required semantics requires a new schema
 version.
+
+The `v2` producer contract makes the proof obligations below part of current
+report validation. Earlier schemas remain readable under their historical
+contract and are not retroactively treated as if they had emitted every
+current operation, timestamp, or evidence invariant.
 
 Schema recognition is not the only read gate. Current reports are validated for
 canonical enum values, required identity and timestamps, timestamp ordering,
