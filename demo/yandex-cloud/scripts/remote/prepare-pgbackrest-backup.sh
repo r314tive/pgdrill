@@ -153,27 +153,39 @@ sentinel_wal="$(runuser -u postgres -- "${PGBIN}/psql" \
   --host /var/run/postgresql --port "${SOURCE_PORT}" --dbname postgres \
   --tuples-only --no-align \
   --command "SELECT pg_walfile_name(pg_current_wal_lsn());")"
+[[ "${sentinel_wal}" =~ ^[0-9A-F]{24}$ ]] ||
+  die "PostgreSQL returned an invalid WAL file name"
 runuser -u postgres -- "${PGBIN}/psql" \
   --host /var/run/postgresql --port "${SOURCE_PORT}" --dbname postgres \
   --tuples-only --no-align \
   --command "SELECT pg_switch_wal();" >/dev/null
 
 archived=false
-sentinel_copy="$(mktemp /var/lib/pgdrill-demo/pgbackrest/sentinel-wal.XXXXXX)"
-chown postgres:postgres "${sentinel_copy}"
-rm -f "${sentinel_copy}"
-sentinel_copy=""
 for _ in $(seq 1 120); do
-  rm -f "${sentinel_copy}"
-  if run_pgbackrest archive-get "${sentinel_wal}" "${sentinel_copy}" >/dev/null 2>&1; then
+  last_archived_wal="$(runuser -u postgres -- "${PGBIN}/psql" \
+    --host /var/run/postgresql --port "${SOURCE_PORT}" --dbname postgres \
+    --tuples-only --no-align \
+    --command "SELECT COALESCE(last_archived_wal, '') FROM pg_stat_archiver;")"
+  if [[ "${last_archived_wal}" =~ ^[0-9A-F]{24}$ ]] &&
+    [[ "${last_archived_wal}" == "${sentinel_wal}" ||
+      "${last_archived_wal}" > "${sentinel_wal}" ]]; then
     archived=true
     break
   fi
   sleep 1
 done
-[[ "${archived}" == "true" && -s "${sentinel_copy}" ]] ||
+[[ "${archived}" == "true" ]] ||
+  die "post-backup WAL ${sentinel_wal} was not archived within 120 seconds"
+
+sentinel_copy="$(mktemp /var/lib/pgdrill-demo/pgbackrest/sentinel-wal.XXXXXX)"
+[[ -n "${sentinel_copy}" ]] || die "could not allocate the WAL retrieval path"
+chown postgres:postgres "${sentinel_copy}"
+rm -f "${sentinel_copy}"
+run_pgbackrest archive-get "${sentinel_wal}" "${sentinel_copy}"
+[[ -s "${sentinel_copy}" ]] ||
   die "post-backup WAL ${sentinel_wal} was not retrievable from pgBackRest"
 rm -f "${sentinel_copy}"
+sentinel_copy=""
 
 row_count="$(runuser -u postgres -- "${PGBIN}/psql" \
   --host /var/run/postgresql --port "${SOURCE_PORT}" --dbname postgres \
