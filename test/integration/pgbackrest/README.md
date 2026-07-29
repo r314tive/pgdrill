@@ -38,8 +38,9 @@ recorded. The actual drill has no network, runs as UID 999 with all Linux
 capabilities dropped and a read-only root filesystem, and uses disposable
 tmpfs state.
 
-Each run writes latest and timestamp-PITR reports, doctor/catalog output,
-source and command logs, package and runtime inventories, operation
+Each run writes the raw `pgbackrest info --output=json` response, latest and
+timestamp-PITR reports, doctor/catalog output, source and command logs, package
+and runtime inventories, operation
 checkpoints, the validated history attempt/list/full-verification views, an
 archive of the raw private history store, and recursive checksums under the
 ignored `.cache/integration/pgbackrest/runs/<timestamp>/` directory.

@@ -558,7 +558,7 @@ func mapBackup(
 	if err != nil {
 		return model.Backup{}, err
 	}
-	prior, _, err := adapterutil.OptionalStringAlias(object, "prior backup label", "prior")
+	prior, err := optionalNullableStringField(object, "prior backup label", "prior")
 	if err != nil {
 		return model.Backup{}, err
 	}
@@ -619,6 +619,22 @@ func mapBackup(
 		Permanent:         false,
 		Metadata:          adapterutil.StringMapOrNil(withSystemID(metadata, databaseValue(dbSystemIDs, dbID))),
 	}, nil
+}
+
+func optionalNullableStringField(
+	object map[string]any,
+	name string,
+	key string,
+) (string, error) {
+	value, found := object[key]
+	if !found || value == nil {
+		return "", nil
+	}
+	typed, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s field %q must be a string or null", name, key)
+	}
+	return typed, nil
 }
 
 func databaseVersions(stanza map[string]any) map[string]string {

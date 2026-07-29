@@ -15,6 +15,7 @@
     "backup": [
       {
         "label": "20240502-030405F",
+        "prior": null,
         "type": "full",
         "error": false,
         "archive": {

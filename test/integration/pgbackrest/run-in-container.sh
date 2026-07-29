@@ -147,6 +147,7 @@ log "taking a real pgBackRest full backup"
 run_pgbackrest backup --type=full 2>&1 | tee /output/backup.log
 
 backup_info_json="$(run_pgbackrest info --output=json)"
+printf '%s\n' "${backup_info_json}" >/output/pgbackrest-info.json
 backup_label="$(
   perl -MJSON::PP -0777 -e '
     my $data = decode_json(<>);

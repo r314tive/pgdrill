@@ -59,6 +59,9 @@ func TestParseInfo(t *testing.T) {
 	if full.ProviderID != "main/20240502-030405F" {
 		t.Fatalf("unexpected provider id %q", full.ProviderID)
 	}
+	if full.ParentID != "" {
+		t.Fatalf("unexpected full parent id %q", full.ParentID)
+	}
 	if full.Kind != model.BackupKindFull {
 		t.Fatalf("expected full kind, got %q", full.Kind)
 	}
