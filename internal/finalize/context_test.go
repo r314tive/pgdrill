@@ -36,3 +36,17 @@ func TestContextIsBounded(t *testing.T) {
 		t.Fatal("finalization context did not expire")
 	}
 }
+
+func TestContextUsesDefaultTimeoutWithNilParent(t *testing.T) {
+	before := time.Now()
+	ctx, cancel := Context(nil, 0)
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("default finalization context has no deadline")
+	}
+	if minimum, maximum := before.Add(DefaultTimeout-time.Second), before.Add(DefaultTimeout+time.Second); deadline.Before(minimum) || deadline.After(maximum) {
+		t.Fatalf("default deadline = %s, want between %s and %s", deadline, minimum, maximum)
+	}
+}

@@ -2,7 +2,15 @@
 
 `pgdrill` accepts strict YAML or JSON. Unknown fields are rejected so a typo
 cannot silently disable a provider check, probe, cleanup option, or deadline.
-Durations use Go duration syntax such as `30s`, `20m`, or `6h`.
+Exactly one document is required; concatenated JSON values, YAML document
+streams, and trailing non-whitespace data are rejected. Config input is bounded
+to 4 MiB before decoding. Durations use Go duration syntax such as `30s`,
+`20m`, or `6h`.
+
+JSON input also rejects duplicate object members, invalid UTF-8, unpaired
+UTF-16 surrogate escapes, excessive nesting, and case-folded aliases of
+declared field names. Configuration keys must therefore use their documented
+exact spelling.
 
 ## Semantic Validation
 
@@ -134,7 +142,11 @@ resource name is not sufficient authority for deletion.
 
 `target.kubernetes.cleanup_on_fail` controls cleanup after startup failures and
 ambiguous create outcomes. Once a verify cluster reaches Ready, teardown is
-always attempted. `cleanup_pvc` independently controls deletion of owned PVCs.
+always attempted. `cleanup_pvc` controls pgdrill's explicit deletion and
+absence proof for owned PVCs after Cluster deletion. Setting it to `false` is
+not a PVC-retention guarantee: foreground Cluster deletion, CNPG behavior, and
+Kubernetes garbage collection or storage policy can still remove dependent
+PVCs.
 
 CNPG target verification currently accepts only `recovery.target: latest`
 without timeline or inclusive options. Other targets are rejected before

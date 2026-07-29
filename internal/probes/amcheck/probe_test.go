@@ -92,6 +92,22 @@ func TestRunRejectsUnsupportedArg(t *testing.T) {
 	}
 }
 
+func TestDescriptorAndConfigContract(t *testing.T) {
+	probe := New(Config{Name: " catalog-check "}, &fakeRunner{})
+	if probe.Type() != model.ProbeAMCheck {
+		t.Fatalf("Type() = %q", probe.Type())
+	}
+	if got, want := probe.Descriptor(), (model.ProbeDescriptor{Type: model.ProbeAMCheck, Name: "catalog-check"}); got != want {
+		t.Fatalf("Descriptor() = %#v, want %#v", got, want)
+	}
+	if err := ValidateConfig(Config{Mode: "all", Args: map[string]string{"jobs": "2"}}); err != nil {
+		t.Fatalf("ValidateConfig(valid) error = %v", err)
+	}
+	if err := ValidateConfig(Config{Mode: "future"}); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("ValidateConfig(invalid) error = %v", err)
+	}
+}
+
 type fakeRunner struct {
 	invocation command.Invocation
 	result     command.Result

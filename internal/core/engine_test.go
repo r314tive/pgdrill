@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/recoveryproof"
 	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
@@ -53,7 +56,12 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	probe := &fakeProbe{
 		probeType: model.ProbeSQL,
 		report: model.CheckReport{
-			Checks:   []model.Check{{Name: "select_1", Probe: model.ProbeSQL, Status: model.CheckStatusPassed}},
+			Checks: []model.Check{{
+				Name:        "select_1",
+				Probe:       model.ProbeSQL,
+				Status:      model.CheckStatusPassed,
+				EvidenceIDs: []string{"probe"},
+			}},
 			Evidence: []model.EvidenceRecord{testEvidence("probe")},
 		},
 	}
@@ -120,7 +128,7 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 	if got, want := provider.calls, []string{"discover", "validate", "plan"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected provider calls: got %#v want %#v", got, want)
 	}
-	if got, want := target.calls, []string{"prepare", "execute:fetch", "execute:recover", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+	if got, want := target.calls, []string{"prepare", "execute:fetch", "execute:recover", "start", "verify-recovery", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
 	if !sink.called {
@@ -134,8 +142,8 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 			t.Fatalf("expected evidence %q in %#v", id, evidenceIDs(result.Evidence))
 		}
 	}
-	if len(result.Checks) != 3 {
-		t.Fatalf("expected preflight, catalog, and probe checks, got %d", len(result.Checks))
+	if len(result.Checks) != 4 {
+		t.Fatalf("expected preflight, catalog, recovery proof, and probe checks, got %d", len(result.Checks))
 	}
 	if len(result.Operations) != 5 {
 		t.Fatalf("expected five mutation checkpoints, got %#v", result.Operations)
@@ -152,6 +160,68 @@ func TestEngineRunPassesAndWritesEvidence(t *testing.T) {
 		if verdict.Status != model.PolicyVerdictPassed {
 			t.Fatalf("unexpected policy verdict %#v", verdict)
 		}
+	}
+}
+
+func TestEngineRetainsProvenPrepareReconciliationOutput(t *testing.T) {
+	targetSpec := model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: "/tmp/pgdrill-prepare-reconciliation",
+	}
+	recoveryTarget := model.RecoveryTarget{Type: model.RecoveryTargetLatest}
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+		},
+		plan: testRestorePlan(
+			model.ProviderWALG,
+			"base_1",
+			targetSpec,
+			recoveryTarget,
+			"restore",
+		),
+	}
+	target := &fakeTarget{
+		prepareErr: errors.New("transport closed after prepare"),
+		reconciliation: model.OperationReconciliation{
+			Disposition: model.ReconciliationCompleted,
+			Message:     "owned marker proves preparation",
+			Evidence:    []model.EvidenceRecord{testEvidence("prepare-reconcile")},
+			Report: model.CheckReport{
+				Checks:   []model.Check{{Name: "prepare-proof", Status: model.CheckStatusPassed}},
+				Evidence: []model.EvidenceRecord{testEvidence("prepare-report")},
+			},
+		},
+	}
+	result, err := (Engine{
+		Source:           provider,
+		CatalogValidator: provider,
+		Planner:          provider,
+		Target:           target,
+		Probes:           []Probe{passingProbe()},
+		Sink:             &fakeSink{},
+		Checkpoints:      checkpoint.NewMemoryStore(),
+		Clock:            fixedClock("2025-01-04T00:00:00Z"),
+	}).Run(
+		context.Background(),
+		nativeRequest(model.ProviderWALG, targetSpec, recoveryTarget),
+	)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !hasEvidence(result.Evidence, "prepare-reconcile") ||
+		!hasEvidence(result.Evidence, "prepare-report") {
+		t.Fatalf("prepare reconciliation evidence was lost: %#v", evidenceIDs(result.Evidence))
+	}
+	foundCheck := false
+	for _, check := range result.Checks {
+		if check.Name == "prepare-proof" {
+			foundCheck = true
+		}
+	}
+	if !foundCheck {
+		t.Fatalf("prepare reconciliation check was lost: %#v", result.Checks)
 	}
 }
 
@@ -205,7 +275,7 @@ func TestEnginePolicyGateFailsClosedOnUnprovenRPOAndOldBackup(t *testing.T) {
 	if got := result.PolicyEvaluation.BlockingVerdicts(); len(got) != 2 {
 		t.Fatalf("blocking verdicts = %#v", got)
 	}
-	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "verify-recovery", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("target calls = %#v, want %#v", got, want)
 	}
 	if !sink.called || sink.result.Status != model.DrillStatusFailed {
@@ -307,14 +377,14 @@ func TestEngineRequiresImmutableDrillSpecBeforeExternalWork(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "drill spec is required") {
 		t.Fatalf("Run() error = %v, want missing spec error", err)
 	}
-	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
+	if !reflect.DeepEqual(result, model.DrillResult{}) {
 		t.Fatalf("unexpected result %#v", result)
 	}
 	if len(provider.calls) != 0 || len(target.calls) != 0 {
 		t.Fatalf("missing spec crossed execution boundary: provider=%#v target=%#v", provider.calls, target.calls)
 	}
-	if !sink.called {
-		t.Fatal("missing spec failure was not persisted")
+	if sink.called {
+		t.Fatal("invalid request must not enter the report lifecycle")
 	}
 }
 
@@ -602,11 +672,81 @@ func TestEngineCleansUpAndFailsOnProbeFailure(t *testing.T) {
 	if result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
 		t.Fatalf("expected probe execution failure, got %#v", result.Failure)
 	}
-	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "verify-recovery", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
 	if !sink.called || sink.result.Status != model.DrillStatusFailed {
 		t.Fatalf("expected failed result written to sink, got called=%v status=%q", sink.called, sink.result.Status)
+	}
+}
+
+func TestEngineFailsClosedBeforeProbesWhenRecoveryTargetIsNotProven(t *testing.T) {
+	provider := &fakeProvider{
+		catalog: model.BackupCatalog{
+			Provider: model.ProviderWALG,
+			Backups:  []model.Backup{availableBackup(model.ProviderWALG, "base_1")},
+		},
+		plan: testRestorePlan(
+			model.ProviderWALG,
+			"base_1",
+			model.TargetSpec{Type: model.RestoreTargetLocal},
+			model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			"restore",
+		),
+	}
+	target := &fakeTarget{
+		verifyReport: model.CheckReport{Checks: []model.Check{{
+			Name:    recoveryproof.CheckName,
+			Status:  model.CheckStatusFailed,
+			Message: "latest recovery is still in progress",
+		}}},
+		destroyEvidence: []model.EvidenceRecord{testEvidence("cleanup")},
+	}
+	probe := &fakeProbe{probeType: model.ProbeSQL}
+	sink := &fakeSink{}
+
+	result, err := Engine{
+		Checkpoints:      checkpoint.NewMemoryStore(),
+		Source:           provider,
+		CatalogValidator: provider,
+		Planner:          provider,
+		Target:           target,
+		Probes:           []Probe{probe},
+		Sink:             sink,
+	}.Run(
+		context.Background(),
+		nativeRequest(
+			model.ProviderWALG,
+			model.TargetSpec{Type: model.RestoreTargetLocal},
+			model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		),
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "recovery target proof check did not pass") {
+		t.Fatalf("expected recovery target proof failure, got %v", err)
+	}
+	if result.Status != model.DrillStatusFailed ||
+		result.Failure == nil ||
+		result.Failure.Stage != model.DrillStageProbeExecution {
+		t.Fatalf("unexpected recovery proof failure result %#v", result)
+	}
+	if probe.calls != 0 {
+		t.Fatalf("ordinary probes ran after failed recovery proof: %d calls", probe.calls)
+	}
+	if got, want := target.calls, []string{
+		"prepare",
+		"execute:restore",
+		"start",
+		"verify-recovery",
+		"destroy",
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
+	}
+	if !hasEvidence(result.Evidence, "cleanup") {
+		t.Fatalf("failed recovery proof did not retain cleanup evidence: %#v", result.Evidence)
+	}
+	if !sink.called || sink.result.Status != model.DrillStatusFailed {
+		t.Fatalf("failed recovery proof was not persisted: %#v", sink)
 	}
 }
 
@@ -636,10 +776,10 @@ func TestEngineFailsWhenProbeReturnsNoChecks(t *testing.T) {
 	if result.Status != model.DrillStatusFailed || result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
 		t.Fatalf("unexpected empty probe result %#v", result)
 	}
-	if len(result.Checks) != 2 || result.Checks[1].Status != model.CheckStatusFailed || result.Checks[1].Message != "invalid probe report: report returned no checks" {
+	if len(result.Checks) != 3 || result.Checks[2].Status != model.CheckStatusFailed || result.Checks[2].Message != "invalid probe report: report returned no checks" {
 		t.Fatalf("expected synthesized failed check, got %#v", result.Checks)
 	}
-	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "destroy"}; !reflect.DeepEqual(got, want) {
+	if got, want := target.calls, []string{"prepare", "execute:restore", "start", "verify-recovery", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected target calls: got %#v want %#v", got, want)
 	}
 	if !sink.called || sink.result.Status != model.DrillStatusFailed {
@@ -881,7 +1021,7 @@ func TestEngineSnapshotsAndValidatesProviderIdentityBeforePreflight(t *testing.T
 		Preflight:        preflight,
 		Probes:           []Probe{passingProbe()},
 		Sink:             sink,
-	}.Run(context.Background(), nativeRequest("future-provider", model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
+	}.Run(context.Background(), nativeRequest(model.ProviderWALG, model.TargetSpec{Type: model.RestoreTargetLocal}, model.RecoveryTarget{Type: model.RecoveryTargetLatest}))
 
 	if err == nil || !strings.Contains(err.Error(), "provider type") {
 		t.Fatalf("Run() error = %v, want provider identity error", err)
@@ -1008,17 +1148,14 @@ func TestEngineRejectsInvalidRecoveryTargetBeforeDiscovery(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid recovery target") {
 		t.Fatalf("expected recovery target validation error, got %v", err)
 	}
-	if result.Status != model.DrillStatusFailed {
-		t.Fatalf("expected failed result, got %q", result.Status)
-	}
-	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation {
-		t.Fatalf("expected request validation failure, got %#v", result.Failure)
+	if !reflect.DeepEqual(result, model.DrillResult{}) {
+		t.Fatalf("invalid executable spec returned a report result %#v", result)
 	}
 	if len(provider.calls) != 0 || len(target.calls) != 0 {
 		t.Fatalf("invalid target must fail before external work: provider=%#v target=%#v", provider.calls, target.calls)
 	}
-	if !sink.called || sink.result.Status != model.DrillStatusFailed {
-		t.Fatalf("expected durable failed result, got called=%v result=%#v", sink.called, sink.result)
+	if sink.called {
+		t.Fatalf("invalid executable spec entered the report lifecycle: %#v", sink.result)
 	}
 }
 
@@ -1132,6 +1269,47 @@ func TestEngineReturnsReportWriteFailure(t *testing.T) {
 	}
 }
 
+func TestEngineRejectsImpossibleProbeEvidenceCapacityBeforeMutation(t *testing.T) {
+	evidence := make([]model.EvidenceRecord, model.MaxEvidenceRecordsPerReport)
+	for index := range evidence {
+		evidence[index] = testEvidence(fmt.Sprintf("catalog-%d", index))
+	}
+	provider := &fakeProvider{catalog: model.BackupCatalog{
+		Provider: model.ProviderWALG,
+		Backups: []model.Backup{{
+			ID:         "wal-g:base",
+			Provider:   model.ProviderWALG,
+			ProviderID: "base",
+			Kind:       model.BackupKindFull,
+			Status:     model.BackupStatusAvailable,
+		}},
+		Evidence: evidence,
+	}}
+	target := &fakeTarget{}
+
+	_, err := (Engine{
+		Source:           provider,
+		CatalogValidator: provider,
+		Planner:          provider,
+		Target:           target,
+		Probes:           []Probe{passingProbe()},
+		Checkpoints:      checkpoint.NewMemoryStore(),
+	}).Run(
+		context.Background(),
+		nativeRequest(
+			model.ProviderWALG,
+			model.TargetSpec{Type: model.RestoreTargetLocal},
+			model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		),
+	)
+	if err == nil || !strings.Contains(err.Error(), "requires at least 2 evidence records") {
+		t.Fatalf("Engine.Run() error = %v, want evidence-capacity rejection", err)
+	}
+	if len(target.calls) != 0 {
+		t.Fatalf("capacity failure mutated target: %#v", target.calls)
+	}
+}
+
 type fakeBackupSource struct {
 	catalog       model.BackupCatalog
 	discoverCalls int
@@ -1190,11 +1368,15 @@ func (p *changingTypeProvider) Type() model.ProviderType {
 func passingProbe() Probe {
 	return &fakeProbe{
 		probeType: model.ProbeSQL,
-		report: model.CheckReport{Checks: []model.Check{{
-			Name:   "select_1",
-			Probe:  model.ProbeSQL,
-			Status: model.CheckStatusPassed,
-		}}},
+		report: model.CheckReport{
+			Checks: []model.Check{{
+				Name:        "select_1",
+				Probe:       model.ProbeSQL,
+				Status:      model.CheckStatusPassed,
+				EvidenceIDs: []string{"probe:select-1"},
+			}},
+			Evidence: []model.EvidenceRecord{testEvidence("probe:select-1")},
+		},
 	}
 }
 
@@ -1244,7 +1426,11 @@ type fakeTarget struct {
 	destroyHook       func()
 	destroyContextErr error
 	destroyEvidence   []model.EvidenceRecord
+	reconciliation    model.OperationReconciliation
+	reconcileErr      error
 	operation         model.Operation
+	verifyReport      model.CheckReport
+	verifyErr         error
 }
 
 type validatingTarget struct {
@@ -1272,6 +1458,9 @@ func (t *fakeTarget) BeginOperation(operation model.Operation) error {
 }
 
 func (t *fakeTarget) Reconcile(context.Context, model.OperationCheckpoint) (model.OperationReconciliation, error) {
+	if t.reconciliation.Disposition != "" || t.reconcileErr != nil {
+		return t.reconciliation, t.reconcileErr
+	}
 	return model.OperationReconciliation{Disposition: model.ReconciliationNotApplied}, nil
 }
 
@@ -1300,6 +1489,24 @@ func (t *fakeTarget) StartPostgres(context.Context, model.RuntimeConfig) (model.
 	return model.RunningPostgres{ConnString: "postgres://verify"}, []model.EvidenceRecord{testEvidence("start")}, nil
 }
 
+func (t *fakeTarget) VerifyRecoveryTarget(
+	_ context.Context,
+	_ model.RunningPostgres,
+	target model.RecoveryTarget,
+) (model.CheckReport, error) {
+	t.calls = append(t.calls, "verify-recovery")
+	if len(t.verifyReport.Checks) > 0 ||
+		len(t.verifyReport.Evidence) > 0 ||
+		len(t.verifyReport.Artifacts) > 0 ||
+		t.verifyErr != nil {
+		return t.verifyReport, t.verifyErr
+	}
+	return testRecoveryProof(
+		target,
+		time.Date(2025, 1, 4, 0, 0, 0, 0, time.UTC),
+	), nil
+}
+
 func (t *fakeTarget) Destroy(ctx context.Context) ([]model.EvidenceRecord, error) {
 	t.calls = append(t.calls, "destroy")
 	t.destroyContextErr = ctx.Err()
@@ -1314,6 +1521,7 @@ type fakeProbe struct {
 	descriptor model.ProbeDescriptor
 	report     model.CheckReport
 	err        error
+	calls      int
 }
 
 func (p *fakeProbe) Type() model.ProbeType {
@@ -1328,6 +1536,7 @@ func (p *fakeProbe) Descriptor() model.ProbeDescriptor {
 }
 
 func (p *fakeProbe) Run(context.Context, model.RunningPostgres) (model.CheckReport, error) {
+	p.calls++
 	return p.report, p.err
 }
 
@@ -1352,6 +1561,111 @@ func testEvidence(id string) model.EvidenceRecord {
 		Source:      "test",
 		CollectedAt: time.Date(2025, 1, 4, 0, 0, 0, 0, time.UTC),
 	}
+}
+
+func testRecoveryProof(
+	target model.RecoveryTarget,
+	observedAt time.Time,
+) model.CheckReport {
+	target = target.Normalized()
+	observation := recoveryproof.Observation{
+		SchemaVersion:           recoveryproof.ObservationSchema,
+		ReplayPauseState:        "not paused",
+		RecoveryTargetTimeline:  "latest",
+		RecoveryTargetInclusive: "on",
+		RecoveryTargetAction:    "pause",
+	}
+	if target.Type != model.RecoveryTargetLatest {
+		observation.InRecovery = true
+		observation.ReplayPaused = true
+		observation.ReplayPauseState = "paused"
+	}
+	switch target.Type {
+	case model.RecoveryTargetImmediate:
+		observation.RecoveryTarget = "immediate"
+	case model.RecoveryTargetTimestamp:
+		timestamp, _ := target.Timestamp()
+		observation.RecoveryTargetTime = timestamp.UTC().Format(
+			"2006-01-02 15:04:05.999999999-07:00",
+		)
+	case model.RecoveryTargetLSN:
+		observation.RecoveryTargetLSN = target.Value
+	case model.RecoveryTargetXID:
+		observation.RecoveryTargetXID = target.Value
+	case model.RecoveryTargetRestorePoint:
+		observation.RecoveryTargetName = target.Value
+	}
+	if target.Timeline != "" {
+		observation.RecoveryTargetTimeline = target.Timeline
+	}
+	inclusive := "default"
+	if target.Inclusive != nil {
+		inclusive = fmt.Sprintf("%t", *target.Inclusive)
+		if !*target.Inclusive {
+			observation.RecoveryTargetInclusive = "off"
+		}
+	}
+	state, err := recoveryproof.Evaluate(target, observation)
+	if err != nil {
+		panic(fmt.Sprintf("invalid test recovery proof: %v", err))
+	}
+	payload, _ := json.Marshal(observation)
+	evidenceID := "recovery-target:observe:" + observedAt.Format(time.RFC3339Nano)
+	return model.CheckReport{
+		Checks: []model.Check{{
+			Name:        recoveryproof.CheckName,
+			Status:      model.CheckStatusPassed,
+			Message:     "test recovery proof",
+			EvidenceIDs: []string{evidenceID},
+			Attributes: map[string]string{
+				recoveryproof.ProofProtocolAttribute:    recoveryproof.ObservationSchema,
+				recoveryproof.RecoveryStateAttribute:    state,
+				recoveryproof.TargetTypeAttribute:       string(target.Type),
+				recoveryproof.TargetValueAttribute:      target.Value,
+				recoveryproof.TargetTimelineAttribute:   target.Timeline,
+				recoveryproof.TargetInclusiveAttribute:  inclusive,
+				recoveryproof.ConfiguredActionAttribute: observation.RecoveryTargetAction,
+			},
+		}},
+		Evidence: []model.EvidenceRecord{{
+			ID:          evidenceID,
+			Kind:        model.EvidenceCommand,
+			Source:      recoveryproof.EvidenceSource,
+			CollectedAt: observedAt,
+			Command: &model.CommandEvidence{
+				Path:           "psql",
+				StartedAt:      observedAt.Add(-time.Millisecond),
+				FinishedAt:     observedAt,
+				DurationMillis: 1,
+				ExitStatus: model.ExitStatus{
+					Started:  true,
+					Exited:   true,
+					Success:  true,
+					ExitCode: 0,
+				},
+				Stdout:      string(payload),
+				StdoutBytes: int64(len(payload)),
+			},
+			Attributes: map[string]string{
+				"operation": "observe-recovery-target",
+			},
+		}},
+	}
+}
+
+type fakeRecoveryTargetVerifier struct {
+	report model.CheckReport
+	err    error
+	calls  int
+}
+
+func (v *fakeRecoveryTargetVerifier) VerifyRecoveryTarget(
+	context.Context,
+	model.RunningPostgres,
+	model.RecoveryTarget,
+) (model.CheckReport, error) {
+	v.calls++
+	return v.report, v.err
 }
 
 func nativeRequest(provider model.ProviderType, target model.TargetSpec, recovery model.RecoveryTarget) DrillRequest {

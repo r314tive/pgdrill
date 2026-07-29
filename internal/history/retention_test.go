@@ -296,6 +296,15 @@ func TestApplyRetentionResumesAfterProcessLossBoundary(t *testing.T) {
 		!strings.Contains(err.Error(), "pending retention operation") {
 		t.Fatalf("PlanRetention(pending) error = %v", err)
 	}
+	newAttempt := historyRetry(first, "attempt-after-interruption", second.StartedAt.Add(time.Hour))
+	if err := baseStore.WriteEvent(context.Background(), validEvents(newAttempt)[0]); err == nil ||
+		!strings.Contains(err.Error(), "history write requires clean retention state") {
+		t.Fatalf("WriteEvent(pending retention) error = %v", err)
+	}
+	if err := baseStore.SaveReport(context.Background(), newAttempt); err == nil ||
+		!strings.Contains(err.Error(), "history write requires clean retention state") {
+		t.Fatalf("SaveReport(pending retention) error = %v", err)
+	}
 
 	resumed, err := baseStore.ApplyRetention(context.Background(), policy, plan.Digest)
 	if err != nil {
@@ -472,6 +481,15 @@ func TestApplyRetentionFinishesCompletedPendingDeleteAfterProcessLoss(t *testing
 		len(verification.PendingRetentionCleanup) != 1 ||
 		verification.PendingRetentionCleanup[0] != plan.Digest {
 		t.Fatalf("verification = %#v", verification)
+	}
+	newAttempt := historyRetry(result, "attempt-after-finalize", result.StartedAt.Add(time.Hour))
+	if err := base.WriteEvent(context.Background(), validEvents(newAttempt)[0]); err == nil ||
+		!strings.Contains(err.Error(), "history write requires clean retention state") {
+		t.Fatalf("WriteEvent(pending cleanup) error = %v", err)
+	}
+	if err := base.SaveReport(context.Background(), newAttempt); err == nil ||
+		!strings.Contains(err.Error(), "history write requires clean retention state") {
+		t.Fatalf("SaveReport(pending cleanup) error = %v", err)
 	}
 
 	if _, err := base.ApplyRetention(

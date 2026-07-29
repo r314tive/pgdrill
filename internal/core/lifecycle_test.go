@@ -328,6 +328,46 @@ func TestRunLifecycleMarksReportFailureBeforeTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleRewritesPassedReportAfterUncertainWrite(t *testing.T) {
+	result := baseLifecycleResult(time.Now().UTC())
+	wantErr := errors.New("report sync outcome is uncertain")
+	reports := []model.DrillResult{}
+	lifecycle, err := newRunLifecycle(
+		&result,
+		"attempt-1",
+		evidenceSinkFunc(func(_ context.Context, result model.DrillResult) error {
+			reports = append(reports, result)
+			if len(reports) == 1 {
+				return wantErr
+			}
+			return nil
+		}),
+		nil,
+		nil,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("newRunLifecycle() error = %v", err)
+	}
+	if err := lifecycle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	got, err := lifecycle.Finish(context.Background(), model.DrillStatusPassed, nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Finish() error = %v, want uncertain write error", err)
+	}
+	if got.Status != model.DrillStatusFailed || got.Failure == nil || got.Failure.Stage != model.DrillStageReportWrite {
+		t.Fatalf("unexpected final result %#v", got)
+	}
+	if len(reports) != 2 {
+		t.Fatalf("report writes = %d, want 2", len(reports))
+	}
+	if reports[0].Status != model.DrillStatusPassed || reports[1].Status != model.DrillStatusFailed {
+		t.Fatalf("report statuses = %q, %q; want passed then failed", reports[0].Status, reports[1].Status)
+	}
+}
+
 func TestRunLifecycleFinalizationStageRunsWhenStartEventFails(t *testing.T) {
 	result := baseLifecycleResult(time.Now().UTC())
 	wantErr := errors.New("event store unavailable")

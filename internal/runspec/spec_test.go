@@ -116,6 +116,12 @@ func TestNewRejectsInvalidContracts(t *testing.T) {
 			d.Policy.MaximumRPO = "500us"
 		}, want: "invalid recovery policy"},
 		{name: "empty probes", edit: func(d *model.DrillSpec) { d.ProbeProfile.Probes = nil }, want: "at least one probe"},
+		{name: "too many probes", edit: func(d *model.DrillSpec) {
+			d.ProbeProfile.Probes = make([]model.ProbeDescriptor, model.MaxChecksPerReport+1)
+		}, want: "maximum probe count"},
+		{name: "no room for required stage check", edit: func(d *model.DrillSpec) {
+			d.ProbeProfile.Probes = make([]model.ProbeDescriptor, model.MaxChecksPerReport)
+		}, want: "maximum probe count"},
 		{name: "duplicate probe", edit: func(d *model.DrillSpec) {
 			d.ProbeProfile.Probes = append(d.ProbeProfile.Probes, d.ProbeProfile.Probes[0])
 		}, want: "duplicate probe name"},
@@ -133,7 +139,7 @@ func TestNewRejectsInvalidContracts(t *testing.T) {
 	}
 }
 
-func TestSnapshotPreservesInvalidRequestForEngineValidation(t *testing.T) {
+func TestSnapshotPreservesInvalidRequestForDiagnostics(t *testing.T) {
 	document := validDocument()
 	document.RecoveryTarget = model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "invalid"}
 	spec, err := Snapshot(document)
@@ -160,6 +166,15 @@ func TestParseRejectsUnknownFieldsAndTrailingValues(t *testing.T) {
 	}
 	if _, err := Parse(append(spec.CanonicalJSON(), []byte(` {}`)...)); err == nil || !strings.Contains(err.Error(), "multiple JSON values") {
 		t.Fatalf("Parse(trailing) error = %v", err)
+	}
+	duplicate := bytes.Replace(
+		spec.CanonicalJSON(),
+		[]byte(`"mode":"native"`),
+		[]byte(`"mode":"native","mode":"managed"`),
+		1,
+	)
+	if _, err := Parse(duplicate); err == nil || !strings.Contains(err.Error(), `duplicate JSON object member "mode"`) {
+		t.Fatalf("Parse(duplicate) error = %v", err)
 	}
 }
 

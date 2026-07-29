@@ -13,6 +13,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/policy"
+	"github.com/r314tive/pgdrill/internal/recoveryproof"
 	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
@@ -39,15 +40,18 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 		FinishedAt:     finishedAt,
 		Status:         model.DrillStatusPassed,
 		Checks: []model.Check{{
-			Name:   "select_1",
-			Probe:  model.ProbeSQL,
-			Status: model.CheckStatusPassed,
+			Name:        "select_1",
+			Probe:       model.ProbeSQL,
+			Status:      model.CheckStatusPassed,
+			EvidenceIDs: []string{"evidence-1"},
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
 		}},
 		Evidence: []model.EvidenceRecord{{
 			ID:          "evidence-1",
 			Kind:        model.EvidenceCheck,
 			Source:      "test",
-			CollectedAt: finishedAt,
+			CollectedAt: startedAt.Add(20 * time.Second),
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
 		}},
 	}
 	result = attachTestSpec(result)
@@ -81,7 +85,9 @@ func TestJSONFileSinkWritesAndReadsResult(t *testing.T) {
 	if loaded.PolicyEvaluation == nil || len(loaded.PolicyEvaluation.Verdicts) != len(model.RecoveryPolicyAssertions()) {
 		t.Fatalf("unexpected policy evaluation %#v", loaded.PolicyEvaluation)
 	}
-	if len(loaded.Checks) != 1 || loaded.Checks[0].Name != "select_1" {
+	if len(loaded.Checks) != 2 ||
+		loaded.Checks[0].Name != "select_1" ||
+		loaded.Checks[1].Name != recoveryproof.CheckName {
 		t.Fatalf("unexpected checks %#v", loaded.Checks)
 	}
 	dirInfo, err := os.Stat(filepath.Dir(path))
@@ -134,6 +140,7 @@ func TestJSONFileSinkReplacesExistingFile(t *testing.T) {
 		Stage:   model.DrillStageProbeExecution,
 		Message: "probe failed",
 	}
+	result = attachTestSpec(result)
 	err := (JSONFileSink{Path: path}).Write(context.Background(), result)
 	if err != nil {
 		t.Fatalf("write replacement report: %v", err)
@@ -176,16 +183,23 @@ func TestJSONFileSinkEncodingFailurePreservesExistingReport(t *testing.T) {
 	}
 }
 
-func TestJSONFileSinkRejectsLegacyProducerSchema(t *testing.T) {
-	result := validTestResult()
-	result.SchemaVersion = model.LegacyReportSchemaVersion
-	path := filepath.Join(t.TempDir(), "report.json")
-	err := (JSONFileSink{Path: path}).Write(context.Background(), result)
-	if err == nil || !strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
-		t.Fatalf("JSONFileSink.Write() legacy producer error = %v", err)
-	}
-	if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("legacy producer created report: %v", statErr)
+func TestJSONFileSinkRejectsReaderOnlyProducerSchemas(t *testing.T) {
+	for _, schema := range []string{
+		model.PreviousReportSchemaVersion,
+		model.LegacyReportSchemaVersion,
+	} {
+		t.Run(schema, func(t *testing.T) {
+			result := validTestResult()
+			result.SchemaVersion = schema
+			path := filepath.Join(t.TempDir(), "report.json")
+			err := (JSONFileSink{Path: path}).Write(context.Background(), result)
+			if err == nil || !strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
+				t.Fatalf("JSONFileSink.Write() reader-only producer error = %v", err)
+			}
+			if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("reader-only producer created report: %v", statErr)
+			}
+		})
 	}
 }
 
@@ -202,6 +216,7 @@ func TestJSONFileSinkReplacesFinalSymlinkWithoutFollowingIt(t *testing.T) {
 
 	result := validTestResult()
 	result.ID = "safe"
+	result = attachTestSpec(result)
 	if err := (JSONFileSink{Path: reportPath}).Write(context.Background(), result); err != nil {
 		t.Fatalf("write report over symlink: %v", err)
 	}
@@ -222,6 +237,8 @@ func TestReadJSONNormalizesLegacyReportSchema(t *testing.T) {
 	legacy := validTestResult()
 	legacy.SchemaVersion = ""
 	legacy.ID = "legacy"
+	legacy = attachTestSpec(legacy)
+	legacy.SchemaVersion = ""
 	data, err := json.Marshal(legacy)
 	if err != nil {
 		t.Fatalf("marshal legacy report: %v", err)
@@ -230,8 +247,29 @@ func TestReadJSONNormalizesLegacyReportSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read legacy report: %v", err)
 	}
-	if result.SchemaVersion != model.CurrentReportSchemaVersion {
+	if result.SchemaVersion != model.LegacyReportSchemaVersion {
 		t.Fatalf("unexpected normalized schema version %q", result.SchemaVersion)
+	}
+}
+
+func TestReadJSONAppliesCurrentProofContract(t *testing.T) {
+	result := validTestResult()
+	result.Operations = nil
+	result.Checks = nil
+	result.Evidence = nil
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal current report: %v", err)
+	}
+
+	if _, err := ReadJSON(bytes.NewReader(data)); err == nil ||
+		!strings.Contains(err.Error(), "passed native report requires") {
+		t.Fatalf("ReadJSON() error = %v, want current proof-contract rejection", err)
+	}
+	var output bytes.Buffer
+	if err := WriteCompatibleJSON(&output, result); err == nil ||
+		!strings.Contains(err.Error(), "passed native report requires") {
+		t.Fatalf("WriteCompatibleJSON() error = %v, want current proof-contract rejection", err)
 	}
 }
 
@@ -249,6 +287,13 @@ func TestReadJSONRejectsMultipleValues(t *testing.T) {
 	}
 }
 
+func TestReadJSONRejectsDuplicateMembers(t *testing.T) {
+	_, err := ReadJSON(strings.NewReader(`{"id":"one","id":"two"}`))
+	if err == nil || !strings.Contains(err.Error(), `duplicate JSON object member "id"`) {
+		t.Fatalf("ReadJSON() error = %v", err)
+	}
+}
+
 func TestReadJSONRejectsNilAndOversizedInput(t *testing.T) {
 	if _, err := ReadJSON(nil); err == nil || !strings.Contains(err.Error(), "input is required") {
 		t.Fatalf("ReadJSON(nil) error = %v, want required input", err)
@@ -263,6 +308,8 @@ func TestWriteJSONAddsSchemaVersion(t *testing.T) {
 	result := validTestResult()
 	result.SchemaVersion = ""
 	result.ID = "new"
+	result = attachTestSpec(result)
+	result.SchemaVersion = ""
 	if err := WriteJSON(&output, result); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
@@ -279,16 +326,48 @@ func TestWriteJSONRejectsUnsupportedSchema(t *testing.T) {
 	}
 }
 
-func TestWriteJSONRejectsLegacyProducerSchema(t *testing.T) {
-	var output bytes.Buffer
-	result := validTestResult()
-	result.SchemaVersion = model.LegacyReportSchemaVersion
-	err := WriteJSON(&output, result)
-	if err == nil || !strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
-		t.Fatalf("WriteJSON() legacy producer error = %v", err)
+func TestWriteJSONRejectsReaderOnlyProducerSchemas(t *testing.T) {
+	for _, schema := range []string{
+		model.PreviousReportSchemaVersion,
+		model.LegacyReportSchemaVersion,
+	} {
+		t.Run(schema, func(t *testing.T) {
+			var output bytes.Buffer
+			result := validTestResult()
+			result.SchemaVersion = schema
+			err := WriteJSON(&output, result)
+			if err == nil || !strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
+				t.Fatalf("WriteJSON() reader-only producer error = %v", err)
+			}
+			if output.Len() != 0 {
+				t.Fatalf("WriteJSON() emitted reader-only output: %q", output.String())
+			}
+		})
 	}
-	if output.Len() != 0 {
-		t.Fatalf("WriteJSON() emitted legacy output: %q", output.String())
+}
+
+func TestPreviousReportSchemaRemainsReadableAndCompatiblyWritable(t *testing.T) {
+	previous := validTestResult()
+	previous.SchemaVersion = model.PreviousReportSchemaVersion
+
+	var compatible bytes.Buffer
+	if err := WriteCompatibleJSON(&compatible, previous); err != nil {
+		t.Fatalf("WriteCompatibleJSON(previous) error = %v", err)
+	}
+	decoded, err := ReadJSON(bytes.NewReader(compatible.Bytes()))
+	if err != nil {
+		t.Fatalf("ReadJSON(previous) error = %v", err)
+	}
+	if decoded.SchemaVersion != model.PreviousReportSchemaVersion {
+		t.Fatalf(
+			"ReadJSON(previous) schema = %q, want %q",
+			decoded.SchemaVersion,
+			model.PreviousReportSchemaVersion,
+		)
+	}
+	if err := WriteJSON(&bytes.Buffer{}, decoded); err == nil ||
+		!strings.Contains(err.Error(), model.CurrentReportSchemaVersion) {
+		t.Fatalf("WriteJSON(previous) error = %v, want current-schema rejection", err)
 	}
 }
 
@@ -387,6 +466,20 @@ func validTestResult() model.DrillResult {
 		StartedAt:      startedAt,
 		FinishedAt:     startedAt.Add(time.Minute),
 		Status:         model.DrillStatusPassed,
+		Checks: []model.Check{{
+			Name:        "select_1",
+			Probe:       model.ProbeSQL,
+			Status:      model.CheckStatusPassed,
+			EvidenceIDs: []string{"probe:select-1"},
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
+		}},
+		Evidence: []model.EvidenceRecord{{
+			ID:          "probe:select-1",
+			Kind:        model.EvidenceCheck,
+			Source:      "test",
+			CollectedAt: startedAt.Add(20 * time.Second),
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
+		}},
 	})
 }
 
@@ -425,15 +518,296 @@ func attachTestSpec(result model.DrillResult) model.DrillResult {
 	result.AttemptID = "attempt-1"
 	result.SpecDigest = spec.Digest()
 	result.Spec = &specDocument
+	result.Operations = successfulNativeTestOperations(result)
+	attachTestRecoveryProof(&result, result.StartedAt.Add(10*time.Second))
+	recoveryProvenAt := result.StartedAt.Add(30 * time.Second)
 	evaluation, err := policy.Evaluate(specDocument.Policy, specDocument.RecoveryTarget, policy.Facts{
-		StartedAt:   result.StartedAt,
-		EvaluatedAt: result.FinishedAt,
-		Backup:      result.Backup,
-		Operations:  result.Operations,
+		StartedAt:        result.StartedAt,
+		EvaluatedAt:      result.FinishedAt,
+		RecoveryProvenAt: recoveryProvenAt,
+		Backup:           result.Backup,
+		Operations:       result.Operations,
 	})
 	if err != nil {
 		panic(err)
 	}
 	result.PolicyEvaluation = &evaluation
 	return result
+}
+
+func successfulNativeTestOperations(result model.DrillResult) []model.OperationCheckpoint {
+	identity := model.AttemptIdentity{
+		RunID:      result.ID,
+		AttemptID:  result.AttemptID,
+		SpecDigest: result.SpecDigest,
+	}
+	definitions := []struct {
+		stage   model.DrillStage
+		kind    model.OperationKind
+		name    string
+		ordinal int
+		start   time.Duration
+		finish  time.Duration
+	}{
+		{model.DrillStageTargetPreparation, model.OperationTargetPrepare, "prepare-target", 0, time.Second, 2 * time.Second},
+		{model.DrillStageRestoreExecution, model.OperationRestoreStep, "restore-backup", 1, 3 * time.Second, 4 * time.Second},
+		{model.DrillStagePostgresStart, model.OperationPostgresStart, "start-postgres", 2, 5 * time.Second, 6 * time.Second},
+		{model.DrillStageTargetCleanup, model.OperationTargetCleanup, "cleanup-target", 3, 40 * time.Second, 41 * time.Second},
+	}
+	operations := make([]model.OperationCheckpoint, 0, len(definitions))
+	for _, definition := range definitions {
+		operation, err := model.NewOperation(
+			identity,
+			definition.stage,
+			definition.kind,
+			definition.name,
+			definition.ordinal,
+		)
+		if err != nil {
+			panic(err)
+		}
+		operations = append(operations, model.OperationCheckpoint{
+			SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+			Operation:     operation,
+			State:         model.OperationStateSucceeded,
+			StartedAt:     result.StartedAt.Add(definition.start),
+			UpdatedAt:     result.StartedAt.Add(definition.finish),
+		})
+	}
+	return operations
+}
+
+func validManagedTestResult() model.DrillResult {
+	startedAt := time.Date(2026, 7, 20, 11, 59, 0, 0, time.UTC)
+	result := model.DrillResult{
+		SchemaVersion: model.CurrentReportSchemaVersion,
+		ID:            "managed-valid",
+		Backup: model.Backup{
+			ID:         "cnpg:backup-1",
+			ProviderID: "backup-1",
+			Kind:       model.BackupKindUnknown,
+			Status:     model.BackupStatusAvailable,
+		},
+		Target:         model.TargetSpec{Type: model.RestoreTargetKubernetes},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		StartedAt:      startedAt,
+		FinishedAt:     startedAt.Add(time.Minute),
+		Status:         model.DrillStatusPassed,
+		Checks: []model.Check{{
+			Name:        "select_1",
+			Probe:       model.ProbeSQL,
+			Status:      model.CheckStatusPassed,
+			EvidenceIDs: []string{"probe:managed-select-1"},
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
+		}},
+		Evidence: []model.EvidenceRecord{{
+			ID:          "probe:managed-select-1",
+			Kind:        model.EvidenceCheck,
+			Source:      "test",
+			CollectedAt: startedAt.Add(20 * time.Second),
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
+		}},
+	}
+	document := model.DrillSpec{
+		Mode: model.DrillModeManaged,
+		Source: model.BackupSourceSpec{Ref: model.ComponentRef{
+			ID:       "managed-source",
+			Driver:   "cnpg",
+			Revision: "sha256:" + strings.Repeat("a", 64),
+		}},
+		BackupSelection: model.BackupSelection{Type: model.BackupSelectionLatestAvailable},
+		Target: model.RestoreTargetSpec{
+			Ref: model.ComponentRef{
+				ID:       "managed-target",
+				Driver:   "cnpg",
+				Revision: "sha256:" + strings.Repeat("b", 64),
+			},
+			Spec: result.Target,
+		},
+		RecoveryTarget: result.RecoveryTarget,
+		ProbeProfile: model.ProbeProfileSpec{
+			Ref: model.ComponentRef{
+				ID:       "managed-probes",
+				Driver:   "inline",
+				Revision: "sha256:" + strings.Repeat("c", 64),
+			},
+			Probes: []model.ProbeDescriptor{{Type: model.ProbeSQL, Name: "select_1"}},
+		},
+	}
+	spec, err := runspec.New(document)
+	if err != nil {
+		panic(err)
+	}
+	canonical := spec.Document()
+	result.AttemptID = "attempt-1"
+	result.SpecDigest = spec.Digest()
+	result.Spec = &canonical
+	result.Operations = successfulManagedTestOperations(result)
+	attachTestRecoveryProof(&result, result.StartedAt.Add(10*time.Second))
+	recoveryProvenAt := result.StartedAt.Add(30 * time.Second)
+	evaluation, err := policy.Evaluate(canonical.Policy, canonical.RecoveryTarget, policy.Facts{
+		StartedAt:        result.StartedAt,
+		EvaluatedAt:      result.FinishedAt,
+		RecoveryProvenAt: recoveryProvenAt,
+		Backup:           result.Backup,
+		Operations:       result.Operations,
+	})
+	if err != nil {
+		panic(err)
+	}
+	result.PolicyEvaluation = &evaluation
+	return result
+}
+
+func successfulManagedTestOperations(result model.DrillResult) []model.OperationCheckpoint {
+	identity := model.AttemptIdentity{
+		RunID:      result.ID,
+		AttemptID:  result.AttemptID,
+		SpecDigest: result.SpecDigest,
+	}
+	definitions := []struct {
+		stage   model.DrillStage
+		kind    model.OperationKind
+		name    string
+		ordinal int
+		start   time.Duration
+		finish  time.Duration
+	}{
+		{model.DrillStageTargetStart, model.OperationManagedStart, "start-managed-target", 0, time.Second, 2 * time.Second},
+		{model.DrillStageTargetCleanup, model.OperationTargetCleanup, "cleanup-target", 1, 40 * time.Second, 41 * time.Second},
+	}
+	operations := make([]model.OperationCheckpoint, 0, len(definitions))
+	for _, definition := range definitions {
+		operation, err := model.NewOperation(
+			identity,
+			definition.stage,
+			definition.kind,
+			definition.name,
+			definition.ordinal,
+		)
+		if err != nil {
+			panic(err)
+		}
+		operations = append(operations, model.OperationCheckpoint{
+			SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+			Operation:     operation,
+			State:         model.OperationStateSucceeded,
+			StartedAt:     result.StartedAt.Add(definition.start),
+			UpdatedAt:     result.StartedAt.Add(definition.finish),
+		})
+	}
+	return operations
+}
+
+func attachTestRecoveryProof(result *model.DrillResult, observedAt time.Time) {
+	if result == nil {
+		panic("result is required")
+	}
+	proofEvidenceIDs := map[string]struct{}{}
+	checks := result.Checks[:0]
+	for _, check := range result.Checks {
+		if check.Name == recoveryproof.CheckName {
+			for _, evidenceID := range check.EvidenceIDs {
+				proofEvidenceIDs[evidenceID] = struct{}{}
+			}
+			continue
+		}
+		checks = append(checks, check)
+	}
+	result.Checks = checks
+	evidence := result.Evidence[:0]
+	for _, record := range result.Evidence {
+		if _, proof := proofEvidenceIDs[record.ID]; proof {
+			continue
+		}
+		evidence = append(evidence, record)
+	}
+	result.Evidence = evidence
+
+	observation := recoveryproof.Observation{
+		SchemaVersion:           recoveryproof.ObservationSchema,
+		RecoveryTargetTimeline:  "latest",
+		RecoveryTargetInclusive: "on",
+		RecoveryTargetAction:    "pause",
+	}
+	target := result.RecoveryTarget.Normalized()
+	if target.Timeline != "" {
+		observation.RecoveryTargetTimeline = target.Timeline
+	}
+	if target.Inclusive != nil && !*target.Inclusive {
+		observation.RecoveryTargetInclusive = "off"
+	}
+	if target.Type == model.RecoveryTargetLatest {
+		observation.ReplayPauseState = "not paused"
+	} else {
+		observation.InRecovery = true
+		observation.ReplayPaused = true
+		observation.ReplayPauseState = "paused"
+		switch target.Type {
+		case model.RecoveryTargetImmediate:
+			observation.RecoveryTarget = "immediate"
+		case model.RecoveryTargetTimestamp:
+			observation.RecoveryTargetTime = target.Value
+		case model.RecoveryTargetLSN:
+			observation.RecoveryTargetLSN = target.Value
+		case model.RecoveryTargetXID:
+			observation.RecoveryTargetXID = target.Value
+		case model.RecoveryTargetRestorePoint:
+			observation.RecoveryTargetName = target.Value
+		}
+	}
+	state, err := recoveryproof.Evaluate(target, observation)
+	if err != nil {
+		panic(err)
+	}
+	payload, err := json.Marshal(observation)
+	if err != nil {
+		panic(err)
+	}
+	inclusiveAttribute := "default"
+	if target.Inclusive != nil {
+		inclusiveAttribute = "true"
+		if !*target.Inclusive {
+			inclusiveAttribute = "false"
+		}
+	}
+	evidenceID := "recovery-target:observe:" + observedAt.Format(time.RFC3339Nano)
+	result.Checks = append(result.Checks, model.Check{
+		Name:        recoveryproof.CheckName,
+		Status:      model.CheckStatusPassed,
+		Message:     "test recovery proof",
+		EvidenceIDs: []string{evidenceID},
+		Attributes: map[string]string{
+			recoveryproof.ProofProtocolAttribute:    recoveryproof.ObservationSchema,
+			recoveryproof.RecoveryStateAttribute:    state,
+			recoveryproof.TargetTypeAttribute:       string(target.Type),
+			recoveryproof.TargetValueAttribute:      target.Value,
+			recoveryproof.TargetTimelineAttribute:   target.Timeline,
+			recoveryproof.TargetInclusiveAttribute:  inclusiveAttribute,
+			recoveryproof.ConfiguredActionAttribute: observation.RecoveryTargetAction,
+		},
+	})
+	result.Evidence = append(result.Evidence, model.EvidenceRecord{
+		ID:          evidenceID,
+		Kind:        model.EvidenceCommand,
+		Source:      recoveryproof.EvidenceSource,
+		CollectedAt: observedAt,
+		Command: &model.CommandEvidence{
+			Path:           "psql",
+			StartedAt:      observedAt.Add(-time.Second),
+			FinishedAt:     observedAt,
+			DurationMillis: 1000,
+			ExitStatus: model.ExitStatus{
+				Started:  true,
+				Exited:   true,
+				Success:  true,
+				ExitCode: 0,
+			},
+			Stdout:      string(payload),
+			StdoutBytes: int64(len(payload)),
+		},
+		Attributes: map[string]string{
+			"operation": "observe-recovery-target",
+		},
+	})
 }

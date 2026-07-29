@@ -1,17 +1,19 @@
 package pgbackrest
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/adapterutil"
 	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
@@ -94,7 +96,11 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 
 	backups, err := ParseInfo(result.Raw.Stdout, a.cfg.Stanza)
 	if err != nil {
-		return catalog, err
+		return catalog, result.RedactError(err)
+	}
+	backups, err = adapterutil.RedactBackups(backups, result)
+	if err != nil {
+		return catalog, fmt.Errorf("redact pgbackrest backup catalog: %w", err)
 	}
 	catalog.Backups = backups
 	return catalog, nil
@@ -103,9 +109,13 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, backup model.Backup, _ model.RecoveryTarget) (model.CheckReport, error) {
 	report := model.CheckReport{}
 	if a.cfg.Check.Enabled {
-		check, evidence, _ := a.runValidationCommandWith(ctx, "pgbackrest-check", "check", a.checkArgs(), a.checkTimeout(), a.checkRedactions())
-		report.Checks = append(report.Checks, check)
+		check, evidence, result := a.runValidationCommandWith(ctx, "pgbackrest-check", "check", a.checkArgs(), a.checkTimeout(), a.checkRedactions())
 		report.Evidence = append(report.Evidence, evidence)
+		check, err := adapterutil.RedactCheck(check, result)
+		if err != nil {
+			return report, fmt.Errorf("redact pgbackrest-check result: %w", result.RedactError(err))
+		}
+		report.Checks = append(report.Checks, check)
 	} else {
 		report.Checks = append(report.Checks, model.Check{
 			Name:    "pgbackrest-check",
@@ -126,9 +136,13 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 		if err != nil {
 			return report, err
 		}
-		check, evidence, _ := a.runValidationCommandWith(ctx, "pgbackrest-verify", "verify", args, a.verifyTimeout(), a.verifyRedactions())
-		report.Checks = append(report.Checks, check)
+		check, evidence, result := a.runValidationCommandWith(ctx, "pgbackrest-verify", "verify", args, a.verifyTimeout(), a.verifyRedactions())
 		report.Evidence = append(report.Evidence, evidence)
+		check, err = adapterutil.RedactCheck(check, result)
+		if err != nil {
+			return report, fmt.Errorf("redact pgbackrest-verify result: %w", result.RedactError(err))
+		}
+		report.Checks = append(report.Checks, check)
 	} else {
 		report.Checks = append(report.Checks, model.Check{
 			Name:    "pgbackrest-verify",
@@ -306,7 +320,7 @@ func (a *Adapter) runValidationCommandWith(ctx context.Context, name string, ope
 	}
 	if err != nil {
 		check.Status = model.CheckStatusFailed
-		check.Message = fmt.Sprintf("run %s: %v", name, err)
+		check.Message = fmt.Sprintf("run %s: %v", name, result.RedactError(err))
 		return check, evidence, result
 	}
 	if !result.Evidence.ExitStatus.Success {
@@ -393,7 +407,7 @@ func pgBackRestRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
 		args = append(args, "--target-exclusive")
 	}
 	if targeted {
-		args = append(args, "--target-action=promote")
+		args = append(args, "--target-action=pause")
 	}
 	return args, nil
 }
@@ -456,9 +470,7 @@ func ParseInfo(data []byte, defaultStanza string) ([]model.Backup, error) {
 	}
 
 	var root any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&root); err != nil {
+	if err := jsonutil.DecodeOne(data, &root); err != nil {
 		return nil, fmt.Errorf("parse pgbackrest info json: %w", err)
 	}
 
@@ -469,21 +481,45 @@ func ParseInfo(data []byte, defaultStanza string) ([]model.Backup, error) {
 
 	backups := []model.Backup{}
 	for i, stanza := range stanzas {
-		stanzaName := firstNonEmpty(getString(stanza, "name", "stanza"), defaultStanza)
+		stanzaNameValue, _, err := optionalStringField(stanza, "stanza name", "name", "stanza")
+		if err != nil {
+			return nil, fmt.Errorf("parse pgbackrest stanza %d: %w", i, err)
+		}
+		stanzaName := firstNonEmpty(stanzaNameValue, defaultStanza)
 		dbVersions := databaseVersions(stanza)
 		dbSystemIDs := databaseSystemIDs(stanza)
-		stanzaStatus := statusMessage(stanza["status"])
+		stanzaStatus, stanzaHealthy, err := statusMessage(stanza["status"])
+		if err != nil {
+			return nil, fmt.Errorf("parse pgbackrest stanza %d: %w", i, err)
+		}
 
-		backupValues, ok := stanza["backup"].([]any)
+		backupValue, found := stanza["backup"]
+		if !found {
+			return nil, fmt.Errorf("parse pgbackrest stanza %d: missing backup array", i)
+		}
+		backupValues, ok := backupValue.([]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("parse pgbackrest stanza %d: backup must be an array", i)
+		}
+		if len(backupValues) > model.MaxBackupsPerCatalog-len(backups) {
+			return nil, fmt.Errorf(
+				"parse pgbackrest info: backups exceed maximum count %d",
+				model.MaxBackupsPerCatalog,
+			)
 		}
 		for j, value := range backupValues {
 			object, ok := value.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("parse pgbackrest stanza %d backup %d: expected object", i, j)
 			}
-			backup, err := mapBackup(object, stanzaName, stanzaStatus, dbVersions, dbSystemIDs)
+			backup, err := mapBackup(
+				object,
+				stanzaName,
+				stanzaStatus,
+				stanzaHealthy,
+				dbVersions,
+				dbSystemIDs,
+			)
 			if err != nil {
 				return nil, fmt.Errorf("parse pgbackrest stanza %d backup %d: %w", i, j, err)
 			}
@@ -496,6 +532,12 @@ func ParseInfo(data []byte, defaultStanza string) ([]model.Backup, error) {
 func collectStanzas(root any) ([]map[string]any, error) {
 	switch typed := root.(type) {
 	case []any:
+		if len(typed) > model.MaxBackupsPerCatalog {
+			return nil, fmt.Errorf(
+				"parse pgbackrest info: stanzas exceed maximum count %d",
+				model.MaxBackupsPerCatalog,
+			)
+		}
 		stanzas := make([]map[string]any, 0, len(typed))
 		for i, value := range typed {
 			object, ok := value.(map[string]any)
@@ -512,10 +554,29 @@ func collectStanzas(root any) ([]map[string]any, error) {
 	}
 }
 
-func mapBackup(object map[string]any, stanzaName string, stanzaStatus string, dbVersions map[string]string, dbSystemIDs map[string]string) (model.Backup, error) {
-	label := getString(object, "label", "set")
-	if label == "" {
-		return model.Backup{}, fmt.Errorf("missing backup label")
+func mapBackup(
+	object map[string]any,
+	stanzaName string,
+	stanzaStatus string,
+	stanzaHealthy bool,
+	dbVersions map[string]string,
+	dbSystemIDs map[string]string,
+) (model.Backup, error) {
+	label, err := requiredStringField(object, "backup label", "label", "set")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	prior, _, err := optionalStringField(object, "prior backup label", "prior")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	backupType, _, err := optionalStringField(object, "backup type", "type")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	failed, errorPresent, err := optionalBoolField(object, "backup error", "error")
+	if err != nil {
+		return model.Backup{}, err
 	}
 
 	providerID := label
@@ -524,11 +585,17 @@ func mapBackup(object map[string]any, stanzaName string, stanzaStatus string, db
 	}
 
 	dbID := nestedString(object, "database", "id")
-	startedAt := nestedTime(object, "timestamp", "start")
-	finishedAt := nestedTime(object, "timestamp", "stop")
-	status := model.BackupStatusAvailable
-	if getBool(object, "error") {
-		status = model.BackupStatusFailed
+	startedAt, err := nestedTime(object, "timestamp", "start")
+	if err != nil {
+		return model.Backup{}, fmt.Errorf("backup start time: %w", err)
+	}
+	finishedAt, err := nestedTime(object, "timestamp", "stop")
+	if err != nil {
+		return model.Backup{}, fmt.Errorf("backup finish time: %w", err)
+	}
+	status := model.BackupStatusFailed
+	if stanzaHealthy && errorPresent && !failed {
+		status = model.BackupStatusAvailable
 	}
 
 	metadata := map[string]string{}
@@ -544,8 +611,8 @@ func mapBackup(object map[string]any, stanzaName string, stanzaStatus string, db
 		Provider:       model.ProviderPGBackRest,
 		ProviderID:     providerID,
 		ClusterName:    stanzaName,
-		ParentID:       getString(object, "prior"),
-		Kind:           mapBackupKind(getString(object, "type")),
+		ParentID:       prior,
+		Kind:           mapBackupKind(backupType),
 		Status:         status,
 		StartedAt:      startedAt,
 		FinishedAt:     finishedAt,
@@ -590,12 +657,36 @@ func databaseField(stanza map[string]any, field string) map[string]string {
 	return values
 }
 
-func statusMessage(value any) string {
+func statusMessage(value any) (string, bool, error) {
+	if value == nil {
+		return "", false, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return ""
+		return "", false, fmt.Errorf("stanza status must be an object")
 	}
-	return getString(object, "message", "code")
+	message, found, err := optionalStringField(object, "stanza status message", "message")
+	if err != nil {
+		return "", false, err
+	}
+	code, found := object["code"]
+	if !found || code == nil {
+		return strings.TrimSpace(message), false, nil
+	}
+	switch code.(type) {
+	case json.Number, float64:
+		codeText := numberString(code)
+		codeValue, err := strconv.ParseInt(codeText, 10, 64)
+		if err != nil {
+			return "", false, fmt.Errorf("stanza status code must be an integer: %w", err)
+		}
+		if strings.TrimSpace(message) == "" {
+			message = codeText
+		}
+		return message, codeValue == 0, nil
+	default:
+		return "", false, fmt.Errorf("stanza status code must be a number")
+	}
 }
 
 func mapBackupKind(kind string) model.BackupKind {
@@ -647,13 +738,16 @@ func nestedString(object map[string]any, keys ...string) string {
 	return numberString(value)
 }
 
-func nestedTime(object map[string]any, keys ...string) *time.Time {
+func nestedTime(object map[string]any, keys ...string) (*time.Time, error) {
 	value := nestedValue(object, keys...)
-	parsed, ok := parseTimeValue(value)
-	if !ok {
-		return nil
+	parsed, ok, err := parseTimeValue(value)
+	if err != nil {
+		return nil, fmt.Errorf("field %q: %w", strings.Join(keys, "."), err)
 	}
-	return &parsed
+	if !ok {
+		return nil, nil
+	}
+	return &parsed, nil
 }
 
 func nestedValue(object map[string]any, keys ...string) any {
@@ -677,25 +771,35 @@ func getString(object map[string]any, keys ...string) string {
 	return ""
 }
 
-func getBool(object map[string]any, keys ...string) bool {
-	for _, key := range keys {
-		value, ok := object[key]
-		if !ok || value == nil {
-			continue
-		}
-		switch typed := value.(type) {
-		case bool:
-			return typed
-		case string:
-			switch strings.ToLower(strings.TrimSpace(typed)) {
-			case "true", "yes", "1", "y":
-				return true
-			case "false", "no", "0", "n":
-				return false
-			}
-		}
+func requiredStringField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, error) {
+	value, found, err := optionalStringField(object, name, keys...)
+	if err != nil {
+		return "", err
 	}
-	return false
+	if !found || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("missing %s", name)
+	}
+	return value, nil
+}
+
+func optionalStringField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, bool, error) {
+	return adapterutil.OptionalStringAlias(object, name, keys...)
+}
+
+func optionalBoolField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (bool, bool, error) {
+	return adapterutil.OptionalBoolAlias(object, name, keys...)
 }
 
 func numberString(value any) string {
@@ -719,29 +823,41 @@ func numberString(value any) string {
 	}
 }
 
-func parseTimeValue(value any) (time.Time, bool) {
+func parseTimeValue(value any) (time.Time, bool, error) {
 	switch typed := value.(type) {
+	case nil:
+		return time.Time{}, false, nil
 	case json.Number:
 		seconds, err := strconv.ParseInt(typed.String(), 10, 64)
-		if err == nil {
-			return time.Unix(seconds, 0).UTC(), true
+		if err != nil || seconds < 0 {
+			return time.Time{}, false, fmt.Errorf("invalid epoch timestamp %q", typed)
 		}
+		return time.Unix(seconds, 0).UTC(), true, nil
 	case float64:
-		return time.Unix(int64(typed), 0).UTC(), true
+		if typed < 0 || math.Trunc(typed) != typed {
+			return time.Time{}, false, fmt.Errorf("invalid epoch timestamp %v", typed)
+		}
+		return time.Unix(int64(typed), 0).UTC(), true, nil
 	case string:
+		typed = strings.TrimSpace(typed)
 		if typed == "" {
-			return time.Time{}, false
+			return time.Time{}, false, nil
 		}
 		if seconds, err := strconv.ParseInt(typed, 10, 64); err == nil {
-			return time.Unix(seconds, 0).UTC(), true
+			if seconds < 0 {
+				return time.Time{}, false, fmt.Errorf("invalid epoch timestamp %q", typed)
+			}
+			return time.Unix(seconds, 0).UTC(), true, nil
 		}
 		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05Z07:00", "2006-01-02 15:04:05"} {
 			if parsed, err := time.Parse(layout, typed); err == nil {
-				return parsed.UTC(), true
+				return parsed.UTC(), true, nil
 			}
 		}
+		return time.Time{}, false, fmt.Errorf("unsupported time format %q", typed)
+	default:
+		return time.Time{}, false, fmt.Errorf("timestamp must be a number or string")
 	}
-	return time.Time{}, false
 }
 
 func addMetadata(metadata map[string]string, key, value string) {

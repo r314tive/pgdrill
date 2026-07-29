@@ -83,6 +83,13 @@ The CLI refuses recovery when:
 - the apply digest is missing, malformed, or stale
 - stopped-executor confirmation is absent
 
+An active recovered PostgreSQL process is signalled only through an
+identity-bound operating-system handle. This is implemented with Linux
+`pidfd` and a creation-time-validated Windows process handle. On macOS and
+other platforms without an equivalent primitive, apply leaves the attempt
+unresolved and preserves its work directory; it never falls back to signalling
+the retained numeric PID.
+
 ## Digest Scope
 
 The plan digest binds:

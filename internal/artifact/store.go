@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/filelock"
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -250,17 +251,17 @@ func (s DirectoryStore) Read(ctx context.Context, ref model.ArtifactRef) ([]byte
 			return fmt.Errorf("inspect artifact prefix directory: %w", err)
 		}
 		artifactPath := filepath.Join(prefixDir, hexDigest)
-		if err := verifyArtifactFile(ctx, artifactPath, ref); err != nil {
+		file, err := openArtifactFile(artifactPath, ref)
+		if err != nil {
 			return err
 		}
-		file, err := os.Open(artifactPath)
-		if err != nil {
-			return fmt.Errorf("open artifact %s: %w", ref.ID, err)
-		}
-		defer file.Close()
 		payload, err = io.ReadAll(io.LimitReader(&contextReader{ctx: ctx, reader: file}, ref.SizeBytes+1))
+		closeErr := file.Close()
 		if err != nil {
 			return fmt.Errorf("read artifact %s: %w", ref.ID, err)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close artifact %s: %w", ref.ID, closeErr)
 		}
 		return verifyPayload(ref, payload)
 	})
@@ -323,19 +324,9 @@ func readAllBounded(ctx context.Context, metadata model.ArtifactMetadata, conten
 }
 
 func verifyArtifactFile(ctx context.Context, artifactPath string, ref model.ArtifactRef) error {
-	info, err := os.Lstat(artifactPath)
+	file, err := openArtifactFile(artifactPath, ref)
 	if err != nil {
-		return fmt.Errorf("inspect artifact %s: %w", ref.ID, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("artifact %s is not a regular non-symbolic-link file", ref.ID)
-	}
-	if info.Size() != ref.SizeBytes || info.Size() > model.MaxArtifactBytes {
-		return fmt.Errorf("artifact %s size does not match its reference", ref.ID)
-	}
-	file, err := os.Open(artifactPath)
-	if err != nil {
-		return fmt.Errorf("open artifact %s: %w", ref.ID, err)
+		return err
 	}
 	hasher := sha256.New()
 	_, copyErr := io.CopyBuffer(hasher, &contextReader{ctx: ctx, reader: file}, make([]byte, 32<<10))
@@ -347,6 +338,23 @@ func verifyArtifactFile(ctx context.Context, artifactPath string, ref model.Arti
 		return fmt.Errorf("artifact %s content digest does not match its reference", ref.ID)
 	}
 	return nil
+}
+
+func openArtifactFile(artifactPath string, ref model.ArtifactRef) (*os.File, error) {
+	file, err := filelock.OpenPrivate(artifactPath, os.O_RDONLY)
+	if err != nil {
+		return nil, fmt.Errorf("open artifact %s: %w", ref.ID, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("inspect artifact %s: %w", ref.ID, err)
+	}
+	if info.Size() != ref.SizeBytes || info.Size() > model.MaxArtifactBytes {
+		_ = file.Close()
+		return nil, fmt.Errorf("artifact %s size does not match its reference", ref.ID)
+	}
+	return file, nil
 }
 
 func verifyPayload(ref model.ArtifactRef, payload []byte) error {
@@ -361,7 +369,7 @@ func verifyPayload(ref model.ArtifactRef, payload []byte) error {
 }
 
 func ensureDirectory(directoryPath string) error {
-	if err := os.MkdirAll(directoryPath, 0o700); err != nil {
+	if err := durablefs.MkdirAll(directoryPath, 0o700); err != nil {
 		return err
 	}
 	return requireRealDirectory(directoryPath)
@@ -382,12 +390,7 @@ func requireRealDirectory(directoryPath string) error {
 }
 
 func syncDirectory(directoryPath string) error {
-	directory, err := os.Open(directoryPath)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return durablefs.SyncDirectory(directoryPath)
 }
 
 type contextReader struct {

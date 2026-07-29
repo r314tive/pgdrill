@@ -206,6 +206,16 @@ func TestLoadRejectsOversizedInput(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsDuplicateJSONMembers(t *testing.T) {
+	t.Parallel()
+
+	payload := `{"schema_version":"pgdrill.fleet/v1","schema_version":"pgdrill.fleet/v1alpha1"}`
+	if _, err := Load(strings.NewReader(payload), "json"); err == nil ||
+		!strings.Contains(err.Error(), `duplicate JSON object member "schema_version"`) {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
 func TestPlanValidateRejectsTampering(t *testing.T) {
 	t.Parallel()
 

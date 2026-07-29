@@ -50,6 +50,29 @@ func TestAppendCheckReportPreservesAllSections(t *testing.T) {
 	}
 }
 
+func TestBuildSpecRejectsCanonicalRedactionOverlap(t *testing.T) {
+	const secret = "manifest-secret"
+	cfg := config.Config{
+		Target: config.TargetConfig{
+			Kubernetes:   config.KubernetesTargetConfig{Namespace: "d003-db"},
+			RedactValues: []string{secret},
+		},
+	}
+	target := config.CNPGTargetConfig{
+		SourceCluster: "altbox",
+		BackupName:    "backup-" + secret,
+		ImageName:     "ghcr.io/cloudnative-pg/postgresql:17.5",
+	}
+
+	_, err := BuildSpec(cfg, target, "drill", "", "")
+	if err == nil || !strings.Contains(err.Error(), "target intent") {
+		t.Fatalf("BuildSpec() error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("BuildSpec() error leaked configured value: %v", err)
+	}
+}
+
 func TestServiceRequiresMutationConfirmation(t *testing.T) {
 	runner := &successRunner{}
 	_, err := (Service{Runner: runner}).Run(context.Background(), config.Config{}, Options{})
@@ -200,17 +223,19 @@ func TestDiscoverInputsResolvesExactPluginRecoveryContract(t *testing.T) {
 }
 
 func TestDiscoverInputsRejectsConfiguredPluginBackupIDMismatch(t *testing.T) {
+	const secret = "configured-different-id"
 	cfg := config.Config{
 		Target: config.TargetConfig{
-			Type:       model.RestoreTargetKubernetes,
-			Kubernetes: config.KubernetesTargetConfig{Namespace: "d003-db"},
+			Type:         model.RestoreTargetKubernetes,
+			Kubernetes:   config.KubernetesTargetConfig{Namespace: "d003-db"},
+			RedactValues: []string{secret},
 		},
 	}
 	target := config.CNPGTargetConfig{
 		SourceCluster:  "altbox",
 		RecoveryMethod: config.CNPGRecoveryPlugin,
 		BackupName:     "altbox-backup-1",
-		BackupID:       "configured-different-id",
+		BackupID:       secret,
 		ImageName:      "ghcr.io/cloudnative-pg/postgresql:17.5",
 		Plugin: config.CNPGPluginConfig{
 			ObjectStore: "altbox-backups",
@@ -234,6 +259,10 @@ func TestDiscoverInputsRejectsConfiguredPluginBackupIDMismatch(t *testing.T) {
 	evidence, err := DiscoverInputs(context.Background(), cfg, &target, runner)
 	if err == nil || !strings.Contains(err.Error(), "does not match configured backup_id") {
 		t.Fatalf("DiscoverInputs() error = %v, want backup ID mismatch", err)
+	}
+	if strings.Contains(err.Error(), secret) ||
+		!strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("DiscoverInputs() leaked configured backup ID: %v", err)
 	}
 	if !hasEvidenceOperation(evidence, "kubectl-discover-cnpg-backups") {
 		t.Fatalf("backup mismatch lost discovery evidence %#v", evidence)

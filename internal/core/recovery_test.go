@@ -83,6 +83,17 @@ func TestRecoverAttemptReconcilesUnknownMutationAndCleansOwnedTarget(t *testing.
 	if err := result.Validate(); err != nil {
 		t.Fatalf("recovery result validation error = %v", err)
 	}
+	tamperedEvidence := result
+	tamperedEvidence.Evidence = []model.EvidenceRecord{{
+		Kind:        model.EvidenceRuntime,
+		Source:      "target",
+		CollectedAt: time.Now().UTC(),
+	}}
+	tamperedEvidence.Artifacts = nil
+	if err := tamperedEvidence.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "evidence") {
+		t.Fatalf("malformed recovery evidence validation error = %v", err)
+	}
 	tamperedResult := result
 	tamperedResult.CleanupCheckpoint.Reconciled = false
 	if err := tamperedResult.Validate(); err == nil ||
@@ -114,6 +125,43 @@ func TestRecoverAttemptReconcilesUnknownMutationAndCleansOwnedTarget(t *testing.
 	}
 	if !retry.AlreadyClean || !retry.TargetReadyForRetry {
 		t.Fatalf("unexpected idempotent retry result %#v", retry)
+	}
+}
+
+func TestRecoverAttemptRejectsMalformedCleanupEvidence(t *testing.T) {
+	ctx := context.Background()
+	attempt := recoveryAttempt(filepath.Join(t.TempDir(), "restore"))
+	store := checkpoint.NewMemoryStore()
+	prepare := recoveryOperation(
+		t,
+		attempt.Identity,
+		model.DrillStageTargetPreparation,
+		model.OperationTargetPrepare,
+		"prepare-target",
+		0,
+	)
+	saveRecoveryCheckpoint(t, store, prepare, model.OperationStateSucceeded)
+	request := recoveryRequest(attempt)
+	plan, err := PlanAttemptRecovery(ctx, store, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RecoverAttempt(
+		ctx,
+		store,
+		&malformedCleanupEvidenceTarget{},
+		request,
+		recoveryConfirmation(plan.Digest),
+		advancingClock(time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)),
+	)
+	if err == nil || !strings.Contains(err.Error(), "evidence id is required") {
+		t.Fatalf("RecoverAttempt() error = %v", err)
+	}
+	if result.CleanupCheckpoint.State != model.OperationStateUnknown ||
+		result.TargetReadyForRetry ||
+		len(result.Evidence) != 0 {
+		t.Fatalf("malformed cleanup evidence was accepted: %#v", result)
 	}
 }
 
@@ -434,6 +482,10 @@ func TestPlanAttemptRecoveryRefusesAttemptWithoutCheckpoints(t *testing.T) {
 
 type recoveryTargetStub struct{}
 
+type malformedCleanupEvidenceTarget struct {
+	operation model.Operation
+}
+
 type recoverySourceBindFailureTarget struct {
 	recoveryTargetStub
 }
@@ -496,6 +548,35 @@ func (recoveryTargetStub) Reconcile(
 }
 
 func (recoveryTargetStub) Destroy(context.Context) ([]model.EvidenceRecord, error) {
+	return nil, nil
+}
+
+func (t *malformedCleanupEvidenceTarget) BindAttempt(model.AttemptContext) error {
+	return nil
+}
+
+func (t *malformedCleanupEvidenceTarget) BeginOperation(operation model.Operation) error {
+	t.operation = operation
+	return nil
+}
+
+func (t *malformedCleanupEvidenceTarget) Reconcile(
+	context.Context,
+	model.OperationCheckpoint,
+) (model.OperationReconciliation, error) {
+	return model.OperationReconciliation{
+		Disposition: model.ReconciliationCompleted,
+		Evidence: []model.EvidenceRecord{{
+			Kind:        model.EvidenceRuntime,
+			Source:      "target",
+			CollectedAt: time.Now().UTC(),
+		}},
+	}, nil
+}
+
+func (t *malformedCleanupEvidenceTarget) Destroy(
+	context.Context,
+) ([]model.EvidenceRecord, error) {
 	return nil, nil
 }
 

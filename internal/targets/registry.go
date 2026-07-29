@@ -13,10 +13,12 @@ func NewRestoreTarget(cfg config.TargetConfig) (core.RestoreTarget, error) {
 	switch cfg.Type {
 	case model.RestoreTargetLocal:
 		return local.New(local.Config{
+			DefaultTimeout:  config.DefaultProbeTimeout,
 			Env:             cfg.Env,
 			RedactValues:    cfg.RedactValues,
 			RemoveWorkDir:   cfg.RemoveWorkDir,
 			PostgresBinary:  cfg.PostgresBinary,
+			PSQLBinary:      cfg.PSQLBinary,
 			Port:            cfg.PostgresPort,
 			StartupTimeout:  cfg.StartupTimeout.Duration,
 			ShutdownTimeout: cfg.ShutdownTimeout.Duration,

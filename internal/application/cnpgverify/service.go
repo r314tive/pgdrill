@@ -2,6 +2,7 @@ package cnpgverify
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/preflight"
 	"github.com/r314tive/pgdrill/internal/probes"
+	"github.com/r314tive/pgdrill/internal/recoveryproof"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/targets/cnpg"
 	"github.com/r314tive/pgdrill/internal/version"
@@ -130,7 +132,20 @@ func ID(id string, startedAt time.Time) string {
 
 // DiscoverInputs fills missing backup and image inputs using read-only CNPG
 // queries and returns their structured redacted command evidence.
-func DiscoverInputs(ctx context.Context, cfg config.Config, target *config.CNPGTargetConfig, runner command.Runner) ([]model.EvidenceRecord, error) {
+func DiscoverInputs(
+	ctx context.Context,
+	cfg config.Config,
+	target *config.CNPGTargetConfig,
+	runner command.Runner,
+) (evidence []model.EvidenceRecord, resultErr error) {
+	defer func() {
+		if resultErr != nil && len(cfg.Target.RedactValues) != 0 {
+			resultErr = command.RedactError(
+				resultErr,
+				cfg.Target.RedactValues...,
+			)
+		}
+	}()
 	if target == nil {
 		return nil, fmt.Errorf("CNPG target config is required")
 	}
@@ -144,7 +159,7 @@ func DiscoverInputs(ctx context.Context, cfg config.Config, target *config.CNPGT
 		Namespace:     cfg.Target.Kubernetes.Namespace,
 		SourceCluster: target.SourceCluster,
 	}
-	evidence := []model.EvidenceRecord{}
+	evidence = []model.EvidenceRecord{}
 
 	if strings.TrimSpace(target.BackupName) == "" || target.RecoveryMethod == config.CNPGRecoveryPlugin {
 		selected, backupEvidence, err := client.CompletedBackup(ctx, discoverySpec, target.BackupName)
@@ -201,7 +216,7 @@ func DiscoverInputs(ctx context.Context, cfg config.Config, target *config.CNPGT
 
 // BuildSpec maps canonical configuration into the CNPG compatibility adapter.
 func BuildSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameSeed, ownershipID string) (cnpg.VerifyClusterSpec, error) {
-	return cnpg.BuildVerifyClusterSpec(cnpg.Config{
+	spec, err := cnpg.BuildVerifyClusterSpec(cnpg.Config{
 		Namespace:         cfg.Target.Kubernetes.Namespace,
 		SourceCluster:     target.SourceCluster,
 		VerifyClusterName: target.VerifyClusterName,
@@ -226,6 +241,28 @@ func BuildSpec(cfg config.Config, target config.CNPGTargetConfig, drillID, nameS
 		NodeLabelValue:    target.NodeLabelValue,
 		Labels:            cfg.Target.Labels,
 	}, drillID)
+	if err != nil {
+		return cnpg.VerifyClusterSpec{}, err
+	}
+	if err := rejectSpecRedactions(spec, cfg.Target.RedactValues); err != nil {
+		return cnpg.VerifyClusterSpec{}, err
+	}
+	return spec, nil
+}
+
+func rejectSpecRedactions(spec cnpg.VerifyClusterSpec, redactions []string) error {
+	if len(redactions) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return fmt.Errorf("encode CNPG target intent: %w", err)
+	}
+	redactor := command.NewRedactor(redactions...)
+	if redactor.RedactString(string(raw)) != string(raw) {
+		return fmt.Errorf("CNPG target intent contains a configured redaction value")
+	}
+	return nil
 }
 
 func normalizeCNPGTarget(target *config.CNPGTargetConfig) {
@@ -284,6 +321,7 @@ func (r *managedResolver) Resolve(ctx context.Context, attempt model.AttemptCont
 	}
 
 	target := cnpg.NewVerifyTarget(spec, cnpg.NewKubectlClient(kubectlConfig(r.cfg), r.runner), r.artifacts, lifecycleOptions(r.cfg))
+	podRunner := cnpg.NewPodExecRunner(kubectlConfig(r.cfg), spec, r.runner)
 	checker := core.PostRestoreCheckerFunc(func(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error) {
 		return runPostRestoreChecks(ctx, r.cfg, spec, pg, r.runner)
 	})
@@ -291,13 +329,22 @@ func (r *managedResolver) Resolve(ctx context.Context, attempt model.AttemptCont
 		Backup:         backup(r.target, spec.Name),
 		Target:         target,
 		RecoveryTarget: attempt.RecoveryTarget,
-		Checks:         checker,
-		Probes:         append([]model.ProbeDescriptor(nil), r.probes...),
+		RecoveryVerifier: recoveryproof.New(recoveryproof.Config{
+			Binary:       r.cfg.Target.PSQLBinary,
+			Timeout:      config.DefaultProbeTimeout,
+			RedactValues: r.cfg.Target.RedactValues,
+		}, podRunner),
+		Checks: checker,
+		Probes: append([]model.ProbeDescriptor(nil), r.probes...),
 	}, report, nil
 }
 
 func runPostRestoreChecks(ctx context.Context, cfg config.Config, spec cnpg.VerifyClusterSpec, pg model.RunningPostgres, commandRunner command.Runner) (model.CheckReport, error) {
 	runner := cnpg.NewPodExecRunner(kubectlConfig(cfg), spec, commandRunner)
+	psqlBinary := strings.TrimSpace(cfg.Target.PSQLBinary)
+	if psqlBinary == "" {
+		psqlBinary = "psql"
+	}
 	requirements, err := preflight.ProbeRequirements(cfg.Probes)
 	if err != nil {
 		return model.CheckReport{}, fmt.Errorf("build restored target probe preflight: %w", err)
@@ -306,6 +353,11 @@ func runPostRestoreChecks(ctx context.Context, cfg config.Config, spec cnpg.Veri
 		Tool:       model.ToolPostgres,
 		Components: []string{"target.kubernetes.postgres"},
 		Binary:     "postgres",
+		Args:       []string{"--version"},
+	}, {
+		Tool:       model.ToolPSQL,
+		Components: []string{"target.kubernetes.recovery_proof"},
+		Binary:     psqlBinary,
 		Args:       []string{"--version"},
 	}}, requirements...)
 	for i := range requirements {

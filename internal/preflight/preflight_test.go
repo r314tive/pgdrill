@@ -95,6 +95,25 @@ func TestCheckerReturnsPartialAbortedResult(t *testing.T) {
 	}
 }
 
+func TestCheckerRejectsExcessiveRequirementsBeforeAllocationOrExecution(t *testing.T) {
+	requirements := make([]Requirement, model.MaxChecksPerReport+1)
+	runner := &stubRunner{}
+
+	result, err := NewChecker(runner, 0).Run(context.Background(), requirements)
+
+	if err == nil || !strings.Contains(err.Error(), "requirements exceed maximum count") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Status != model.DrillStatusFailed ||
+		len(result.Checks) != 0 ||
+		len(result.Evidence) != 0 {
+		t.Fatalf("unexpected bounded failure result %#v", result)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("oversized preflight executed commands: %#v", runner.calls)
+	}
+}
+
 func TestVersionTextParsesKubectlClientJSON(t *testing.T) {
 	got := versionText(model.ToolKubectl, `{"clientVersion":{"gitVersion":"v1.34.1"}}`, "")
 	if got != "v1.34.1" {

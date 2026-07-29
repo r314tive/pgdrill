@@ -41,6 +41,18 @@ and diagnostic text. The evaluation also stores the exact
 `recovery_proven_at` fact when recovery completed. Consumers must use the typed
 fields and must not parse the message.
 
+Report validation binds status to basis: missing or invalid evidence can only
+produce `unknown`, direct measurements can produce only their documented
+terminal outcomes, and a duration observation is accepted only for a basis
+that actually measured one. Contradictory combinations are rejected as
+tampered or malformed policy evidence.
+
+For current produced reports, the evaluator's machine fields are recomputed
+from the retained backup and operation graph. Recovery proof must be at or
+after successful PostgreSQL startup and all evidence referenced by required
+passing probes; a self-consistent but physically impossible earlier timestamp
+is rejected.
+
 ### RTO
 
 RTO is measured from `DrillResult.started_at` until PostgreSQL has started and
@@ -79,6 +91,14 @@ required post-restore probes have passed. Its basis is
 PostgreSQL recovery contract; source-currentness and temporal distance remain
 separate RPO assertions.
 
+For native targeted recovery (`immediate`, timestamp, LSN, XID, or restore
+point), restore planning configures `recovery_target_action=pause`. The current
+`pgdrill.recovery-observation/v2` proof requires PostgreSQL to remain in
+recovery with both `pg_is_wal_replay_paused()` and
+`pg_get_wal_replay_pause_state()` proving the actual `paused` state. A pause
+request that has not taken effect, or a target that already promoted, is not
+accepted. Plain `latest` instead requires completed, unpaused recovery.
+
 Managed targets must echo the exact recovery target they applied. The current
 CNPG adapter supports only plain `latest` recovery. Timestamp, LSN, XID,
 restore-point, timeline, and inclusive CNPG intent are rejected before target
@@ -93,10 +113,12 @@ missing or uncertain checkpoint after target activity is `unknown`.
 This assertion verifies completion of the configured target cleanup contract.
 It does not override target retention settings. For example,
 `target.remove_work_dir: false` may retain a stopped local work directory, and
-`cleanup_pvc: false` may retain PVCs while the CNPG Cluster cleanup succeeds.
-Use target configuration or a future TargetPool policy to define what must be
-deleted, then use `require_cleanup` to require that configured teardown to
-finish successfully.
+`cleanup_pvc: false` disables pgdrill's explicit owned-PVC deletion and absence
+proof. It does not guarantee retention because foreground Cluster deletion,
+CNPG, Kubernetes garbage collection, or storage policy may still remove the
+PVCs. Use target configuration or a future TargetPool policy to define what
+must be deleted, then use `require_cleanup` to require that configured teardown
+to finish successfully.
 
 ## Terminal Status And Presentation
 

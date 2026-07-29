@@ -73,7 +73,7 @@ func TestWritePrometheus(t *testing.T) {
 	output := buf.String()
 
 	for _, expected := range []string{
-		`pgdrill_report_info{cluster="production-main",schema_version="pgdrill.report/v1"} 1`,
+		`pgdrill_report_info{cluster="production-main",schema_version="pgdrill.report/v2"} 1`,
 		"# HELP pgdrill_drill_status Last drill status as a one-hot gauge.",
 		`pgdrill_drill_status{cluster="production-main",provider="wal-g",target_type="local",recovery_target="latest",status="passed"} 1`,
 		`pgdrill_drill_status{cluster="production-main",provider="wal-g",target_type="local",recovery_target="latest",status="failed"} 0`,

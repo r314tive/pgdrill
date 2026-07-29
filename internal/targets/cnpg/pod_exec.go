@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/r314tive/pgdrill/internal/command"
 )
@@ -55,6 +56,9 @@ func (r *PodExecRunner) Run(ctx context.Context, inv command.Invocation) (comman
 	if len(inv.Env) > 0 {
 		args = append(args, "env")
 		for _, name := range sortedEnvNames(inv.Env) {
+			if err := validatePodEnvironmentName(name); err != nil {
+				return command.Result{}, err
+			}
 			value := inv.Env[name]
 			args = append(args, name+"="+value)
 			redactValues = append(redactValues, value)
@@ -81,4 +85,21 @@ func sortedEnvNames(env map[string]string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func validatePodEnvironmentName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("cnpg pod exec environment name is required")
+	case !utf8.ValidString(name):
+		return fmt.Errorf("cnpg pod exec environment name must be valid UTF-8")
+	case strings.IndexByte(name, 0) >= 0:
+		return fmt.Errorf("cnpg pod exec environment name must not contain NUL")
+	case strings.Contains(name, "="):
+		return fmt.Errorf("cnpg pod exec environment name must not contain '='")
+	case strings.HasPrefix(name, "-"):
+		return fmt.Errorf("cnpg pod exec environment name must not start with '-'")
+	default:
+		return nil
+	}
 }

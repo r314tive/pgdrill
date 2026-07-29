@@ -12,11 +12,31 @@ make check
 ```
 
 `make check` does not rewrite files. Use `make format` before committing when
-formatting is required. Release-process changes should also pass:
+formatting is required. Release-process changes should also pass with
+ShellCheck installed:
 
 ```sh
 make -s release-check VERSION=v0.0.0-dev
 ```
+
+Adversarial changes to parsers, canonical models, evidence, persistence, or
+recovery ownership should also use the reproducible quality gates:
+
+```sh
+make coverage
+make stress STRESS_COUNT=10
+make fuzz FUZZ_TIME=30s
+make torture FUZZ_TIME=30s STRESS_COUNT=10
+```
+
+`make coverage` uses `-coverpkg=./...`, so shared conformance and integration
+tests contribute to the packages whose behavior they execute, and enforces the
+committed total statement floor. Raise that floor only with tests that assert
+behavior; branch execution without a meaningful oracle is not evidence of
+correctness. `make fuzz` runs each parser or validator target separately
+because the Go fuzz driver permits one target per process. A minimized failing
+corpus belongs in `testdata/fuzz` only after the failure is reproduced,
+understood, and either fixed or documented as an accepted limitation.
 
 Changes to native provider discovery, validation, restore planning, the local
 target, probes, policy evaluation, or cleanup should also run the real
@@ -31,9 +51,10 @@ make test-integration-native
 make test-integration-cnpg
 ```
 
-Run `make integration-check` when ShellCheck is installed. Integration output
-is intentionally ignored and does not become a compatibility claim without a
-separate reviewed evidence update.
+`make release-check` runs ShellCheck across both `demo/` and
+`test/integration/`. `make integration-check` remains the narrower shell gate
+for integration scripts. Integration output is intentionally ignored and does
+not become a compatibility claim without a separate reviewed evidence update.
 
 Release-candidate owners should use the clean-tree aggregate gate:
 

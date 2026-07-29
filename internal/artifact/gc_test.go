@@ -78,6 +78,165 @@ func TestDirectoryStorePersistsClaimsAndVerifiesReferenceSet(t *testing.T) {
 	}
 }
 
+func TestEnsurePrivateParentsRejectsEscapesAndSymbolicLinks(t *testing.T) {
+	t.Run("canonical descendants", func(t *testing.T) {
+		base := filepath.Join(t.TempDir(), "trash")
+		if err := ensurePrivateParents(base, filepath.Join("claims", "ab")); err != nil {
+			t.Fatalf("ensurePrivateParents() error = %v", err)
+		}
+		for _, path := range []string{
+			base,
+			filepath.Join(base, "claims"),
+			filepath.Join(base, "claims", "ab"),
+		} {
+			info, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+				info.Mode().Perm()&0o077 != 0 {
+				t.Fatalf("private parent %s has mode %s", path, info.Mode())
+			}
+		}
+	})
+
+	t.Run("path escape", func(t *testing.T) {
+		base := filepath.Join(t.TempDir(), "trash")
+		if err := ensurePrivateParents(base, filepath.Join("..", "outside")); err == nil ||
+			!strings.Contains(err.Error(), "escapes") {
+			t.Fatalf("ensurePrivateParents(path escape) error = %v", err)
+		}
+	})
+
+	t.Run("symbolic link", func(t *testing.T) {
+		root := t.TempDir()
+		base := filepath.Join(root, "trash")
+		if err := os.Mkdir(base, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		outside := filepath.Join(root, "outside")
+		if err := os.Mkdir(outside, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(base, "claims")); err != nil {
+			t.Skipf("create symbolic link: %v", err)
+		}
+		if err := ensurePrivateParents(base, filepath.Join("claims", "ab")); err == nil ||
+			!strings.Contains(err.Error(), "not a real directory") {
+			t.Fatalf("ensurePrivateParents(symbolic link) error = %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(outside, "ab")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("symbolic-link target was modified: %v", err)
+		}
+	})
+}
+
+func TestValidateGCTemporaryOperationState(t *testing.T) {
+	const (
+		digest       = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		relativePath = ".artifact-recovery.tmp"
+	)
+	tests := []struct {
+		name      string
+		source    bool
+		trash     bool
+		progress  bool
+		wantError string
+	}{
+		{name: "active before progress", source: true},
+		{name: "trash before progress", trash: true},
+		{
+			name:      "active and trash conflict",
+			source:    true,
+			trash:     true,
+			wantError: "active state and trash",
+		},
+		{name: "missing before progress", wantError: "disappeared before progress"},
+		{
+			name:      "marked but active",
+			source:    true,
+			progress:  true,
+			wantError: "marked but remains active",
+		},
+		{name: "marked and absent", progress: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, filepath.FromSlash(relativePath))
+			trash := filepath.Join(
+				gcTrashPath(root, digest),
+				"temporary",
+				filepath.FromSlash(relativePath),
+			)
+			modifiedAt := time.Date(2026, 7, 29, 1, 2, 3, 0, time.UTC)
+			for path, create := range map[string]bool{
+				source: test.source,
+				trash:  test.trash,
+			} {
+				if !create {
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("temporary"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(path, modifiedAt, modifiedAt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.source || test.trash {
+				path := source
+				if !test.source {
+					path = trash
+				}
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				modifiedAt = info.ModTime().UTC().Round(0)
+			}
+			item, err := newGCTemporaryFile(temporaryState{
+				RelativePath: relativePath,
+				SizeBytes:    int64(len("temporary")),
+				ModifiedAt:   modifiedAt,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			marked := map[string]struct{}{}
+			if test.progress {
+				name := filepath.Base(gcProgressPath(root, digest, "temporary", 0))
+				marked[name] = struct{}{}
+			}
+
+			err = validateGCTemporaryOperationState(
+				root,
+				digest,
+				0,
+				item,
+				marked,
+			)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("validateGCTemporaryOperationState() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf(
+					"validateGCTemporaryOperationState() error = %v, want %q",
+					err,
+					test.wantError,
+				)
+			}
+		})
+	}
+}
+
 func TestGCPlanValidateRejectsOutOfBoundsAccounting(t *testing.T) {
 	t.Parallel()
 
@@ -478,6 +637,161 @@ func TestDirectoryStoreGCResumesAfterBlobRename(t *testing.T) {
 	if !result.Resumed || result.AlreadyApplied || result.DeletedBlobs != 1 ||
 		!result.ReferenceScopeChanged {
 		t.Fatalf("resumed result = %#v", result)
+	}
+}
+
+func TestDirectoryStoreGCRecoversInitializationCrashPrefixes(t *testing.T) {
+	tests := []struct {
+		name         string
+		persistPlan  bool
+		makeProgress bool
+		makePlanTemp bool
+	}{
+		{name: "operation directory only"},
+		{name: "metadata temporary file before plan", makePlanTemp: true},
+		{name: "plan without progress or trash", persistPlan: true},
+		{name: "plan and progress without trash", persistPlan: true, makeProgress: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "artifacts")
+			store := DirectoryStore{Path: root}
+			ref := putArtifact(
+				t,
+				store,
+				artifactMetadata(
+					t,
+					model.ArtifactRetentionHistory,
+					model.ArtifactRedactionNotRequired,
+				),
+				"initialization-crash",
+			)
+			setBlobTime(t, root, ref.ID, time.Now().UTC().Add(-4*time.Hour))
+			policy := GCPolicy{Before: time.Now().UTC().Add(-time.Hour)}
+			plan, err := store.PlanGC(context.Background(), policy, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			operations, _, _, err := ensureGCBase(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operationPath, err := ensurePrivateChildDirectory(
+				operations,
+				strings.TrimPrefix(plan.Digest, "sha256:"),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.makePlanTemp {
+				if err := os.WriteFile(
+					filepath.Join(operationPath, ".artifact-metadata-123456789.tmp"),
+					[]byte("partial plan"),
+					0o600,
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.persistPlan {
+				payload, err := marshalBoundedJSON(plan, maxGCPlanJSONBytes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := writeImmutableFile(
+					context.Background(),
+					operationPath,
+					filepath.Join(operationPath, gcPlanFileName),
+					payload,
+					maxGCPlanJSONBytes,
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.makeProgress {
+				if _, err := ensurePrivateChildDirectory(
+					operationPath,
+					gcProgressDirectory,
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result, err := store.ApplyGC(
+				context.Background(),
+				policy,
+				nil,
+				plan.Digest,
+			)
+			if err != nil {
+				t.Fatalf("ApplyGC() error = %v", err)
+			}
+			if !result.Resumed || result.AlreadyApplied || result.DeletedBlobs != 1 {
+				t.Fatalf("recovered result = %#v", result)
+			}
+			verification, err := store.Verify(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if verification.MaintenanceRequired || verification.Blobs != 0 {
+				t.Fatalf("verification = %#v", verification)
+			}
+		})
+	}
+}
+
+func TestRecoverUnpublishedGCOperationRejectsUnexpectedOrUnboundedState(t *testing.T) {
+	tests := []struct {
+		name string
+		fill func(t *testing.T, operationPath string)
+		want string
+	}{
+		{
+			name: "unexpected file",
+			fill: func(t *testing.T, operationPath string) {
+				t.Helper()
+				if err := os.WriteFile(
+					filepath.Join(operationPath, "unrecognized"),
+					nil,
+					0o600,
+				); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "state but no readable plan",
+		},
+		{
+			name: "too many metadata temporary files",
+			fill: func(t *testing.T, operationPath string) {
+				t.Helper()
+				for index := 0; index <= maxUnpublishedGCMetadataTemporaryFiles; index++ {
+					path := filepath.Join(
+						operationPath,
+						fmt.Sprintf(".artifact-metadata-%d.tmp", index),
+					)
+					if err := os.WriteFile(path, nil, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			},
+			want: "maximum temporary file count",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			operationPath := filepath.Join(t.TempDir(), "operation")
+			if err := os.Mkdir(operationPath, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			test.fill(t, operationPath)
+			if err := recoverUnpublishedGCOperation(operationPath); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("recoverUnpublishedGCOperation() error = %v, want %q", err, test.want)
+			}
+			if err := requireRealDirectory(operationPath); err != nil {
+				t.Fatalf("rejected operation state was removed: %v", err)
+			}
+		})
 	}
 }
 

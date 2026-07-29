@@ -2,11 +2,12 @@ package cnpg
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -39,7 +40,7 @@ func (c *KubectlClient) CompletedBackup(ctx context.Context, spec VerifyClusterS
 
 	backups, err := parseBackupResources(result.Raw.Stdout)
 	if err != nil {
-		return BackupResource{}, evidence, err
+		return BackupResource{}, evidence, result.RedactError(err)
 	}
 
 	requestedName := strings.TrimSpace(name)
@@ -49,14 +50,23 @@ func (c *KubectlClient) CompletedBackup(ctx context.Context, spec VerifyClusterS
 				continue
 			}
 			if backup.Cluster != spec.SourceCluster {
-				return BackupResource{}, evidence, fmt.Errorf("CNPG Backup %q belongs to cluster %q, not %q", requestedName, backup.Cluster, spec.SourceCluster)
+				return BackupResource{}, evidence, result.RedactError(
+					fmt.Errorf("CNPG Backup %q belongs to cluster %q, not %q", requestedName, backup.Cluster, spec.SourceCluster),
+				)
 			}
 			if !strings.EqualFold(backup.Phase, "completed") {
-				return BackupResource{}, evidence, fmt.Errorf("CNPG Backup %q phase is %q, not completed", requestedName, backup.Phase)
+				return BackupResource{}, evidence, result.RedactError(
+					fmt.Errorf("CNPG Backup %q phase is %q, not completed", requestedName, backup.Phase),
+				)
+			}
+			if err := validateBackupResourceRedaction(result, backup); err != nil {
+				return BackupResource{}, evidence, err
 			}
 			return backup, evidence, nil
 		}
-		return BackupResource{}, evidence, fmt.Errorf("CNPG Backup %q not found", requestedName)
+		return BackupResource{}, evidence, result.RedactError(
+			fmt.Errorf("CNPG Backup %q not found", requestedName),
+		)
 	}
 
 	var selected BackupResource
@@ -71,7 +81,12 @@ func (c *KubectlClient) CompletedBackup(ctx context.Context, spec VerifyClusterS
 		}
 	}
 	if selected.Name == "" {
-		return BackupResource{}, evidence, fmt.Errorf("no completed CNPG Backup found for cluster %q", spec.SourceCluster)
+		return BackupResource{}, evidence, result.RedactError(
+			fmt.Errorf("no completed CNPG Backup found for cluster %q", spec.SourceCluster),
+		)
+	}
+	if err := validateBackupResourceRedaction(result, selected); err != nil {
+		return BackupResource{}, evidence, err
 	}
 	return selected, evidence, nil
 }
@@ -95,7 +110,7 @@ func (c *KubectlClient) SourceClusterImage(ctx context.Context, spec VerifyClust
 
 	image, err := parseClusterImage(result.Raw.Stdout)
 	if err != nil {
-		return "", evidence, err
+		return "", evidence, result.RedactError(err)
 	}
 	if image == "" {
 		podEvidence, podResult, podErr := c.run(ctx, "kubectl-discover-cnpg-source-pod-image", c.args(spec, "get", "pods", "-l", "cnpg.io/cluster="+spec.SourceCluster, "-o", "json"), nil, c.cfg.Timeout)
@@ -108,11 +123,28 @@ func (c *KubectlClient) SourceClusterImage(ctx context.Context, spec VerifyClust
 		}
 		image, err = parsePostgresPodImage(podResult.Raw.Stdout)
 		if err != nil {
-			return "", evidence, err
+			return "", evidence, podResult.RedactError(err)
 		}
 		if image == "" {
-			return "", evidence, fmt.Errorf("CNPG Cluster %q has neither spec.imageName nor a postgres container image", spec.SourceCluster)
+			return "", evidence, podResult.RedactError(
+				fmt.Errorf("CNPG Cluster %q has neither spec.imageName nor a postgres container image", spec.SourceCluster),
+			)
 		}
+		if err := rejectRedactedCanonicalFields(
+			podResult,
+			"CNPG image discovery",
+			canonicalField{name: "postgres_image", value: image},
+		); err != nil {
+			return "", evidence, err
+		}
+		return image, evidence, nil
+	}
+	if err := rejectRedactedCanonicalFields(
+		result,
+		"CNPG image discovery",
+		canonicalField{name: "postgres_image", value: image},
+	); err != nil {
+		return "", evidence, err
 	}
 	return image, evidence, nil
 }
@@ -128,9 +160,34 @@ func (c *KubectlClient) SourceClusterPlugin(ctx context.Context, spec VerifyClus
 
 	source, err := parseClusterPlugin(result.Raw.Stdout, pluginName, spec.SourceCluster)
 	if err != nil {
+		return PluginRecoverySource{}, evidence, result.RedactError(err)
+	}
+	if err := rejectRedactedCanonicalFields(
+		result,
+		"CNPG plugin discovery",
+		canonicalField{name: "plugin_name", value: source.PluginName},
+		canonicalField{name: "object_store", value: source.ObjectStore},
+		canonicalField{name: "server_name", value: source.ServerName},
+	); err != nil {
 		return PluginRecoverySource{}, evidence, err
 	}
 	return source, evidence, nil
+}
+
+func validateBackupResourceRedaction(
+	result command.Result,
+	backup BackupResource,
+) error {
+	return rejectRedactedCanonicalFields(
+		result,
+		"CNPG backup discovery",
+		canonicalField{name: "backup_name", value: backup.Name},
+		canonicalField{name: "source_cluster", value: backup.Cluster},
+		canonicalField{name: "method", value: backup.Method},
+		canonicalField{name: "plugin_name", value: backup.PluginName},
+		canonicalField{name: "plugin_version", value: backup.PluginVersion},
+		canonicalField{name: "backup_id", value: backup.BackupID},
+	)
 }
 
 func parseBackupResources(data []byte) ([]BackupResource, error) {
@@ -158,7 +215,7 @@ func parseBackupResources(data []byte) ([]BackupResource, error) {
 			} `json:"status"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal(data, &list); err != nil {
+	if err := jsonutil.DecodeOne(data, &list); err != nil {
 		return nil, fmt.Errorf("parse CNPG Backup list: %w", err)
 	}
 
@@ -193,7 +250,7 @@ func parseClusterPlugin(data []byte, pluginName, defaultServerName string) (Plug
 			} `json:"plugins"`
 		} `json:"spec"`
 	}
-	if err := json.Unmarshal(data, &cluster); err != nil {
+	if err := jsonutil.DecodeOne(data, &cluster); err != nil {
 		return PluginRecoverySource{}, fmt.Errorf("parse CNPG Cluster plugins: %w", err)
 	}
 
@@ -229,7 +286,7 @@ func parseClusterImage(data []byte) (string, error) {
 			ImageName string `json:"imageName"`
 		} `json:"spec"`
 	}
-	if err := json.Unmarshal(data, &cluster); err != nil {
+	if err := jsonutil.DecodeOne(data, &cluster); err != nil {
 		return "", fmt.Errorf("parse CNPG Cluster: %w", err)
 	}
 	return cluster.Spec.ImageName, nil
@@ -246,7 +303,7 @@ func parsePostgresPodImage(data []byte) (string, error) {
 			} `json:"spec"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal(data, &pods); err != nil {
+	if err := jsonutil.DecodeOne(data, &pods); err != nil {
 		return "", fmt.Errorf("parse CNPG source pods: %w", err)
 	}
 	for _, pod := range pods.Items {

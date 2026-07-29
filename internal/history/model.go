@@ -39,6 +39,8 @@ const (
 	MaxRunEventBytes     = 256 << 20
 	MaxRunReportBytes    = 256 << 20
 	MaxMigrationFiles    = 250_000
+
+	maxHistoryTemporaryFilesPerDirectory = 128
 )
 
 type StoreMetadata struct {

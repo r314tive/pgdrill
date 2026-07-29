@@ -22,15 +22,35 @@ const (
 type Client interface {
 	CreateCluster(ctx context.Context, spec VerifyClusterSpec, manifest []byte) ([]model.EvidenceRecord, error)
 	FindOwnedCluster(ctx context.Context, spec VerifyClusterSpec) (OwnedCluster, []model.EvidenceRecord, error)
+	FindOwnedPVCs(ctx context.Context, spec VerifyClusterSpec) (OwnedPVCs, []model.EvidenceRecord, error)
 	WaitForInstanceReady(ctx context.Context, spec VerifyClusterSpec, opts WaitOptions) (Instance, []model.EvidenceRecord, error)
 	CaptureEvidence(ctx context.Context, spec VerifyClusterSpec, instance Instance, opts CaptureOptions) ([]model.EvidenceRecord, error)
-	DeleteCluster(ctx context.Context, spec VerifyClusterSpec) ([]model.EvidenceRecord, error)
-	DeletePVCs(ctx context.Context, spec VerifyClusterSpec) ([]model.EvidenceRecord, error)
+	DeleteCluster(ctx context.Context, spec VerifyClusterSpec, owned OwnedCluster) ([]model.EvidenceRecord, error)
+	DeletePVCs(
+		ctx context.Context,
+		spec VerifyClusterSpec,
+		cluster OwnedCluster,
+		owned OwnedPVCs,
+	) ([]model.EvidenceRecord, error)
 }
 
 type OwnedCluster struct {
-	Found bool
-	Name  string
+	Found          bool
+	Name           string
+	UID            string
+	ContractDigest string
+}
+
+type OwnedPVC struct {
+	Name             string
+	UID              string
+	OwnerClusterName string
+	OwnerClusterUID  string
+	ContractDigest   string
+}
+
+type OwnedPVCs struct {
+	Items []OwnedPVC
 }
 
 type LifecycleOptions struct {
@@ -48,6 +68,7 @@ type LifecycleOptions struct {
 type WaitOptions struct {
 	Timeout      time.Duration
 	PollInterval time.Duration
+	Cluster      OwnedCluster
 }
 
 type CaptureOptions struct {
@@ -58,6 +79,9 @@ type CaptureOptions struct {
 
 type Instance struct {
 	PodName         string
+	UID             string
+	ClusterUID      string
+	ContractDigest  string
 	Host            string
 	Port            int
 	Database        string
@@ -71,6 +95,7 @@ type Controller struct {
 	Options      LifecycleOptions
 	Artifacts    artifact.Sink
 	created      bool
+	cluster      OwnedCluster
 	instance     Instance
 	artifactRefs []model.ArtifactRef
 }
@@ -83,6 +108,13 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 	manifest, manifestArtifact, err := c.prepareManifestArtifact(ctx)
 	if err != nil {
 		return model.RunningPostgres{}, nil, err
+	}
+	contractDigest, err := c.Spec.ContractDigest()
+	if err != nil {
+		return model.RunningPostgres{}, nil, fmt.Errorf(
+			"compute CNPG recovery contract digest: %w",
+			err,
+		)
 	}
 
 	manifestEvidence := c.runtimeEvidence("cnpg-manifest-render", map[string]string{
@@ -101,10 +133,10 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		"source_cluster":      c.Spec.SourceCluster,
 		"recovery_method":     string(c.Spec.RecoveryMethod),
 		"recovery_source":     c.Spec.RecoverySource,
+		"recovery_contract":   contractDigest,
 		"storage_size":        c.Spec.StorageSize,
 		"postgres_image":      c.Spec.ImageName,
 		"target_port":         strconv.Itoa(DefaultPostgresPort),
-		"verify_cluster_uid":  c.Spec.Name,
 	})
 	manifestEvidence.ArtifactIDs = []string{manifestArtifact.ID}
 	evidence := []model.EvidenceRecord{manifestEvidence}
@@ -120,6 +152,25 @@ func (c *Controller) Start(ctx context.Context) (model.RunningPostgres, []model.
 		return model.RunningPostgres{}, evidence, fmt.Errorf("create cnpg verify cluster: %w", err)
 	}
 	c.created = true
+
+	cluster, clusterEvidence, err := c.Client.FindOwnedCluster(ctx, c.Spec)
+	evidence = append(evidence, clusterEvidence...)
+	if err != nil {
+		evidence, err = c.finalizeStartFailure(ctx, evidence, err, "start-failed")
+		return model.RunningPostgres{}, evidence, fmt.Errorf(
+			"bind created CNPG verify cluster identity: %w",
+			err,
+		)
+	}
+	if !cluster.Found {
+		bindErr := fmt.Errorf("created CNPG verify cluster is not observable by its recovery contract")
+		evidence, err = c.finalizeStartFailure(ctx, evidence, bindErr, "start-failed")
+		return model.RunningPostgres{}, evidence, fmt.Errorf(
+			"bind created CNPG verify cluster identity: %w",
+			err,
+		)
+	}
+	c.cluster = cluster
 
 	instance, waitEvidence, err := c.Client.WaitForInstanceReady(ctx, c.Spec, c.waitOptions())
 	evidence = append(evidence, waitEvidence...)
@@ -233,22 +284,76 @@ func (c *Controller) Destroy(ctx context.Context) ([]model.EvidenceRecord, error
 
 func (c *Controller) cleanup(ctx context.Context) ([]model.EvidenceRecord, error) {
 	evidence := []model.EvidenceRecord{}
-	var err error
 
-	clusterEvidence, clusterErr := c.Client.DeleteCluster(ctx, c.Spec)
-	evidence = append(evidence, clusterEvidence...)
-	err = errors.Join(err, clusterErr)
+	clusterSnapshot, clusterObservationEvidence, clusterObservationErr := c.Client.FindOwnedCluster(ctx, c.Spec)
+	evidence = append(evidence, clusterObservationEvidence...)
+	if clusterObservationErr != nil {
+		return evidence, fmt.Errorf("observe CNPG cluster before cleanup: %w", clusterObservationErr)
+	}
+	if c.cluster.Found && clusterSnapshot.Found && clusterSnapshot != c.cluster {
+		return evidence, fmt.Errorf(
+			"refuse CNPG cleanup: observed cluster identity changed after ownership was bound",
+		)
+	}
+	if !c.cluster.Found && clusterSnapshot.Found {
+		c.cluster = clusterSnapshot
+	}
 
 	if c.Options.CleanupPVC {
-		pvcEvidence, pvcErr := c.Client.DeletePVCs(ctx, c.Spec)
-		evidence = append(evidence, pvcEvidence...)
-		err = errors.Join(err, pvcErr)
+		_, pvcObservationEvidence, pvcObservationErr := c.Client.FindOwnedPVCs(ctx, c.Spec)
+		evidence = append(evidence, pvcObservationEvidence...)
+		if pvcObservationErr != nil {
+			return evidence, fmt.Errorf("observe CNPG PVCs before cleanup: %w", pvcObservationErr)
+		}
 	}
 
-	if err == nil {
-		c.created = false
+	clusterEvidence, clusterErr := c.Client.DeleteCluster(ctx, c.Spec, clusterSnapshot)
+	evidence = append(evidence, clusterEvidence...)
+	if clusterErr != nil {
+		return evidence, clusterErr
 	}
-	return evidence, err
+
+	ownedCluster, observationEvidence, observationErr := c.Client.FindOwnedCluster(ctx, c.Spec)
+	evidence = append(evidence, observationEvidence...)
+	if observationErr != nil {
+		return evidence, fmt.Errorf("confirm CNPG cluster cleanup: %w", observationErr)
+	}
+	if ownedCluster.Found {
+		return evidence, fmt.Errorf("confirm CNPG cluster cleanup: owned cluster %q still exists", ownedCluster.Name)
+	}
+
+	if !c.Options.CleanupPVC {
+		c.created = false
+		return evidence, nil
+	}
+
+	ownedPVCs, pvcObservationEvidence, pvcObservationErr := c.Client.FindOwnedPVCs(ctx, c.Spec)
+	evidence = append(evidence, pvcObservationEvidence...)
+	if pvcObservationErr != nil {
+		return evidence, fmt.Errorf("observe CNPG PVCs after cluster cleanup: %w", pvcObservationErr)
+	}
+	if len(ownedPVCs.Items) == 0 {
+		c.created = false
+		return evidence, nil
+	}
+
+	pvcEvidence, pvcErr := c.Client.DeletePVCs(ctx, c.Spec, c.cluster, ownedPVCs)
+	evidence = append(evidence, pvcEvidence...)
+	if pvcErr != nil {
+		return evidence, pvcErr
+	}
+
+	ownedPVCs, pvcObservationEvidence, pvcObservationErr = c.Client.FindOwnedPVCs(ctx, c.Spec)
+	evidence = append(evidence, pvcObservationEvidence...)
+	if pvcObservationErr != nil {
+		return evidence, fmt.Errorf("confirm CNPG PVC cleanup: %w", pvcObservationErr)
+	}
+	if len(ownedPVCs.Items) != 0 {
+		return evidence, fmt.Errorf("confirm CNPG PVC cleanup: %d owned PVCs still exist", len(ownedPVCs.Items))
+	}
+
+	c.created = false
+	return evidence, nil
 }
 
 func (c *Controller) waitOptions() WaitOptions {
@@ -263,6 +368,7 @@ func (c *Controller) waitOptions() WaitOptions {
 	return WaitOptions{
 		Timeout:      timeout,
 		PollInterval: poll,
+		Cluster:      c.cluster,
 	}
 }
 

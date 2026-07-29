@@ -157,12 +157,25 @@ func (r AttemptRecoveryResult) Validate() error {
 	if !r.HistoryPreserved {
 		return fmt.Errorf("attempt recovery must preserve incomplete history")
 	}
+	evidence := []model.EvidenceRecord{}
 	artifacts := []model.ArtifactRef{}
-	if err := appendArtifactReferences(&artifacts, r.Artifacts); err != nil {
-		return fmt.Errorf("validate recovery result artifacts: %w", err)
+	if err := appendEvidenceAndArtifacts(
+		&evidence,
+		&artifacts,
+		r.Evidence,
+		r.Artifacts,
+	); err != nil {
+		return fmt.Errorf("validate recovery result evidence and artifacts: %w", err)
 	}
 	if len(artifacts) != len(r.Artifacts) {
 		return fmt.Errorf("recovery result contains duplicate artifact references")
+	}
+	seenEvidence := make(map[string]struct{}, len(evidence))
+	for _, record := range evidence {
+		if _, found := seenEvidence[record.ID]; found {
+			return fmt.Errorf("recovery result contains duplicate evidence id %q", record.ID)
+		}
+		seenEvidence[record.ID] = struct{}{}
 	}
 	return nil
 }
@@ -355,9 +368,16 @@ func RecoverAttempt(
 			fmt.Errorf("attempt recovery did not produce a cleanup checkpoint"),
 		)
 	}
-	evidence = append(evidence, cleanupEvidence...)
-	if err := appendArtifactReferences(&artifacts, cleanupArtifacts); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("collect cleanup reconciliation artifacts: %w", err))
+	if err := appendEvidenceAndArtifacts(
+		&evidence,
+		&artifacts,
+		cleanupEvidence,
+		cleanupArtifacts,
+	); err != nil {
+		cleanupErr = errors.Join(
+			cleanupErr,
+			fmt.Errorf("collect cleanup reconciliation output: %w", err),
+		)
 	}
 
 	result := AttemptRecoveryResult{
@@ -460,11 +480,13 @@ func recoverAttemptTarget(
 	}
 
 	reconciliation, err := target.Reconcile(ctx, checkpoint)
-	evidence := append([]model.EvidenceRecord(nil), reconciliation.Evidence...)
-	evidence = append(evidence, reconciliation.Report.Evidence...)
+	evidence := []model.EvidenceRecord{}
 	artifacts := []model.ArtifactRef{}
-	artifactErr := appendArtifactReferences(
+	evidenceErr := appendStandaloneEvidence(&evidence, reconciliation.Evidence)
+	reportErr := appendEvidenceAndArtifacts(
+		&evidence,
 		&artifacts,
+		reconciliation.Report.Evidence,
 		reconciliation.Report.Artifacts,
 	)
 	if err != nil {
@@ -476,21 +498,25 @@ func recoverAttemptTarget(
 			"target reconciliation failed",
 			evidence,
 			artifacts,
-			fmt.Errorf("reconcile recovery cleanup: %w", err),
+			errors.Join(
+				fmt.Errorf("reconcile recovery cleanup: %w", err),
+				evidenceErr,
+				reportErr,
+			),
 		)
 	}
-	if artifactErr != nil {
+	if outputErr := errors.Join(evidenceErr, reportErr); outputErr != nil {
 		return markRecoveryCleanupUnknown(
 			ctx,
 			store,
 			checkpoint,
 			clock,
-			"target reconciliation returned conflicting artifacts",
+			"target reconciliation output could not be retained",
 			evidence,
 			artifacts,
 			fmt.Errorf(
-				"collect recovery cleanup reconciliation artifacts: %w",
-				artifactErr,
+				"collect recovery cleanup reconciliation output: %w",
+				outputErr,
 			),
 		)
 	}
@@ -583,7 +609,8 @@ func recoverAttemptTarget(
 	}
 
 	destroyEvidence, destroyErr := target.Destroy(ctx)
-	evidence = append(evidence, destroyEvidence...)
+	destroyEvidenceErr := appendStandaloneEvidence(&evidence, destroyEvidence)
+	destroyErr = errors.Join(destroyErr, destroyEvidenceErr)
 	if destroyErr != nil {
 		return markRecoveryCleanupUnknown(
 			ctx,
@@ -598,11 +625,16 @@ func recoverAttemptTarget(
 	}
 
 	proof, proofErr := target.Reconcile(ctx, checkpoint)
-	evidence = append(evidence, proof.Evidence...)
-	evidence = append(evidence, proof.Report.Evidence...)
-	if err := appendArtifactReferences(&artifacts, proof.Report.Artifacts); err != nil {
-		proofErr = errors.Join(proofErr, err)
-	}
+	proofErr = errors.Join(
+		proofErr,
+		appendStandaloneEvidence(&evidence, proof.Evidence),
+		appendEvidenceAndArtifacts(
+			&evidence,
+			&artifacts,
+			proof.Report.Evidence,
+			proof.Report.Artifacts,
+		),
+	)
 	if proofErr == nil {
 		proofErr = proof.Validate()
 	}

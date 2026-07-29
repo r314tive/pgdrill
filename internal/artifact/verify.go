@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/filelock"
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -230,7 +231,10 @@ func validateGCOperationState(
 		}
 		return GCPlan{}, fmt.Errorf("inspect artifact GC progress: %w", err)
 	}
-	entries, err := os.ReadDir(progressDir)
+	entries, err := durablefs.ReadDirBounded(
+		progressDir,
+		MaxStoreBlobs+MaxTemporaryFiles,
+	)
 	if err != nil {
 		return GCPlan{}, err
 	}

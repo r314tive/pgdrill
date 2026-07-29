@@ -70,6 +70,15 @@ func TestHistoryImportListAndShowCommands(t *testing.T) {
 	if list.Attempts[0].FailureStage != model.DrillStageProbeExecution || !list.Attempts[0].ReportAvailable {
 		t.Fatalf("history summary = %#v", list.Attempts[0])
 	}
+	var text bytes.Buffer
+	if err := writeHistoryListText(&text, storePath, list.Attempts); err != nil {
+		t.Fatalf("format history list: %v", err)
+	}
+	for _, want := range []string{"STARTED", "imported-run", "probe_execution"} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("history list text missing %q:\n%s", want, text.String())
+		}
+	}
 
 	stdout.Reset()
 	stderr.Reset()
@@ -152,6 +161,7 @@ func TestHistoryImportAcceptsLegacyReaderSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	result.SpecDigest = legacySpec.Digest()
+	result.Operations = nil
 	result.PolicyEvaluation.SchemaVersion =
 		model.LegacyRecoveryPolicyEvaluationSchemaVersion
 	var legacy bytes.Buffer
@@ -277,6 +287,30 @@ func TestHistoryVerifyAndConfirmedPruneCommands(t *testing.T) {
 	if verification.Runs != 2 || verification.Attempts != 2 || verification.TerminalReports != 2 {
 		t.Fatalf("history verification = %#v", verification)
 	}
+	formattedVerification := verification
+	formattedVerification.PendingRetentionOperations = []string{"sha256:pending-retention"}
+	formattedVerification.PendingRetentionCleanup = []string{"sha256:pending-cleanup"}
+	formattedVerification.MigrationPlanDigest = "sha256:migration-plan"
+	formattedVerification.MigratedFromSchemaVersion = history.LegacyStoreSchemaVersion
+	formattedVerification.SourceSnapshotDigest = "sha256:source-snapshot"
+	var text bytes.Buffer
+	if err := writeHistoryVerificationText(
+		&text,
+		storePath,
+		formattedVerification,
+	); err != nil {
+		t.Fatalf("format history verification: %v", err)
+	}
+	for _, want := range []string{
+		"Terminal reports:",
+		"Pending retention:",
+		"Pending cleanup:",
+		"Migration plan:",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("history verification text missing %q:\n%s", want, text.String())
+		}
+	}
 
 	stdout.Reset()
 	stderr.Reset()
@@ -299,6 +333,15 @@ func TestHistoryVerifyAndConfirmedPruneCommands(t *testing.T) {
 	}
 	if len(plan.Attempts) != 2 || len(plan.Runs) != 2 {
 		t.Fatalf("retention plan = %#v", plan)
+	}
+	text.Reset()
+	if err := writeHistoryRetentionPlanText(&text, storePath, plan); err != nil {
+		t.Fatalf("format history retention plan: %v", err)
+	}
+	for _, want := range []string{"plan only", "FINISHED", "retention-cli-1"} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("history retention plan text missing %q:\n%s", want, text.String())
+		}
 	}
 	summaries, err := (history.DirectoryStore{Path: storePath}).List(context.Background())
 	if err != nil {
@@ -323,6 +366,15 @@ func TestHistoryVerifyAndConfirmedPruneCommands(t *testing.T) {
 	}
 	if result.PlanDigest != plan.Digest || result.DeletedAttempts != 2 || result.DeletedRuns != 2 {
 		t.Fatalf("history prune result = %#v", result)
+	}
+	text.Reset()
+	if err := writeHistoryPruneResultText(&text, storePath, result); err != nil {
+		t.Fatalf("format history prune result: %v", err)
+	}
+	for _, want := range []string{"Deleted attempts:", plan.Digest} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("history prune result text missing %q:\n%s", want, text.String())
+		}
 	}
 	summaries, err = (history.DirectoryStore{Path: storePath}).List(context.Background())
 	if err != nil {
@@ -388,6 +440,15 @@ func TestHistoryMigrationPlanAndApplyCommands(t *testing.T) {
 	if plan.Runs != 1 || plan.Attempts != 1 || plan.TerminalReports != 1 {
 		t.Fatalf("migration plan = %#v", plan)
 	}
+	var text bytes.Buffer
+	if err := writeHistoryMigrationPlanText(&text, plan); err != nil {
+		t.Fatalf("format migration plan: %v", err)
+	}
+	for _, want := range []string{"plan only", "Source snapshot:", plan.Digest} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("history migration plan text missing %q:\n%s", want, text.String())
+		}
+	}
 	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
 		t.Fatalf("migration plan created destination: %v", err)
 	}
@@ -409,6 +470,15 @@ func TestHistoryMigrationPlanAndApplyCommands(t *testing.T) {
 		result.Verification.StoreSchemaVersion != history.CurrentStoreSchemaVersion ||
 		result.Verification.MigrationPlanDigest != plan.Digest {
 		t.Fatalf("migration result = %#v", result)
+	}
+	text.Reset()
+	if err := writeHistoryMigrationResultText(&text, result); err != nil {
+		t.Fatalf("format migration result: %v", err)
+	}
+	for _, want := range []string{"Stable destination:", plan.Digest} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("history migration result text missing %q:\n%s", want, text.String())
+		}
 	}
 
 	stdout.Reset()

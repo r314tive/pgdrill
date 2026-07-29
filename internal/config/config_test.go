@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ target:
   type: local
   work_dir: /var/tmp/pgdrill/main
   postgres_binary: /usr/lib/postgresql/16/bin/postgres
+  psql_binary: /usr/lib/postgresql/16/bin/psql
   postgres_port: 15432
   startup_timeout: 500ms
   shutdown_timeout: 5s
@@ -103,6 +105,9 @@ report:
 	}
 	if cfg.Target.PostgresBinary != "/usr/lib/postgresql/16/bin/postgres" {
 		t.Fatalf("unexpected postgres binary %q", cfg.Target.PostgresBinary)
+	}
+	if cfg.Target.PSQLBinary != "/usr/lib/postgresql/16/bin/psql" {
+		t.Fatalf("unexpected psql binary %q", cfg.Target.PSQLBinary)
 	}
 	if cfg.Target.PostgresPort != 15432 {
 		t.Fatalf("unexpected postgres port %d", cfg.Target.PostgresPort)
@@ -194,6 +199,49 @@ func TestLoadRejectsInvalidPolicyDurations(t *testing.T) {
 	}
 }
 
+func TestDurationJSONContract(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		input     string
+		want      time.Duration
+		wantError string
+	}{
+		{name: "duration", input: `"1m30s"`, want: 90 * time.Second},
+		{name: "empty", input: `""`},
+		{name: "null", input: `null`},
+		{name: "non string", input: `30`, wantError: "must be a string"},
+		{name: "invalid", input: `"forever"`, wantError: "parse duration"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := Duration{Duration: time.Hour}
+			err := value.UnmarshalJSON([]byte(test.input))
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("UnmarshalJSON() error = %v, want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UnmarshalJSON() error = %v", err)
+			}
+			if value.Duration != test.want || value.IsZero() != (test.want == 0) {
+				t.Fatalf(
+					"UnmarshalJSON() = %s, IsZero() = %t",
+					value.Duration,
+					value.IsZero(),
+				)
+			}
+			encoded, err := value.MarshalJSON()
+			if err != nil {
+				t.Fatalf("MarshalJSON() error = %v", err)
+			}
+			if test.want == 0 && string(encoded) != `""` {
+				t.Fatalf("MarshalJSON() = %s, want empty duration", encoded)
+			}
+		})
+	}
+}
+
 func TestLoadConfigDefaultsRecoveryAndReport(t *testing.T) {
 	cfg, err := Load(strings.NewReader(`
 provider:
@@ -218,6 +266,94 @@ target:
 	if cfg.Restore.Timeout.Duration != DefaultRestoreTimeout {
 		t.Fatalf("expected restore timeout default %s, got %s", DefaultRestoreTimeout, cfg.Restore.Timeout.Duration)
 	}
+}
+
+func TestLoadRejectsAmbiguousOrOversizedInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		input   string
+		wantErr string
+	}{
+		{
+			name:    "multiple json values",
+			format:  "json",
+			input:   `{"provider":{"type":"wal-g"},"target":{"type":"local"}} {}`,
+			wantErr: "multiple JSON values",
+		},
+		{
+			name:    "duplicate json member",
+			format:  "json",
+			input:   `{"provider":{"type":"wal-g"},"target":{"type":"local"},"target":{"type":"kubernetes"}}`,
+			wantErr: `duplicate JSON object member "target"`,
+		},
+		{
+			name: "multiple yaml documents",
+			input: `provider:
+  type: wal-g
+target:
+  type: local
+---
+provider:
+  type: barman
+`,
+			format:  "yaml",
+			wantErr: "multiple YAML documents",
+		},
+		{
+			name:    "json trailing garbage",
+			format:  "json",
+			input:   `{"provider":{"type":"wal-g"},"target":{"type":"local"}} x`,
+			wantErr: "trailing data",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Load(strings.NewReader(test.input), test.format)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Load() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+
+	if _, err := Load(nil, "json"); err == nil || !strings.Contains(err.Error(), "config input is required") {
+		t.Fatalf("Load(nil) error = %v", err)
+	}
+	oversized := strings.NewReader(strings.Repeat(" ", int(MaxConfigBytes)+1))
+	if _, err := Load(oversized, "yaml"); err == nil || !strings.Contains(err.Error(), "config exceeds") {
+		t.Fatalf("Load(oversized) error = %v", err)
+	}
+}
+
+func FuzzLoad(f *testing.F) {
+	f.Add([]byte(`{"provider":{"type":"wal-g"},"target":{"type":"local"}}`), true)
+	f.Add([]byte("provider:\n  type: wal-g\ntarget:\n  type: local\n"), false)
+	f.Add([]byte(`{} {}`), true)
+	f.Add([]byte("---\n{}\n---\n{}\n"), false)
+
+	f.Fuzz(func(t *testing.T, data []byte, useJSON bool) {
+		if int64(len(data)) > MaxConfigBytes {
+			t.Skip()
+		}
+		format := "yaml"
+		if useJSON {
+			format = "json"
+		}
+		first, firstErr := Load(strings.NewReader(string(data)), format)
+		second, secondErr := Load(strings.NewReader(string(data)), format)
+		if (firstErr == nil) != (secondErr == nil) {
+			t.Fatalf("Load() acceptance is not deterministic: first=%v second=%v", firstErr, secondErr)
+		}
+		if firstErr == nil {
+			if err := first.Validate(); err != nil {
+				t.Fatalf("Load() returned invalid config: %v", err)
+			}
+			if !reflect.DeepEqual(first, second) {
+				t.Fatal("Load() result is not deterministic")
+			}
+		}
+	})
 }
 
 func TestValidateDrillRequiresProbe(t *testing.T) {

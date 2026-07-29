@@ -3,6 +3,7 @@ package pgisready
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,19 @@ func TestRunPassesWhenPGIsReadySucceeds(t *testing.T) {
 	}
 }
 
+func TestDescriptorContract(t *testing.T) {
+	probe := New(Config{Name: " readiness "}, &fakeRunner{})
+	if probe.Type() != model.ProbePGIsReady {
+		t.Fatalf("Type() = %q", probe.Type())
+	}
+	if got, want := probe.Descriptor(), (model.ProbeDescriptor{Type: model.ProbePGIsReady, Name: "readiness"}); got != want {
+		t.Fatalf("Descriptor() = %#v, want %#v", got, want)
+	}
+	if got := New(Config{}, &fakeRunner{}).Descriptor().Name; got != model.DefaultProbeName(model.ProbePGIsReady) {
+		t.Fatalf("default descriptor name = %q", got)
+	}
+}
+
 func TestRunRetriesTransientStatusUntilReady(t *testing.T) {
 	first := command.Result{Evidence: model.CommandEvidence{
 		FinishedAt: time.Date(2026, 7, 6, 1, 2, 3, 0, time.UTC),
@@ -72,6 +86,51 @@ func TestRunRetriesTransientStatusUntilReady(t *testing.T) {
 	}
 	if report.Evidence[0].Attributes["attempt"] != "1" || report.Evidence[1].Attributes["attempt"] != "2" {
 		t.Fatalf("unexpected attempt evidence %#v", report.Evidence)
+	}
+}
+
+func TestRunBoundsRetainedRetryEvidence(t *testing.T) {
+	attempts := maxRetainedEvidence + 7
+	base := time.Date(2026, 7, 6, 1, 2, 3, 0, time.UTC)
+	results := make([]command.Result, attempts)
+	for index := range results {
+		results[index] = command.Result{Evidence: model.CommandEvidence{
+			FinishedAt: base.Add(time.Duration(index) * time.Nanosecond),
+			ExitStatus: model.ExitStatus{Started: true, Exited: true, ExitCode: 2},
+			Stdout:     "no response",
+		}}
+	}
+	results[len(results)-1].Evidence.ExitStatus = model.ExitStatus{
+		Started:  true,
+		Exited:   true,
+		Success:  true,
+		ExitCode: 0,
+	}
+	results[len(results)-1].Evidence.Stdout = "accepting connections"
+	runner := &fakeRunner{results: results}
+	probe := New(Config{Timeout: time.Second}, runner)
+	probe.retryInterval = time.Nanosecond
+
+	report, err := probe.Run(
+		context.Background(),
+		model.RunningPostgres{ConnString: "postgresql://verify"},
+	)
+
+	if err != nil {
+		t.Fatalf("run probe: %v", err)
+	}
+	if len(report.Evidence) != maxRetainedEvidence ||
+		len(report.Checks) != 1 ||
+		len(report.Checks[0].EvidenceIDs) != maxRetainedEvidence {
+		t.Fatalf("unexpected retained evidence %#v", report)
+	}
+	if report.Evidence[0].Attributes["attempt"] != "1" ||
+		report.Evidence[len(report.Evidence)-1].Attributes["attempt"] != strconv.Itoa(attempts) {
+		t.Fatalf("retained evidence does not preserve first and latest attempts: %#v", report.Evidence)
+	}
+	if report.Checks[0].Attributes["attempt_count"] != strconv.Itoa(attempts) ||
+		report.Checks[0].Attributes["attempt_evidence_truncated"] != "true" {
+		t.Fatalf("missing bounded retry attributes %#v", report.Checks[0].Attributes)
 	}
 }
 

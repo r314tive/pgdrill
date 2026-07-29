@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/adapterutil"
 	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
@@ -92,7 +95,11 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 
 	backups, err := ParseBackupList(result.Raw.Stdout, a.cfg.Server)
 	if err != nil {
-		return catalog, err
+		return catalog, result.RedactError(err)
+	}
+	backups, err = adapterutil.RedactBackups(backups, result)
+	if err != nil {
+		return catalog, fmt.Errorf("redact barman backup catalog: %w", err)
 	}
 	catalog.Backups = backups
 	return catalog, nil
@@ -108,24 +115,40 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 	}
 
 	report := model.CheckReport{}
-	check, evidence, _ := a.runValidationCommand(ctx, "barman-check", a.checkArgs())
-	report.Checks = append(report.Checks, check)
+	check, evidence, result := a.runValidationCommand(ctx, "barman-check", a.checkArgs())
 	report.Evidence = append(report.Evidence, evidence)
+	check, err = redactValidationCheck(check, result)
+	if err != nil {
+		return report, fmt.Errorf("redact barman-check result: %w", result.RedactError(err))
+	}
+	report.Checks = append(report.Checks, check)
 
-	check, evidence, _ = a.runValidationCommand(ctx, "barman-check-backup", a.checkBackupArgs(backupID))
-	report.Checks = append(report.Checks, check)
+	check, evidence, result = a.runValidationCommand(ctx, "barman-check-backup", a.checkBackupArgs(backupID))
 	report.Evidence = append(report.Evidence, evidence)
+	check, err = redactValidationCheck(check, result)
+	if err != nil {
+		return report, fmt.Errorf("redact barman-check-backup result: %w", result.RedactError(err))
+	}
+	report.Checks = append(report.Checks, check)
 
-	check, evidence, result := a.runValidationCommand(ctx, "barman-show-backup", a.showBackupArgs(backupID))
-	check = enrichShowBackupCheck(check, result.Raw.Stdout, a.cfg.Server)
-	report.Checks = append(report.Checks, check)
+	check, evidence, result = a.runValidationCommand(ctx, "barman-show-backup", a.showBackupArgs(backupID))
+	check = enrichShowBackupCheck(check, result.Raw.Stdout, a.cfg.Server, backupID)
 	report.Evidence = append(report.Evidence, evidence)
+	check, err = redactValidationCheck(check, result)
+	if err != nil {
+		return report, fmt.Errorf("redact barman-show-backup result: %w", result.RedactError(err))
+	}
+	report.Checks = append(report.Checks, check)
 
 	if a.cfg.Manifest.Enabled {
 		check, evidence, result = a.runValidationCommandWith(ctx, "barman-generate-manifest", a.generateManifestArgs(backupID), a.manifestTimeout(), a.manifestRedactions())
 		check = acceptExistingManifest(check, result, a.cfg.BarmanVerify.Enabled)
-		report.Checks = append(report.Checks, check)
 		report.Evidence = append(report.Evidence, evidence)
+		check, err = redactValidationCheck(check, result)
+		if err != nil {
+			return report, fmt.Errorf("redact barman-generate-manifest result: %w", result.RedactError(err))
+		}
+		report.Checks = append(report.Checks, check)
 	} else {
 		report.Checks = append(report.Checks, model.Check{
 			Name:    "barman-generate-manifest",
@@ -138,9 +161,13 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 	}
 
 	if a.cfg.BarmanVerify.Enabled {
-		check, evidence, _ = a.runValidationCommandWith(ctx, "barman-verify-backup", a.verifyBackupArgs(backupID), a.barmanVerifyTimeout(), a.barmanVerifyRedactions())
-		report.Checks = append(report.Checks, check)
+		check, evidence, result = a.runValidationCommandWith(ctx, "barman-verify-backup", a.verifyBackupArgs(backupID), a.barmanVerifyTimeout(), a.barmanVerifyRedactions())
 		report.Evidence = append(report.Evidence, evidence)
+		check, err = redactValidationCheck(check, result)
+		if err != nil {
+			return report, fmt.Errorf("redact barman-verify-backup result: %w", result.RedactError(err))
+		}
+		report.Checks = append(report.Checks, check)
 	} else {
 		report.Checks = append(report.Checks, model.Check{
 			Name:    "barman-verify-backup",
@@ -334,7 +361,7 @@ func (a *Adapter) runValidationCommandWith(ctx context.Context, name string, arg
 	}
 	if err != nil {
 		check.Status = model.CheckStatusFailed
-		check.Message = fmt.Sprintf("run %s: %v", name, err)
+		check.Message = fmt.Sprintf("run %s: %v", name, result.RedactError(err))
 		return check, evidence, result
 	}
 	if !result.Evidence.ExitStatus.Success {
@@ -342,6 +369,10 @@ func (a *Adapter) runValidationCommandWith(ctx context.Context, name string, arg
 		check.Message = fmt.Sprintf("%s failed: %s", name, result.Evidence.ExitStatus.Summary())
 	}
 	return check, evidence, result
+}
+
+func redactValidationCheck(check model.Check, result command.Result) (model.Check, error) {
+	return adapterutil.RedactCheck(check, result)
 }
 
 func (a *Adapter) barmanVerifyTimeout() time.Duration {
@@ -366,48 +397,86 @@ func (a *Adapter) manifestRedactions() []string {
 	return append(append([]string{}, a.cfg.RedactValues...), a.cfg.Manifest.RedactValues...)
 }
 
-func enrichShowBackupCheck(check model.Check, data []byte, defaultServer string) model.Check {
+func enrichShowBackupCheck(
+	check model.Check,
+	data []byte,
+	expectedServer string,
+	expectedBackupID string,
+) model.Check {
 	if check.Status == model.CheckStatusFailed {
 		return check
 	}
-	attributes, err := showBackupAttributes(data, defaultServer)
+	attributes, err := showBackupAttributes(data)
 	if err != nil {
-		check.Status = model.CheckStatusWarning
+		check.Status = model.CheckStatusFailed
 		check.Message = err.Error()
 		return check
 	}
 	for key, value := range attributes {
 		check.Attributes[key] = value
 	}
+	switch {
+	case attributes["server"] != expectedServer:
+		check.Status = model.CheckStatusFailed
+		check.Message = fmt.Sprintf(
+			"barman show-backup server %q does not match requested server %q",
+			attributes["server"],
+			expectedServer,
+		)
+	case attributes["backup_id"] != expectedBackupID:
+		check.Status = model.CheckStatusFailed
+		check.Message = fmt.Sprintf(
+			"barman show-backup backup id %q does not match requested backup %q",
+			attributes["backup_id"],
+			expectedBackupID,
+		)
+	case mapBarmanStatus(attributes["status"]) != model.BackupStatusAvailable:
+		check.Status = model.CheckStatusFailed
+		check.Message = fmt.Sprintf(
+			"barman show-backup status %q is not an available terminal status",
+			attributes["status"],
+		)
+	}
 	return check
 }
 
-func showBackupAttributes(data []byte, defaultServer string) (map[string]string, error) {
+func showBackupAttributes(data []byte) (map[string]string, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("barman show-backup produced no JSON output")
 	}
 
 	var root any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&root); err != nil {
+	if err := jsonutil.DecodeOne(data, &root); err != nil {
 		return nil, fmt.Errorf("parse barman show-backup json: %w", err)
 	}
-
-	var objects []map[string]any
-	collectBackupObjects(root, "", &objects)
-	if len(objects) == 0 {
-		return nil, fmt.Errorf("barman show-backup JSON did not contain backup metadata")
+	object, ok := root.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("barman show-backup JSON must be a backup object")
+	}
+	backupID, err := requiredStringField(object, "backup id", "backup_id", "id", "backupId")
+	if err != nil {
+		return nil, err
+	}
+	server, err := requiredStringField(object, "server", "server_name", "server", "serverName")
+	if err != nil {
+		return nil, err
+	}
+	status, err := requiredStringField(object, "status", "status")
+	if err != nil {
+		return nil, err
+	}
+	backupType, _, err := optionalStringField(object, "backup type", "backup_type", "type", "kind")
+	if err != nil {
+		return nil, err
 	}
 
-	object := objects[0]
 	attributes := map[string]string{
 		"operation": "barman-show-backup",
 	}
-	addAttribute(attributes, "backup_id", getString(object, "backup_id", "id", "backupId"))
-	addAttribute(attributes, "server", firstNonEmpty(getString(object, "server_name", "server", "serverName"), defaultServer))
-	addAttribute(attributes, "status", getString(object, "status"))
-	addAttribute(attributes, "backup_type", getString(object, "backup_type", "type", "kind"))
+	addAttribute(attributes, "backup_id", backupID)
+	addAttribute(attributes, "server", server)
+	addAttribute(attributes, "status", status)
+	addAttribute(attributes, "backup_type", backupType)
 	addAttribute(attributes, "begin_wal", getString(object, "begin_wal", "start_wal", "begin_wal_segment"))
 	addAttribute(attributes, "end_wal", getString(object, "end_wal", "finish_wal", "end_wal_segment"))
 	addAttribute(attributes, "begin_lsn", getString(object, "begin_xlog", "begin_lsn", "start_lsn"))
@@ -466,7 +535,7 @@ func barmanRecoveryArgs(target model.RecoveryTarget) ([]string, error) {
 		args = append(args, "--exclusive")
 	}
 	if targeted {
-		args = append(args, "--target-action", "promote")
+		args = append(args, "--target-action", "pause")
 	}
 	return args, nil
 }
@@ -490,18 +559,21 @@ func (a *Adapter) backupID(backup model.Backup) (string, error) {
 
 func ParseBackupList(data []byte, defaultServer string) ([]model.Backup, error) {
 	var root any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&root); err != nil {
+	if err := jsonutil.DecodeOne(data, &root); err != nil {
+		return nil, fmt.Errorf("parse barman list-backups json: %w", err)
+	}
+	rootObject, ok := root.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("parse barman list-backups json: expected server-keyed object")
+	}
+	objects, server, err := backupListObjects(rootObject, defaultServer)
+	if err != nil {
 		return nil, fmt.Errorf("parse barman list-backups json: %w", err)
 	}
 
-	var objects []map[string]any
-	collectBackupObjects(root, "", &objects)
-
 	backups := make([]model.Backup, 0, len(objects))
 	for i, object := range objects {
-		backup, err := mapBackup(object, defaultServer)
+		backup, err := mapBackup(object, server)
 		if err != nil {
 			return nil, fmt.Errorf("parse barman backup entry %d: %w", i, err)
 		}
@@ -511,29 +583,126 @@ func ParseBackupList(data []byte, defaultServer string) ([]model.Backup, error) 
 }
 
 func mapBackup(object map[string]any, defaultServer string) (model.Backup, error) {
-	backupID := getString(object, "backup_id", "id", "backupId")
-	if backupID == "" {
-		return model.Backup{}, fmt.Errorf("missing backup id")
+	backupID, err := requiredStringField(object, "backup id", "backup_id", "id", "backupId")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	serverValue, _, err := optionalStringField(object, "server", "server_name", "server", "serverName")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	parentID, _, err := optionalStringField(
+		object,
+		"parent backup id",
+		"parent_backup_id",
+		"parent_id",
+		"deduplicated_from",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	status, err := requiredStringField(object, "status", "status")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	backupType, _, err := optionalStringField(object, "backup type", "backup_type", "type", "kind")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	permanent, _, err := optionalBoolField(object, "permanent", "is_permanent", "permanent")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	keep, _, err := optionalStringField(object, "keep status", "keep", "keep_status")
+	if err != nil {
+		return model.Backup{}, err
 	}
 
-	server := firstNonEmpty(getString(object, "server_name", "server", "serverName"), defaultServer)
+	server := firstNonEmpty(serverValue, defaultServer)
 	providerID := backupID
 	if server != "" {
 		providerID = server + "/" + backupID
 	}
 
-	startedAt := getTime(object,
+	startedAt, err := getTime(object,
 		"begin_time_timestamp", "start_time_timestamp", "started_at_timestamp",
 		"begin_time", "start_time", "started_at",
 	)
-	finishedAt := getTime(object,
+	if err != nil {
+		return model.Backup{}, fmt.Errorf("backup start time: %w", err)
+	}
+	finishedAt, err := getTime(object,
 		"end_time_timestamp", "finish_time_timestamp", "finished_at_timestamp",
 		"end_time", "finish_time", "finished_at",
 	)
-	lastModifiedAt := getTime(object,
+	if err != nil {
+		return model.Backup{}, fmt.Errorf("backup finish time: %w", err)
+	}
+	lastModifiedAt, err := getTime(object,
 		"last_modified_timestamp", "updated_at_timestamp", "last_modified", "updated_at",
 	)
-	parentID := getString(object, "parent_backup_id", "parent_id", "deduplicated_from")
+	if err != nil {
+		return model.Backup{}, fmt.Errorf("backup last modified time: %w", err)
+	}
+	startSegment, err := consistentString(
+		object,
+		"start WAL segment",
+		"begin_wal",
+		"start_wal",
+		"begin_wal_segment",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	endSegment, err := consistentString(
+		object,
+		"end WAL segment",
+		"end_wal",
+		"finish_wal",
+		"end_wal_segment",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	startLSN, err := consistentString(
+		object,
+		"start LSN",
+		"begin_xlog",
+		"begin_lsn",
+		"start_lsn",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	endLSN, err := consistentString(
+		object,
+		"end LSN",
+		"end_xlog",
+		"end_lsn",
+		"finish_lsn",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	postgresVersion, err := consistentString(
+		object,
+		"PostgreSQL version",
+		"postgres_version",
+		"pg_version",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	dataDirectory, err := consistentString(
+		object,
+		"data directory",
+		"pgdata",
+		"data_directory",
+		"data_dir",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
 
 	return model.Backup{
 		ID:             model.ProviderScopedID(model.ProviderBarman, providerID),
@@ -541,53 +710,130 @@ func mapBackup(object map[string]any, defaultServer string) (model.Backup, error
 		ProviderID:     providerID,
 		ClusterName:    server,
 		ParentID:       parentID,
-		Kind:           inferBarmanKind(getString(object, "backup_type", "type", "kind"), parentID),
-		Status:         mapBarmanStatus(getString(object, "status")),
+		Kind:           inferBarmanKind(backupType, parentID),
+		Status:         mapBarmanStatus(status),
 		StartedAt:      startedAt,
 		FinishedAt:     finishedAt,
 		LastModifiedAt: lastModifiedAt,
 		WALRange: model.WALRange{
-			StartSegment: getString(object, "begin_wal", "start_wal", "begin_wal_segment"),
-			EndSegment:   getString(object, "end_wal", "finish_wal", "end_wal_segment"),
-			StartLSN:     getString(object, "begin_xlog", "begin_lsn", "start_lsn"),
-			EndLSN:       getString(object, "end_xlog", "end_lsn", "finish_lsn"),
+			StartSegment: startSegment,
+			EndSegment:   endSegment,
+			StartLSN:     startLSN,
+			EndLSN:       endLSN,
 		},
-		PostgreSQLVersion: getString(object, "postgres_version", "pg_version"),
-		DataDirectory:     getString(object, "pgdata", "data_directory", "data_dir"),
-		Permanent:         getBool(object, "is_permanent", "permanent") || isKept(getString(object, "keep", "keep_status")),
+		PostgreSQLVersion: postgresVersion,
+		DataDirectory:     dataDirectory,
+		Permanent:         permanent || isKept(keep),
 		Metadata:          metadata(object, "backup_name", "system_identifier", "systemid", "backup_method", "retention_policy_status"),
 	}, nil
 }
 
-func collectBackupObjects(value any, candidateID string, out *[]map[string]any) {
+func backupListObjects(root map[string]any, defaultServer string) ([]map[string]any, string, error) {
+	if len(root) > 2 {
+		return nil, "", fmt.Errorf("expected exactly one server entry and optional _WARNING")
+	}
+	if warning, ok := root["_WARNING"]; ok {
+		values, ok := warning.([]any)
+		if !ok {
+			return nil, "", fmt.Errorf("_WARNING must be an array of strings")
+		}
+		if len(values) > model.MaxReportAttributes {
+			return nil, "", fmt.Errorf(
+				"_WARNING exceeds maximum count %d",
+				model.MaxReportAttributes,
+			)
+		}
+		for index, value := range values {
+			if _, ok := value.(string); !ok {
+				return nil, "", fmt.Errorf("_WARNING entry %d must be a string", index)
+			}
+		}
+	}
+
+	serverKeys := make([]string, 0, len(root))
+	for key := range root {
+		if key != "_WARNING" {
+			serverKeys = append(serverKeys, key)
+		}
+	}
+	sort.Strings(serverKeys)
+	if len(serverKeys) != 1 {
+		return nil, "", fmt.Errorf("expected exactly one server entry")
+	}
+	server := serverKeys[0]
+	if defaultServer != "" && server != defaultServer {
+		return nil, "", fmt.Errorf(
+			"server entry %q does not match requested server %q",
+			server,
+			defaultServer,
+		)
+	}
+	value := root[server]
 	switch typed := value.(type) {
 	case []any:
-		for _, item := range typed {
-			collectBackupObjects(item, "", out)
+		if len(typed) > model.MaxBackupsPerCatalog {
+			return nil, "", fmt.Errorf(
+				"server %q backups exceed maximum count %d",
+				server,
+				model.MaxBackupsPerCatalog,
+			)
 		}
-	case map[string]any:
-		if isBackupObject(typed) {
-			object := typed
-			if getString(object, "backup_id", "id", "backupId") == "" && candidateID != "" {
-				object = copyMap(object)
-				object["backup_id"] = candidateID
+		objects := make([]map[string]any, 0, len(typed))
+		for index, value := range typed {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return nil, "", fmt.Errorf("server %q backup %d must be an object", server, index)
 			}
-			*out = append(*out, object)
-			return
+			objects = append(objects, object)
 		}
-		for key, item := range typed {
-			collectBackupObjects(item, key, out)
+		return objects, server, nil
+	case map[string]any:
+		if len(typed) > model.MaxBackupsPerCatalog {
+			return nil, "", fmt.Errorf(
+				"server %q backups exceed maximum count %d",
+				server,
+				model.MaxBackupsPerCatalog,
+			)
 		}
+		backupIDs := make([]string, 0, len(typed))
+		for backupID := range typed {
+			backupIDs = append(backupIDs, backupID)
+		}
+		sort.Strings(backupIDs)
+		objects := make([]map[string]any, 0, len(backupIDs))
+		for _, backupID := range backupIDs {
+			value := typed[backupID]
+			object, ok := value.(map[string]any)
+			if !ok {
+				return nil, "", fmt.Errorf("server %q backup %q must be an object", server, backupID)
+			}
+			explicitID, found, err := optionalStringField(
+				object,
+				"backup id",
+				"backup_id",
+				"id",
+				"backupId",
+			)
+			if err != nil {
+				return nil, "", err
+			}
+			if found && explicitID != backupID {
+				return nil, "", fmt.Errorf(
+					"keyed backup id %q does not match explicit backup id %q",
+					backupID,
+					explicitID,
+				)
+			}
+			if !found {
+				object = copyMap(object)
+				object["backup_id"] = backupID
+			}
+			objects = append(objects, object)
+		}
+		return objects, server, nil
+	default:
+		return nil, "", fmt.Errorf("server %q backups must be an array or keyed object", server)
 	}
-}
-
-func isBackupObject(object map[string]any) bool {
-	if getString(object, "backup_id", "id", "backupId") != "" {
-		return true
-	}
-	return getString(object, "status") != "" &&
-		(getString(object, "begin_time", "start_time", "started_at") != "" ||
-			getString(object, "end_time", "finish_time", "finished_at") != "")
 }
 
 func mapBarmanStatus(status string) model.BackupStatus {
@@ -680,39 +926,103 @@ func getString(object map[string]any, keys ...string) string {
 	return ""
 }
 
-func getBool(object map[string]any, keys ...string) bool {
+func consistentString(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, error) {
+	var (
+		selectedKey   string
+		selectedValue string
+	)
 	for _, key := range keys {
-		value, ok := object[key]
-		if !ok || value == nil {
+		if _, present := object[key]; !present || object[key] == nil {
 			continue
 		}
-		switch typed := value.(type) {
-		case bool:
-			return typed
-		case string:
-			switch strings.ToLower(strings.TrimSpace(typed)) {
-			case "true", "yes", "1":
-				return true
-			case "false", "no", "0":
-				return false
-			}
+		value := getString(object, key)
+		if value == "" {
+			continue
+		}
+		if selectedValue != "" && value != selectedValue {
+			return "", fmt.Errorf(
+				"%s aliases %q and %q conflict",
+				name,
+				selectedKey,
+				key,
+			)
+		}
+		if selectedValue == "" {
+			selectedKey = key
+			selectedValue = value
 		}
 	}
-	return false
+	return selectedValue, nil
 }
 
-func getTime(object map[string]any, keys ...string) *time.Time {
+func requiredStringField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, error) {
+	value, found, err := optionalStringField(object, name, keys...)
+	if err != nil {
+		return "", err
+	}
+	if !found || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("missing %s", name)
+	}
+	return value, nil
+}
+
+func optionalStringField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, bool, error) {
+	return adapterutil.OptionalStringAlias(object, name, keys...)
+}
+
+func optionalBoolField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (bool, bool, error) {
+	return adapterutil.OptionalBoolAlias(object, name, keys...)
+}
+
+func getTime(object map[string]any, keys ...string) (*time.Time, error) {
+	var (
+		selectedKey  string
+		selectedTime *time.Time
+	)
 	for _, key := range keys {
+		if _, present := object[key]; !present || object[key] == nil {
+			continue
+		}
 		value := getString(object, key)
 		if value == "" {
 			continue
 		}
 		parsed, err := parseTime(value)
-		if err == nil {
-			return &parsed
+		if err != nil {
+			if selectedTime != nil {
+				continue
+			}
+			return nil, fmt.Errorf("field %q: %w", key, err)
+		}
+		if selectedTime != nil && !selectedTime.Equal(parsed) {
+			return nil, fmt.Errorf(
+				"time aliases %q and %q conflict",
+				selectedKey,
+				key,
+			)
+		}
+		if selectedTime == nil {
+			selectedKey = key
+			selectedTime = &parsed
 		}
 	}
-	return nil
+	return selectedTime, nil
 }
 
 func parseTime(value string) (time.Time, error) {

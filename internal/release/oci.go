@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 )
 
 const (
@@ -841,7 +843,7 @@ func decodeOCIJSON(data []byte, name string, target any) error {
 	if len(data) == 0 {
 		return fmt.Errorf("%s is missing or empty", name)
 	}
-	if err := json.Unmarshal(data, target); err != nil {
+	if err := jsonutil.DecodeOne(data, target); err != nil {
 		return fmt.Errorf("decode %s: %w", name, err)
 	}
 	return nil

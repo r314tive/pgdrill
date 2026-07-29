@@ -46,6 +46,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if e.Target == nil {
 		return model.DrillResult{}, fmt.Errorf("restore target is required")
 	}
+	if err := validateExecutableSpec(req.Spec); err != nil {
+		return model.DrillResult{}, fmt.Errorf("validate executable drill spec: %w", err)
+	}
 
 	providerType := e.Source.Type()
 	reportedProvider := providerType
@@ -96,8 +99,8 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return lifecycle.Finish(ctx, status, err)
 	}
 
-	specValidationErr := req.Spec.Validate()
-	specValidated := specValidationErr == nil
+	specValidationErr := error(nil)
+	specValidated := true
 	var recoveryProvenAt time.Time
 	fail := func(stage model.DrillStage, runErr error) (model.DrillResult, error) {
 		if specValidated && result.PolicyEvaluation == nil {
@@ -123,6 +126,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		RecoveryTarget: recoveryTarget,
 	}
 	var operations *operationExecutor
+	var recoveryVerifier RecoveryTargetVerifier
 
 	err = lifecycle.RunStage(ctx, model.DrillStageRequestValidation, func() error {
 		if err := ctx.Err(); err != nil {
@@ -145,6 +149,11 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		}
 		if specDocument.Target.Spec.Type != targetType {
 			return fmt.Errorf("restore target type %q does not match drill spec target type %q", targetType, specDocument.Target.Spec.Type)
+		}
+		var ok bool
+		recoveryVerifier, ok = e.Target.(RecoveryTargetVerifier)
+		if !ok || recoveryVerifier == nil {
+			return fmt.Errorf("restore target does not implement recovery target verification")
 		}
 		if validator, ok := e.Target.(TargetValidator); ok {
 			if err := validator.Validate(ctx, specDocument.Target.Spec); err != nil {
@@ -181,7 +190,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 			if preflightErr != nil {
 				preflightErr = errors.Join(preflightErr, artifactErr)
 				if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
-					result.Checks = append(result.Checks, preflightReport.Checks...)
+					preflightErr = errors.Join(preflightErr, appendChecks(&result.Checks, preflightReport.Checks))
 				} else {
 					preflightErr = errors.Join(preflightErr, fmt.Errorf("invalid partial preflight report: %w", reportErr))
 				}
@@ -193,7 +202,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 			if err := validateCheckReport(preflightReport, true); err != nil {
 				return fmt.Errorf("validate preflight report: %w", err)
 			}
-			result.Checks = append(result.Checks, preflightReport.Checks...)
+			if err := appendChecks(&result.Checks, preflightReport.Checks); err != nil {
+				return fmt.Errorf("collect preflight checks: %w", err)
+			}
 			if hasFailedChecks(preflightReport.Checks) {
 				return fmt.Errorf("preflight failed")
 			}
@@ -208,9 +219,15 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	err = lifecycle.RunStage(ctx, model.DrillStageBackupDiscovery, func() error {
 		var discoverErr error
 		catalog, discoverErr = e.Source.DiscoverBackups(ctx)
-		result.Evidence = append(result.Evidence, catalog.Evidence...)
+		evidenceErr := appendStandaloneEvidence(&result.Evidence, catalog.Evidence)
 		if discoverErr != nil {
-			return fmt.Errorf("discover backups: %w", discoverErr)
+			return errors.Join(
+				fmt.Errorf("discover backups: %w", discoverErr),
+				evidenceErr,
+			)
+		}
+		if evidenceErr != nil {
+			return fmt.Errorf("collect backup discovery evidence: %w", evidenceErr)
 		}
 		if err := validateBackupCatalog(providerType, catalog); err != nil {
 			return fmt.Errorf("validate provider catalog: %w", err)
@@ -245,7 +262,7 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if validateErr != nil {
 			validateErr = errors.Join(validateErr, artifactErr)
 			if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
-				result.Checks = append(result.Checks, checkReport.Checks...)
+				validateErr = errors.Join(validateErr, appendChecks(&result.Checks, checkReport.Checks))
 			} else {
 				validateErr = errors.Join(validateErr, fmt.Errorf("invalid partial catalog check report: %w", reportErr))
 			}
@@ -257,7 +274,9 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if err := validateCheckReport(checkReport, true); err != nil {
 			return fmt.Errorf("validate catalog check report: %w", err)
 		}
-		result.Checks = append(result.Checks, checkReport.Checks...)
+		if err := appendChecks(&result.Checks, checkReport.Checks); err != nil {
+			return fmt.Errorf("collect catalog validation checks: %w", err)
+		}
 		if hasFailedChecks(checkReport.Checks) {
 			return fmt.Errorf("catalog validation failed")
 		}
@@ -266,14 +285,34 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	if err != nil {
 		return fail(model.DrillStageCatalogValidation, err)
 	}
+	if err := requireCheckCapacity(
+		len(result.Checks),
+		len(specDocument.ProbeProfile.Probes)+1,
+		"native recovery proof and probe profile",
+	); err != nil {
+		return fail(model.DrillStageCatalogValidation, err)
+	}
+	if err := requireEvidenceCapacity(
+		len(result.Evidence),
+		len(specDocument.ProbeProfile.Probes)+1,
+		"native recovery proof and probe profile",
+	); err != nil {
+		return fail(model.DrillStageCatalogValidation, err)
+	}
 
 	var plan model.RestorePlan
 	err = lifecycle.RunStage(ctx, model.DrillStageRestorePlanning, func() error {
 		var planErr error
 		plan, planErr = e.Planner.PlanRestore(ctx, backup, recoveryTarget, specDocument.Target.Spec)
-		result.Evidence = append(result.Evidence, plan.Evidence...)
+		evidenceErr := appendStandaloneEvidence(&result.Evidence, plan.Evidence)
 		if planErr != nil {
-			return fmt.Errorf("plan restore: %w", planErr)
+			return errors.Join(
+				fmt.Errorf("plan restore: %w", planErr),
+				evidenceErr,
+			)
+		}
+		if evidenceErr != nil {
+			return fmt.Errorf("collect restore plan evidence: %w", evidenceErr)
 		}
 		if err := validateRestorePlan(providerType, backup, recoveryTarget, specDocument.Target.Spec, plan); err != nil {
 			return fmt.Errorf("validate restore plan: %w", err)
@@ -281,6 +320,13 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		return nil
 	})
 	if err != nil {
+		return fail(model.DrillStageRestorePlanning, err)
+	}
+	if err := requireEvidenceCapacity(
+		len(result.Evidence),
+		len(specDocument.ProbeProfile.Probes)+1,
+		"native recovery proof and probe profile",
+	); err != nil {
 		return fail(model.DrillStageRestorePlanning, err)
 	}
 
@@ -300,11 +346,11 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 				return operationOutput{evidence: evidence}, err
 			})
 			cancel()
-			result.Evidence = append(result.Evidence, output.evidence...)
+			outputErr := appendOperationOutput(&result, output)
 			prepared = false
-			var cleanupErr error
+			cleanupErr := outputErr
 			if destroyErr != nil {
-				cleanupErr = fmt.Errorf("destroy restore target: %w", destroyErr)
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("destroy restore target: %w", destroyErr))
 			}
 			if err := ctx.Err(); err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restore drill canceled during target cleanup: %w", err))
@@ -318,12 +364,19 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 		if operationErr != nil {
 			return fmt.Errorf("create target preparation operation: %w", operationErr)
 		}
-		_, prepareErr := operations.Execute(ctx, e.Target, operation, false, func() (operationOutput, error) {
+		output, prepareErr := operations.Execute(ctx, e.Target, operation, false, func() (operationOutput, error) {
 			prepared = true
 			return operationOutput{}, e.Target.Prepare(ctx, specDocument.Target.Spec)
 		})
+		outputErr := appendOperationOutput(&result, output)
 		if prepareErr != nil {
-			return fmt.Errorf("prepare restore target: %w", prepareErr)
+			return errors.Join(
+				fmt.Errorf("prepare restore target: %w", prepareErr),
+				outputErr,
+			)
+		}
+		if outputErr != nil {
+			return fmt.Errorf("collect target preparation output: %w", outputErr)
 		}
 		return nil
 	})
@@ -345,9 +398,15 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 				evidence, err := e.Target.Execute(ctx, step)
 				return operationOutput{evidence: evidence}, err
 			})
-			result.Evidence = append(result.Evidence, output.evidence...)
+			outputErr := appendOperationOutput(&result, output)
 			if executeErr != nil {
-				return fmt.Errorf("execute restore step %q: %w", step.Name, executeErr)
+				return errors.Join(
+					fmt.Errorf("execute restore step %q: %w", step.Name, executeErr),
+					outputErr,
+				)
+			}
+			if outputErr != nil {
+				return fmt.Errorf("collect restore step %q output: %w", step.Name, outputErr)
 			}
 		}
 		return nil
@@ -367,9 +426,12 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 			running, evidence, err := e.Target.StartPostgres(ctx, plan.Runtime)
 			return operationOutput{postgres: &running, evidence: evidence}, err
 		})
-		result.Evidence = append(result.Evidence, output.evidence...)
+		outputErr := appendOperationOutput(&result, output)
 		if startErr != nil {
-			return fmt.Errorf("start postgres: %w", startErr)
+			return errors.Join(fmt.Errorf("start postgres: %w", startErr), outputErr)
+		}
+		if outputErr != nil {
+			return fmt.Errorf("collect postgres start output: %w", outputErr)
 		}
 		if output.postgres == nil {
 			return fmt.Errorf("start postgres operation returned no running postgres")
@@ -383,10 +445,19 @@ func (e Engine) Run(ctx context.Context, req DrillRequest) (model.DrillResult, e
 	}
 
 	err = lifecycle.RunStage(ctx, model.DrillStageProbeExecution, func() error {
+		proofReport, proofErr := runRecoveryTargetProof(
+			ctx,
+			recoveryVerifier,
+			pg,
+			recoveryTarget,
+		)
+		if err := appendRecoveryTargetProof(&result, proofReport, proofErr); err != nil {
+			return err
+		}
 		probeReport, probeErr := RunProbes(ctx, e.Probes, pg)
-		result.Checks = append(result.Checks, probeReport.Checks...)
 		artifactErr := appendCheckReportOutput(&result, probeReport)
-		probeErr = errors.Join(probeErr, artifactErr)
+		checkErr := appendChecks(&result.Checks, probeReport.Checks)
+		probeErr = errors.Join(probeErr, artifactErr, checkErr)
 		if probeErr == nil {
 			recoveryProvenAt = clock().UTC()
 		}

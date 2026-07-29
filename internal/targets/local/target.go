@@ -2,6 +2,8 @@ package local
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,24 +18,40 @@ import (
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/durablefs"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/recoveryproof"
 )
 
 const (
-	markerFile              = ".pgdrill-target"
-	markerHeader            = "pgdrill local restore target\n"
-	maxOwnershipMarkerBytes = 256
-	receiptDirectory        = ".pgdrill-operations"
-	maxReceiptBytes         = 16 << 10
-	maxPostmasterPIDBytes   = 8 << 10
-	maxPostgresLogBytes     = 16 << 10
-	maxLogRedactionOverlap  = 64 << 10
-	defaultStartupTimeout   = 30 * time.Second
-	postgresStartupPoll     = 25 * time.Millisecond
-	postmasterPIDStatusLine = 7
+	markerFile               = ".pgdrill-target"
+	markerHeader             = "pgdrill local restore target\n"
+	maxOwnershipMarkerBytes  = 256
+	receiptDirectory         = ".pgdrill-operations"
+	maxReceiptBytes          = 16 << 10
+	maxReceiptTemporaryFiles = 128
+	maxPostmasterPIDBytes    = 8 << 10
+	maxProcessIdentityBytes  = 128
+	maxPostgresLogBytes      = 16 << 10
+	maxLogRedactionOverlap   = 64 << 10
+	defaultStartupTimeout    = 30 * time.Second
+	postgresStartupPoll      = 25 * time.Millisecond
+	postmasterPIDStatusLine  = 7
 )
 
-var errLocalFileChanged = errors.New("local target file changed while reading")
+var (
+	errLegacyPostgresReceipt = errors.New("legacy postgres receipt lacks process identity")
+	errLocalFileChanged      = errors.New("local target file changed while reading")
+)
+
+type postgresReceiptState string
+
+const (
+	postgresReceiptLaunchIntent   postgresReceiptState = "launch_intent"
+	postgresReceiptProcessStarted postgresReceiptState = "process_started"
+	postgresReceiptReady          postgresReceiptState = "ready"
+)
 
 type Config struct {
 	DefaultTimeout  time.Duration
@@ -41,21 +59,23 @@ type Config struct {
 	RedactValues    []string
 	RemoveWorkDir   bool
 	PostgresBinary  string
+	PSQLBinary      string
 	Port            int
 	StartupTimeout  time.Duration
 	ShutdownTimeout time.Duration
 }
 
 type Target struct {
-	cfg       Config
-	runner    command.Runner
-	workDir   string
-	prepared  bool
-	ownerID   string
-	attempt   model.AttemptContext
-	operation model.Operation
-	postgres  *postgresProcess
-	recovered *recoveredPostgres
+	cfg                  Config
+	runner               command.Runner
+	openRecoveredProcess recoveredProcessOpener
+	workDir              string
+	prepared             bool
+	ownerID              string
+	attempt              model.AttemptContext
+	operation            model.Operation
+	postgres             *postgresProcess
+	recovered            *recoveredPostgres
 }
 
 type postgresProcess struct {
@@ -74,11 +94,14 @@ type recoveredPostgres struct {
 }
 
 type operationReceipt struct {
-	OperationKey string                 `json:"operation_key"`
-	CompletedAt  time.Time              `json:"completed_at"`
-	Postgres     *model.RunningPostgres `json:"postgres,omitempty"`
-	PID          int                    `json:"pid,omitempty"`
-	LogPath      string                 `json:"log_path,omitempty"`
+	OperationKey    string                 `json:"operation_key"`
+	State           postgresReceiptState   `json:"state,omitempty"`
+	RecordedAt      time.Time              `json:"recorded_at,omitzero"`
+	CompletedAt     time.Time              `json:"completed_at,omitzero"`
+	Postgres        *model.RunningPostgres `json:"postgres,omitempty"`
+	PID             int                    `json:"pid,omitempty"`
+	ProcessIdentity string                 `json:"process_identity,omitempty"`
+	LogPath         string                 `json:"log_path,omitempty"`
 }
 
 func New(cfg Config, runner command.Runner) *Target {
@@ -86,8 +109,9 @@ func New(cfg Config, runner command.Runner) *Target {
 		runner = command.NewRunner(command.Options{DefaultTimeout: cfg.DefaultTimeout})
 	}
 	return &Target{
-		cfg:    cfg,
-		runner: runner,
+		cfg:                  cfg,
+		runner:               runner,
+		openRecoveredProcess: openIdentityBoundProcess,
 	}
 }
 
@@ -188,7 +212,7 @@ func (t *Target) Prepare(ctx context.Context, spec model.TargetSpec) error {
 	}
 	cleanupCreated := func() {
 		if created {
-			_ = os.Remove(workDir)
+			_ = durablefs.Remove(workDir)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -202,7 +226,7 @@ func (t *Target) Prepare(ctx context.Context, spec model.TargetSpec) error {
 		return fmt.Errorf("write local target marker %s: %w", markerPath, err)
 	}
 	if err := ctx.Err(); err != nil {
-		_ = os.Remove(markerPath)
+		_ = durablefs.Remove(markerPath)
 		cleanupCreated()
 		return err
 	}
@@ -297,6 +321,17 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 	if err != nil {
 		return model.RunningPostgres{}, nil, fmt.Errorf("open postgres log %s: %w", logPath, err)
 	}
+	if err := durablefs.SyncDirectory(t.workDir); err != nil {
+		_ = logFile.Close()
+		_ = durablefs.Remove(logPath)
+		return model.RunningPostgres{}, nil, fmt.Errorf("persist postgres log %s: %w", logPath, err)
+	}
+	logReader, err := openBoundLogReader(logPath, logFile)
+	if err != nil {
+		_ = logFile.Close()
+		return model.RunningPostgres{}, nil, fmt.Errorf("bind postgres log %s: %w", logPath, err)
+	}
+	defer logReader.Close() //nolint:errcheck
 
 	args := []string{
 		"-D", cfg.DataDirectory,
@@ -304,24 +339,50 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 		"-c", "listen_addresses=127.0.0.1",
 		"-c", "archive_mode=off",
 	}
+	inheritedEnv := os.Environ()
+	effectiveEnv := mergeProcessEnvironment(
+		inheritedEnv,
+		mergeEnv(t.cfg.Env, cfg.Environment),
+	)
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = t.workDir
-	if env := mergeEnv(t.cfg.Env, cfg.Environment); len(env) > 0 {
-		cmd.Env = append(os.Environ(), envList(env)...)
-	}
+	cmd.Env = effectiveEnv
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
 	startedAt := time.Now().UTC()
+	running := model.RunningPostgres{
+		ConnString:    fmt.Sprintf("postgresql://127.0.0.1:%d/postgres?sslmode=disable", port),
+		DataDirectory: cfg.DataDirectory,
+		Host:          "127.0.0.1",
+		Port:          port,
+	}
+	if err := t.writeOperationReceipt(operationReceipt{
+		OperationKey: t.operation.Key,
+		State:        postgresReceiptLaunchIntent,
+		RecordedAt:   startedAt,
+		Postgres:     &running,
+		LogPath:      logPath,
+	}); err != nil {
+		_ = logFile.Close()
+		return model.RunningPostgres{}, nil, fmt.Errorf(
+			"write postgres launch intent receipt: %w",
+			err,
+		)
+	}
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
+		receiptErr := t.removeOperationReceipt(t.operation)
 		evidence := runtimeEvidence("postgres-start", map[string]string{
 			"binary":         binary,
 			"data_directory": cfg.DataDirectory,
 			"log_path":       logPath,
 			"error":          err.Error(),
 		}, startedAt)
-		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("start postgres: %w", err)
+		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, errors.Join(
+			fmt.Errorf("start postgres: %w", err),
+			receiptErr,
+		)
 	}
 
 	process := &postgresProcess{
@@ -337,6 +398,43 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 	}()
 
 	t.postgres = process
+	processIdentity, err := processIdentity(cmd.Process.Pid)
+	if err != nil {
+		evidence := runtimeEvidence("postgres-start", map[string]string{
+			"binary":         binary,
+			"data_directory": cfg.DataDirectory,
+			"log_path":       logPath,
+			"pid":            strconv.Itoa(cmd.Process.Pid),
+			"port":           strconv.Itoa(port),
+			"error":          err.Error(),
+		}, startedAt)
+		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf(
+			"capture postgres process identity: %w",
+			err,
+		)
+	}
+	if err := t.writeOperationReceipt(operationReceipt{
+		OperationKey:    t.operation.Key,
+		State:           postgresReceiptProcessStarted,
+		RecordedAt:      time.Now().UTC(),
+		Postgres:        &running,
+		PID:             cmd.Process.Pid,
+		ProcessIdentity: processIdentity,
+		LogPath:         logPath,
+	}); err != nil {
+		evidence := runtimeEvidence("postgres-start", map[string]string{
+			"binary":         binary,
+			"data_directory": cfg.DataDirectory,
+			"log_path":       logPath,
+			"pid":            strconv.Itoa(cmd.Process.Pid),
+			"port":           strconv.Itoa(port),
+			"error":          err.Error(),
+		}, startedAt)
+		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf(
+			"write postgres process-started receipt: %w",
+			err,
+		)
+	}
 	evidence := runtimeEvidence("postgres-start", map[string]string{
 		"archive_mode":   "off",
 		"binary":         binary,
@@ -358,7 +456,7 @@ func (t *Target) StartPostgres(ctx context.Context, cfg model.RuntimeConfig) (mo
 		t.postgres = nil
 		evidence.Attributes["exit_error"] = errorString(err)
 		evidence.Attributes["startup_status"] = lastStartupStatus
-		t.capturePostgresLog(&evidence, logPath, cfg.Environment)
+		t.capturePostgresLog(&evidence, logReader, effectiveEnv)
 		if err != nil {
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres exited during startup: %w", err)
 		}
@@ -371,7 +469,7 @@ startupReady:
 		lastStartupStatus = status
 		if err != nil {
 			evidence.Attributes["startup_error"] = err.Error()
-			t.capturePostgresLog(&evidence, logPath, cfg.Environment)
+			t.capturePostgresLog(&evidence, logReader, effectiveEnv)
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("inspect postgres readiness: %w", err)
 		}
 		if ready {
@@ -397,7 +495,7 @@ startupReady:
 			lastStartupStatus = status
 			if err != nil {
 				evidence.Attributes["startup_error"] = err.Error()
-				t.capturePostgresLog(&evidence, logPath, cfg.Environment)
+				t.capturePostgresLog(&evidence, logReader, effectiveEnv)
 				return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("inspect postgres readiness: %w", err)
 			}
 			if ready {
@@ -407,38 +505,65 @@ startupReady:
 			}
 			evidence.Attributes["startup_status"] = status
 			evidence.Attributes["startup_timeout"] = startupTimeout.String()
-			t.capturePostgresLog(&evidence, logPath, cfg.Environment)
+			t.capturePostgresLog(&evidence, logReader, effectiveEnv)
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("postgres did not become ready within %s (postmaster status: %s)", startupTimeout, status)
 		case <-ctx.Done():
 			evidence.Attributes["startup_status"] = lastStartupStatus
-			t.capturePostgresLog(&evidence, logPath, cfg.Environment)
+			t.capturePostgresLog(&evidence, logReader, effectiveEnv)
 			return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, ctx.Err()
 		}
 	}
 
-	connString := fmt.Sprintf("postgresql://127.0.0.1:%d/postgres?sslmode=disable", port)
-	running := model.RunningPostgres{
-		ConnString:    connString,
-		DataDirectory: cfg.DataDirectory,
-		Host:          "127.0.0.1",
-		Port:          port,
-	}
 	if err := t.writeOperationReceipt(operationReceipt{
-		OperationKey: t.operation.Key,
-		CompletedAt:  time.Now().UTC(),
-		Postgres:     &running,
-		PID:          cmd.Process.Pid,
-		LogPath:      logPath,
+		OperationKey:    t.operation.Key,
+		State:           postgresReceiptReady,
+		CompletedAt:     time.Now().UTC(),
+		Postgres:        &running,
+		PID:             cmd.Process.Pid,
+		ProcessIdentity: processIdentity,
+		LogPath:         logPath,
 	}); err != nil {
 		return model.RunningPostgres{}, []model.EvidenceRecord{evidence}, fmt.Errorf("write postgres start operation receipt: %w", err)
 	}
 	return running, []model.EvidenceRecord{evidence}, nil
 }
 
-func (t *Target) capturePostgresLog(evidence *model.EvidenceRecord, path string, runtimeEnv map[string]string) {
+func (t *Target) VerifyRecoveryTarget(
+	ctx context.Context,
+	pg model.RunningPostgres,
+	target model.RecoveryTarget,
+) (model.CheckReport, error) {
+	if err := t.attempt.Validate(); err != nil {
+		return model.CheckReport{}, fmt.Errorf(
+			"local target attempt is not bound for recovery verification: %w",
+			err,
+		)
+	}
+	if !reflect.DeepEqual(
+		target.Normalized(),
+		t.attempt.RecoveryTarget.Normalized(),
+	) {
+		return model.CheckReport{}, fmt.Errorf(
+			"recovery target does not match local target attempt binding",
+		)
+	}
+	return recoveryproof.New(recoveryproof.Config{
+		Binary:       t.cfg.PSQLBinary,
+		Env:          t.cfg.Env,
+		Timeout:      t.cfg.DefaultTimeout,
+		RedactValues: t.cfg.RedactValues,
+	}, t.runner).VerifyRecoveryTarget(ctx, pg, target)
+}
+
+func (t *Target) capturePostgresLog(
+	evidence *model.EvidenceRecord,
+	logReader *os.File,
+	effectiveEnv []string,
+) {
 	redactions := append([]string{}, t.cfg.RedactValues...)
-	for name, value := range mergeEnv(t.cfg.Env, runtimeEnv) {
-		if command.IsSensitiveEnvName(name) {
+	for _, entry := range effectiveEnv {
+		name, value, found := strings.Cut(entry, "=")
+		if found && command.IsSensitiveEnvName(name) {
 			redactions = append(redactions, value)
 		}
 	}
@@ -454,7 +579,7 @@ func (t *Target) capturePostgresLog(evidence *model.EvidenceRecord, path string,
 		return
 	}
 
-	data, size, truncated, err := readFileTail(path, int64(maxPostgresLogBytes+overlap))
+	data, size, truncated, err := readFileTail(logReader, int64(maxPostgresLogBytes+overlap))
 	evidence.Attributes["postgres_log_bytes"] = strconv.FormatInt(size, 10)
 	if err != nil {
 		evidence.Attributes["postgres_log_error"] = err.Error()
@@ -474,13 +599,39 @@ func (t *Target) capturePostgresLog(evidence *model.EvidenceRecord, path string,
 	}
 }
 
-func readFileTail(path string, limit int64) ([]byte, int64, bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, 0, false, err
+func openBoundLogReader(path string, writer *os.File) (*os.File, error) {
+	pathInfo, pathErr := os.Lstat(path)
+	writerInfo, writerErr := writer.Stat()
+	reader, openErr := os.Open(path)
+	if err := errors.Join(pathErr, writerErr, openErr); err != nil {
+		if reader != nil {
+			_ = reader.Close()
+		}
+		return nil, err
 	}
-	defer file.Close()
+	readerInfo, err := reader.Stat()
+	if err != nil {
+		return nil, errors.Join(err, reader.Close())
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 ||
+		!pathInfo.Mode().IsRegular() ||
+		pathInfo.Mode().Perm()&0o077 != 0 ||
+		!writerInfo.Mode().IsRegular() ||
+		!readerInfo.Mode().IsRegular() ||
+		!os.SameFile(pathInfo, writerInfo) ||
+		!os.SameFile(writerInfo, readerInfo) {
+		return nil, errors.Join(
+			fmt.Errorf("postgres log changed while binding its capture descriptor"),
+			reader.Close(),
+		)
+	}
+	return reader, nil
+}
 
+func readFileTail(file *os.File, limit int64) ([]byte, int64, bool, error) {
+	if file == nil {
+		return nil, 0, false, fmt.Errorf("postgres log capture descriptor is required")
+	}
 	info, err := file.Stat()
 	if err != nil {
 		return nil, 0, false, err
@@ -489,54 +640,110 @@ func readFileTail(path string, limit int64) ([]byte, int64, bool, error) {
 	if start < 0 {
 		start = 0
 	}
-	if _, err := file.Seek(start, io.SeekStart); err != nil {
-		return nil, info.Size(), start > 0, err
+	data := make([]byte, info.Size()-start)
+	n, err := file.ReadAt(data, start)
+	if errors.Is(err, io.EOF) {
+		err = nil
 	}
-	data, err := io.ReadAll(io.LimitReader(file, limit))
 	if err != nil {
 		return nil, info.Size(), start > 0, err
 	}
-	return data, info.Size(), start > 0, nil
+	return data[:n], info.Size(), start > 0, nil
 }
 
-func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
+func (t *Target) Destroy(ctx context.Context) ([]model.EvidenceRecord, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("local target cleanup context is required")
+	}
 	if t.operation.Kind != model.OperationTargetCleanup {
 		return nil, fmt.Errorf("local target cleanup operation is not bound")
 	}
 	if !t.prepared {
 		return nil, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	evidence := []model.EvidenceRecord{}
+	attributes := map[string]string{
+		"operation": "destroy",
+		"work_dir":  t.workDir,
+	}
+	if t.postgres == nil && t.recovered == nil {
+		recovered, err := t.findRecoveredPostgres()
+		if err != nil {
+			attributes["cleanup"] = "refused"
+			attributes["error"] = err.Error()
+			return append(evidence, targetEvidence(attributes)), fmt.Errorf(
+				"inspect recovered postgres before cleanup: %w",
+				err,
+			)
+		}
+		t.recovered = recovered
+	}
 	if t.postgres != nil {
-		record, err := t.stopPostgres()
+		record, err := t.stopPostgres(ctx)
 		evidence = append(evidence, record)
 		if err != nil {
 			return evidence, fmt.Errorf("stop owned postgres process: %w", err)
 		}
 	}
 	if t.recovered != nil {
-		record, err := t.stopRecoveredPostgres()
+		record, err := t.stopRecoveredPostgres(ctx)
 		evidence = append(evidence, record)
 		if err != nil {
 			return evidence, fmt.Errorf("stop recovered postgres process: %w", err)
 		}
 	}
 
-	attributes := map[string]string{
-		"operation": "destroy",
-		"work_dir":  t.workDir,
-	}
 	if !t.cfg.RemoveWorkDir {
 		attributes["cleanup"] = "skipped"
 		t.prepared = false
 		return append(evidence, targetEvidence(attributes)), nil
 	}
+	if err := ctx.Err(); err != nil {
+		return evidence, err
+	}
 
-	markerPath := filepath.Join(t.workDir, markerFile)
+	quarantinePath := t.cleanupQuarantinePath()
 	workDirInfo, err := os.Lstat(t.workDir)
 	if errors.Is(err, os.ErrNotExist) {
-		attributes["cleanup"] = "already-removed"
+		quarantineInfo, quarantineErr := os.Lstat(quarantinePath)
+		switch {
+		case errors.Is(quarantineErr, os.ErrNotExist):
+			attributes["cleanup"] = "already-removed"
+			t.prepared = false
+			return append(evidence, targetEvidence(attributes)), nil
+		case quarantineErr != nil:
+			attributes["cleanup"] = "refused"
+			return append(evidence, targetEvidence(attributes)), fmt.Errorf(
+				"inspect quarantined local target work_dir %s: %w",
+				quarantinePath,
+				quarantineErr,
+			)
+		case quarantineInfo.Mode()&os.ModeSymlink != 0 || !quarantineInfo.IsDir():
+			attributes["cleanup"] = "refused"
+			return append(evidence, targetEvidence(attributes)), fmt.Errorf(
+				"quarantined local target work_dir is not a real directory: %s",
+				quarantinePath,
+			)
+		}
+		if err := validateOwnedDirectory(quarantinePath, t.ownerID); err != nil {
+			attributes["cleanup"] = "refused"
+			return append(evidence, targetEvidence(attributes)), fmt.Errorf(
+				"validate quarantined local target work_dir: %w",
+				err,
+			)
+		}
+		if err := durablefs.RemoveAll(quarantinePath); err != nil {
+			return append(evidence, targetEvidence(attributes)), fmt.Errorf(
+				"remove quarantined local target work_dir %s: %w",
+				quarantinePath,
+				err,
+			)
+		}
+		attributes["cleanup"] = "recovered-and-removed"
 		t.prepared = false
 		return append(evidence, targetEvidence(attributes)), nil
 	}
@@ -556,17 +763,34 @@ func (t *Target) Destroy(_ context.Context) ([]model.EvidenceRecord, error) {
 			t.workDir,
 		)
 	}
-	marker, err := readOwnershipMarker(markerPath)
-	if err != nil {
+	if err := validateOwnedDirectory(t.workDir, t.ownerID); err != nil {
 		attributes["cleanup"] = "refused"
-		return append(evidence, targetEvidence(attributes)), fmt.Errorf("refuse to remove local target work_dir without marker %s: %w", markerPath, err)
+		return append(evidence, targetEvidence(attributes)), fmt.Errorf(
+			"refuse to remove unowned local target work_dir: %w",
+			err,
+		)
 	}
-	if t.ownerID == "" || marker != ownershipMarker(t.ownerID) {
+	if err := ctx.Err(); err != nil {
+		return append(evidence, targetEvidence(attributes)), err
+	}
+	if err := quarantineOwnedWorkDir(
+		t.workDir,
+		quarantinePath,
+		workDirInfo,
+		t.ownerID,
+	); err != nil {
 		attributes["cleanup"] = "refused"
-		return append(evidence, targetEvidence(attributes)), fmt.Errorf("refuse to remove local target work_dir with mismatched ownership marker %s", markerPath)
+		return append(evidence, targetEvidence(attributes)), err
 	}
-	if err := os.RemoveAll(t.workDir); err != nil {
-		return append(evidence, targetEvidence(attributes)), fmt.Errorf("remove local target work_dir %s: %w", t.workDir, err)
+	if err := ctx.Err(); err != nil {
+		return append(evidence, targetEvidence(attributes)), err
+	}
+	if err := durablefs.RemoveAll(quarantinePath); err != nil {
+		return append(evidence, targetEvidence(attributes)), fmt.Errorf(
+			"remove quarantined local target work_dir %s: %w",
+			quarantinePath,
+			err,
+		)
 	}
 
 	attributes["cleanup"] = "removed"
@@ -612,6 +836,12 @@ func (t *Target) reconcileReceipt(operation model.Operation, requirePostgres boo
 	}
 	receipt, found, err := t.readOperationReceipt(operation)
 	if err != nil {
+		if errors.Is(err, errLegacyPostgresReceipt) {
+			return t.reconciliation(
+				model.ReconciliationUnknown,
+				"legacy postgres receipt lacks process identity; cleanup cannot be automated",
+			), nil
+		}
 		return t.reconciliation(model.ReconciliationUnknown, "operation receipt could not be validated"), nil
 	}
 	if !found {
@@ -620,22 +850,40 @@ func (t *Target) reconcileReceipt(operation model.Operation, requirePostgres boo
 	if !requirePostgres {
 		return t.reconciliation(model.ReconciliationCompleted, "operation receipt proves restore step completion"), nil
 	}
-	if receipt.Postgres == nil || receipt.PID <= 0 {
-		return t.reconciliation(model.ReconciliationUnknown, "postgres operation receipt is incomplete"), nil
+	state := receipt.postgresState()
+	if state == postgresReceiptLaunchIntent {
+		return t.reconciliation(
+			model.ReconciliationUnknown,
+			"postgres launch intent exists but process start was not durably recorded",
+		), nil
 	}
-	active, err := postgresProcessMatches(receipt.Postgres.DataDirectory, receipt.PID)
+	active, err := postgresProcessMatches(
+		receipt.Postgres.DataDirectory,
+		receipt.PID,
+		receipt.ProcessIdentity,
+	)
 	if err != nil {
 		return model.OperationReconciliation{}, err
 	}
 	if !active {
 		return t.reconciliation(model.ReconciliationUnknown, "postgres operation completed but its owned process is not running"), nil
 	}
-	t.recovered = &recoveredPostgres{
-		pid:           receipt.PID,
-		dataDirectory: receipt.Postgres.DataDirectory,
-		logPath:       receipt.LogPath,
-		port:          receipt.Postgres.Port,
-		receipt:       receipt,
+	if t.postgres == nil || t.postgres.cmd == nil ||
+		t.postgres.cmd.Process == nil ||
+		t.postgres.cmd.Process.Pid != receipt.PID {
+		t.recovered = &recoveredPostgres{
+			pid:           receipt.PID,
+			dataDirectory: receipt.Postgres.DataDirectory,
+			logPath:       receipt.LogPath,
+			port:          receipt.Postgres.Port,
+			receipt:       receipt,
+		}
+	}
+	if state == postgresReceiptProcessStarted {
+		return t.reconciliation(
+			model.ReconciliationUnknown,
+			"postgres process start is recorded but readiness is not durably proven",
+		), nil
 	}
 	result := t.reconciliation(model.ReconciliationCompleted, "operation receipt and postmaster.pid prove postgres startup")
 	pg := *receipt.Postgres
@@ -646,6 +894,26 @@ func (t *Target) reconcileReceipt(operation model.Operation, requirePostgres boo
 func (t *Target) reconcileCleanup() (model.OperationReconciliation, error) {
 	info, err := os.Lstat(t.workDir)
 	if errors.Is(err, os.ErrNotExist) {
+		quarantinePath := t.cleanupQuarantinePath()
+		if _, quarantineErr := os.Lstat(quarantinePath); quarantineErr == nil {
+			if err := validateOwnedDirectory(quarantinePath, t.ownerID); err != nil {
+				return t.reconciliation(
+					model.ReconciliationConflict,
+					"quarantined local target work_dir ownership cannot be proven",
+				), nil
+			}
+			t.prepared = true
+			return t.reconciliation(
+				model.ReconciliationNotApplied,
+				"quarantined local target work_dir still requires cleanup",
+			), nil
+		} else if !errors.Is(quarantineErr, os.ErrNotExist) {
+			return model.OperationReconciliation{}, fmt.Errorf(
+				"inspect quarantined local target work_dir %s: %w",
+				quarantinePath,
+				quarantineErr,
+			)
+		}
 		return t.reconciliation(model.ReconciliationCompleted, "local target work_dir is absent"), nil
 	}
 	if err != nil {
@@ -698,14 +966,14 @@ func (t *Target) writeOperationReceipt(receipt operationReceipt) error {
 	if receipt.OperationKey == "" || receipt.OperationKey != t.operation.Key {
 		return fmt.Errorf("operation receipt key does not match active operation")
 	}
-	if receipt.CompletedAt.IsZero() {
-		return fmt.Errorf("operation receipt completed_at is required")
+	if err := validateReceiptTimestamp(receipt); err != nil {
+		return err
 	}
 	dir := filepath.Join(t.workDir, receiptDirectory)
 	if err := t.ensurePathHasNoSymlinks(dir); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := durablefs.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create operation receipt directory: %w", err)
 	}
 	if err := t.ensurePathHasNoSymlinks(dir); err != nil {
@@ -725,7 +993,9 @@ func (t *Target) writeOperationReceipt(receipt operationReceipt) error {
 		return fmt.Errorf("create temporary operation receipt: %w", err)
 	}
 	tmpPath := file.Name()
-	defer os.Remove(tmpPath) //nolint:errcheck
+	defer func() {
+		_ = durablefs.Remove(tmpPath)
+	}()
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("chmod temporary operation receipt: %w", err)
@@ -746,6 +1016,24 @@ func (t *Target) writeOperationReceipt(receipt operationReceipt) error {
 	}
 	directory, err := os.Open(dir)
 	if err != nil {
+		return fmt.Errorf("open operation receipt directory: %w", err)
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	return errors.Join(syncErr, closeErr)
+}
+
+func (t *Target) removeOperationReceipt(operation model.Operation) error {
+	dir := filepath.Join(t.workDir, receiptDirectory)
+	path := t.operationReceiptPath(operation)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove operation receipt: %w", err)
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("open operation receipt directory: %w", err)
 	}
 	syncErr := directory.Sync()
@@ -776,21 +1064,22 @@ func (t *Target) readOperationReceiptFile(path string) (operationReceipt, error)
 	if err != nil {
 		return operationReceipt{}, fmt.Errorf("read operation receipt: %w", err)
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(payload)))
-	decoder.DisallowUnknownFields()
 	var receipt operationReceipt
-	if err := decoder.Decode(&receipt); err != nil {
+	if err := jsonutil.DecodeOneStrict(payload, &receipt); err != nil {
 		return operationReceipt{}, fmt.Errorf("decode operation receipt: %w", err)
 	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return operationReceipt{}, fmt.Errorf("operation receipt contains trailing data")
-	}
-	if !model.IsSHA256Digest(receipt.OperationKey) || receipt.CompletedAt.IsZero() {
+	if !model.IsSHA256Digest(receipt.OperationKey) {
 		return operationReceipt{}, fmt.Errorf("operation receipt identity is invalid")
 	}
+	if err := validateReceiptTimestamp(receipt); err != nil {
+		return operationReceipt{}, err
+	}
 	if receipt.Postgres == nil {
-		if receipt.PID != 0 || receipt.LogPath != "" {
+		if receipt.State != "" ||
+			!receipt.RecordedAt.IsZero() ||
+			receipt.PID != 0 ||
+			receipt.ProcessIdentity != "" ||
+			receipt.LogPath != "" {
 			return operationReceipt{}, fmt.Errorf("non-postgres operation receipt contains process identity")
 		}
 		return receipt, nil
@@ -803,12 +1092,29 @@ func (t *Target) readOperationReceiptFile(path string) (operationReceipt, error)
 
 func (t *Target) validatePostgresReceipt(receipt operationReceipt) error {
 	postgres := receipt.Postgres
-	if receipt.PID <= 0 ||
-		postgres.DataDirectory == "" ||
+	if postgres.DataDirectory == "" ||
 		postgres.Host != "127.0.0.1" ||
 		postgres.Port <= 0 ||
 		postgres.Port > 65535 {
 		return fmt.Errorf("postgres operation receipt process identity is invalid")
+	}
+	if receipt.State == "" && receipt.PID > 0 && receipt.ProcessIdentity == "" {
+		return fmt.Errorf("%w: operation %s", errLegacyPostgresReceipt, receipt.OperationKey)
+	}
+	switch receipt.postgresState() {
+	case postgresReceiptLaunchIntent:
+		if receipt.PID != 0 || receipt.ProcessIdentity != "" {
+			return fmt.Errorf("postgres launch intent receipt contains process identity")
+		}
+	case postgresReceiptProcessStarted, postgresReceiptReady:
+		if receipt.PID <= 0 ||
+			receipt.ProcessIdentity == "" ||
+			len(receipt.ProcessIdentity) > maxProcessIdentityBytes ||
+			receipt.ProcessIdentity != strings.TrimSpace(receipt.ProcessIdentity) {
+			return fmt.Errorf("postgres operation receipt process identity is invalid")
+		}
+	default:
+		return fmt.Errorf("postgres operation receipt state is invalid")
 	}
 	if err := t.validateRuntimeDataDirectory(postgres.DataDirectory); err != nil {
 		return fmt.Errorf("validate postgres operation receipt data_directory: %w", err)
@@ -837,6 +1143,33 @@ func (t *Target) validatePostgresReceipt(receipt operationReceipt) error {
 	return nil
 }
 
+func validateReceiptTimestamp(receipt operationReceipt) error {
+	switch receipt.postgresState() {
+	case "":
+		if receipt.CompletedAt.IsZero() || !receipt.RecordedAt.IsZero() {
+			return fmt.Errorf("operation receipt completed_at is required")
+		}
+	case postgresReceiptLaunchIntent, postgresReceiptProcessStarted:
+		if receipt.RecordedAt.IsZero() || !receipt.CompletedAt.IsZero() {
+			return fmt.Errorf("in-progress postgres receipt recorded_at is required")
+		}
+	case postgresReceiptReady:
+		if receipt.CompletedAt.IsZero() || !receipt.RecordedAt.IsZero() {
+			return fmt.Errorf("ready postgres receipt completed_at is required")
+		}
+	default:
+		return fmt.Errorf("operation receipt state %q is invalid", receipt.State)
+	}
+	return nil
+}
+
+func (r operationReceipt) postgresState() postgresReceiptState {
+	if r.State == "" && r.Postgres != nil {
+		return postgresReceiptReady
+	}
+	return r.State
+}
+
 func (t *Target) operationReceiptPath(operation model.Operation) string {
 	return filepath.Join(t.workDir, receiptDirectory, strings.TrimPrefix(operation.Key, "sha256:")+".json")
 }
@@ -846,7 +1179,10 @@ func (t *Target) findRecoveredPostgres() (*recoveredPostgres, error) {
 	if err := t.ensurePathHasNoSymlinks(dir); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := durablefs.ReadDirBounded(
+		dir,
+		model.MaxOperationsPerReport+maxReceiptTemporaryFiles,
+	)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -857,9 +1193,26 @@ func (t *Target) findRecoveredPostgres() (*recoveredPostgres, error) {
 		return nil, fmt.Errorf("inspect operation receipt directory: %w", err)
 	}
 	var recovered *recoveredPostgres
+	temporaryCount := 0
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
-			continue
+			if isReceiptTemporaryFileName(entry.Name()) {
+				temporaryCount++
+				if temporaryCount > maxReceiptTemporaryFiles {
+					return nil, fmt.Errorf(
+						"operation receipt directory exceeds maximum temporary file count %d",
+						maxReceiptTemporaryFiles,
+					)
+				}
+				return nil, fmt.Errorf(
+					"operation receipt directory contains unresolved temporary receipt %q",
+					entry.Name(),
+				)
+			}
+			return nil, fmt.Errorf(
+				"operation receipt directory contains unexpected entry %q",
+				entry.Name(),
+			)
 		}
 		digest := "sha256:" + strings.TrimSuffix(entry.Name(), ".json")
 		if !model.IsSHA256Digest(digest) {
@@ -872,10 +1225,20 @@ func (t *Target) findRecoveredPostgres() (*recoveredPostgres, error) {
 		if receipt.OperationKey != digest {
 			return nil, fmt.Errorf("operation receipt %s identity does not match filename", entry.Name())
 		}
-		if receipt.Postgres == nil || receipt.PID <= 0 {
+		if receipt.Postgres == nil {
 			continue
 		}
-		active, err := postgresProcessMatches(receipt.Postgres.DataDirectory, receipt.PID)
+		if receipt.postgresState() == postgresReceiptLaunchIntent {
+			return nil, fmt.Errorf(
+				"operation receipt %s contains unresolved postgres launch intent",
+				entry.Name(),
+			)
+		}
+		active, err := postgresProcessMatches(
+			receipt.Postgres.DataDirectory,
+			receipt.PID,
+			receipt.ProcessIdentity,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -895,7 +1258,55 @@ func (t *Target) findRecoveredPostgres() (*recoveredPostgres, error) {
 	return recovered, nil
 }
 
-func postgresProcessMatches(dataDirectory string, pid int) (bool, error) {
+func postgresProcessMatches(dataDirectory string, pid int, expectedIdentity string) (bool, error) {
+	if dataDirectory == "" || pid <= 0 || expectedIdentity == "" {
+		return false, nil
+	}
+	identity, err := processIdentity(pid)
+	if errors.Is(err, os.ErrProcessDone) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect postgres process identity %d: %w", pid, err)
+	}
+	if identity != expectedIdentity {
+		return false, nil
+	}
+	matches, err := postgresDataDirectoryMatches(dataDirectory, pid)
+	if err != nil {
+		return false, err
+	}
+	if !matches {
+		return false, fmt.Errorf(
+			"live receipt-bound process %d is not proven by postmaster.pid in %s",
+			pid,
+			dataDirectory,
+		)
+	}
+	return true, nil
+}
+
+func isReceiptTemporaryFileName(name string) bool {
+	const (
+		prefix = ".receipt-"
+		suffix = ".tmp"
+	)
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	random := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if random == "" {
+		return false
+	}
+	for _, character := range random {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func postgresDataDirectoryMatches(dataDirectory string, pid int) (bool, error) {
 	if dataDirectory == "" || pid <= 0 {
 		return false, nil
 	}
@@ -922,11 +1333,7 @@ func postgresProcessMatches(dataDirectory string, pid int) (bool, error) {
 	if err != nil || !matches {
 		return false, err
 	}
-	active, err := postgresProcessExists(pid)
-	if err != nil {
-		return false, fmt.Errorf("inspect postgres process %d: %w", pid, err)
-	}
-	return active, nil
+	return true, nil
 }
 
 func postgresReadiness(dataDirectory string, pid int) (bool, string, error) {
@@ -1024,44 +1431,321 @@ func (t *Target) writeFile(stepName string, spec model.FileSpec) (model.Evidence
 		return record, err
 	}
 
-	mode := os.FileMode(0o600)
-	if spec.Mode != "" {
-		parsed, err := strconv.ParseUint(spec.Mode, 8, 32)
-		if err != nil {
-			return record, fmt.Errorf("parse file mode %q: %w", spec.Mode, err)
-		}
-		mode = os.FileMode(parsed)
+	mode, err := parseTargetFileMode(spec.Mode)
+	if err != nil {
+		return record, err
 	}
-	if err := os.MkdirAll(filepath.Dir(spec.Path), 0o700); err != nil {
+	if err := durablefs.MkdirAll(filepath.Dir(spec.Path), 0o700); err != nil {
 		return record, fmt.Errorf("create parent directory for %s: %w", spec.Path, err)
 	}
 	if err := t.ensurePathHasNoSymlinks(spec.Path); err != nil {
 		return record, err
 	}
 
-	flags := os.O_CREATE | os.O_WRONLY
-	if spec.Append {
-		flags |= os.O_APPEND
-	} else {
-		flags |= os.O_TRUNC
-	}
-	file, err := os.OpenFile(spec.Path, flags, mode)
+	workDir, err := filepath.Abs(t.workDir)
 	if err != nil {
-		return record, fmt.Errorf("open %s: %w", spec.Path, err)
+		return record, fmt.Errorf("resolve work_dir %s: %w", t.workDir, err)
 	}
-	n, writeErr := file.WriteString(spec.Content)
-	closeErr := file.Close()
-	record = fileEvidence(stepName, spec, n)
-	if writeErr != nil {
-		return record, fmt.Errorf("write %s: %w", spec.Path, writeErr)
+	targetPath, err := filepath.Abs(spec.Path)
+	if err != nil {
+		return record, fmt.Errorf("resolve file path %s: %w", spec.Path, err)
+	}
+	relativePath, err := filepath.Rel(workDir, targetPath)
+	if err != nil {
+		return record, fmt.Errorf("resolve file path %s within work_dir %s: %w", targetPath, workDir, err)
+	}
+	root, err := os.OpenRoot(workDir)
+	if err != nil {
+		return record, fmt.Errorf("open local target work_dir %s: %w", workDir, err)
+	}
+
+	var written int
+	if spec.Append {
+		written, err = appendRootFile(root, relativePath, spec.Content, mode)
+	} else {
+		written, err = replaceRootFile(root, relativePath, spec.Content, mode)
+	}
+	closeErr := root.Close()
+	if err != nil {
+		return record, fmt.Errorf("write %s: %w", spec.Path, errors.Join(err, closeErr))
 	}
 	if closeErr != nil {
-		return record, fmt.Errorf("close %s: %w", spec.Path, closeErr)
+		return record, fmt.Errorf("close local target work_dir %s: %w", workDir, closeErr)
 	}
-	if err := os.Chmod(spec.Path, mode); err != nil {
-		return record, fmt.Errorf("chmod %s: %w", spec.Path, err)
+	return fileEvidence(stepName, spec, written), nil
+}
+
+func replaceRootFile(
+	root *os.Root,
+	path string,
+	content string,
+	mode os.FileMode,
+) (written int, returnErr error) {
+	parent, name, err := openRootFileParent(root, path)
+	if err != nil {
+		return 0, err
 	}
-	return record, nil
+	defer func() {
+		returnErr = errors.Join(returnErr, parent.Close())
+	}()
+
+	temporaryName, file, err := createRootTemporaryFile(parent)
+	if err != nil {
+		return 0, err
+	}
+	renamed := false
+	defer func() {
+		if !renamed {
+			removeErr := parent.Remove(temporaryName)
+			if removeErr == nil {
+				removeErr = syncRootDirectory(parent, ".")
+			}
+			returnErr = errors.Join(returnErr, removeErr)
+		}
+	}()
+
+	written, writeErr := file.WriteString(content)
+	syncErr := file.Sync()
+	bindErr := bindRootFile(parent, temporaryName, file)
+	if err := errors.Join(writeErr, syncErr, bindErr); err != nil {
+		return written, errors.Join(
+			fmt.Errorf("persist temporary file: %w", err),
+			file.Close(),
+		)
+	}
+	if err := parent.Rename(temporaryName, name); err != nil {
+		return written, errors.Join(
+			fmt.Errorf("atomically replace %s: %w", path, err),
+			file.Close(),
+		)
+	}
+	renamed = true
+	bindErr = bindRootFile(parent, name, file)
+	chmodErr := file.Chmod(mode)
+	syncErr = file.Sync()
+	closeErr := file.Close()
+	if err := errors.Join(bindErr, chmodErr, syncErr, closeErr); err != nil {
+		return written, fmt.Errorf("persist replacement file: %w", err)
+	}
+	if err := syncRootDirectory(parent, "."); err != nil {
+		return written, fmt.Errorf("persist replacement of %s: %w", path, err)
+	}
+	return written, nil
+}
+
+func appendRootFile(
+	root *os.Root,
+	path string,
+	content string,
+	mode os.FileMode,
+) (written int, returnErr error) {
+	parent, name, err := openRootFileParent(root, path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, parent.Close())
+	}()
+
+	file, err := parent.OpenFile(name, os.O_RDWR, mode)
+	if errors.Is(err, os.ErrNotExist) {
+		file, err = parent.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("open append target %s: %w", path, err)
+	}
+	if err := bindPrivateSingleLinkFile(parent, name, file); err != nil {
+		return 0, errors.Join(
+			fmt.Errorf("bind append target %s: %w", path, err),
+			file.Close(),
+		)
+	}
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		return 0, errors.Join(
+			fmt.Errorf("position append target %s: %w", path, err),
+			file.Close(),
+		)
+	}
+
+	written, writeErr := file.WriteString(content)
+	bindErr := bindPrivateSingleLinkFile(parent, name, file)
+	chmodErr := file.Chmod(mode)
+	syncErr := file.Sync()
+	finalBindErr := bindSingleLinkFile(parent, name, file, false)
+	closeErr := file.Close()
+	parentSyncErr := syncRootDirectory(parent, ".")
+	if err := errors.Join(
+		writeErr,
+		bindErr,
+		chmodErr,
+		syncErr,
+		finalBindErr,
+		closeErr,
+		parentSyncErr,
+	); err != nil {
+		return written, fmt.Errorf("persist append target %s: %w", path, err)
+	}
+	return written, nil
+}
+
+func openRootFileParent(root *os.Root, path string) (*os.Root, string, error) {
+	parentPath := filepath.Dir(path)
+	parent, err := openRootDirectoryNoSymlinks(root, parentPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("open parent directory %s: %w", parentPath, err)
+	}
+	return parent, filepath.Base(path), nil
+}
+
+func openRootDirectoryNoSymlinks(root *os.Root, path string) (*os.Root, error) {
+	current, err := root.OpenRoot(".")
+	if err != nil {
+		return nil, err
+	}
+	if path == "." {
+		return current, nil
+	}
+	for _, component := range strings.Split(filepath.Clean(path), string(os.PathSeparator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		if component == ".." {
+			_ = current.Close()
+			return nil, fmt.Errorf("parent path escapes local target root")
+		}
+		before, err := current.Lstat(component)
+		if err != nil {
+			_ = current.Close()
+			return nil, err
+		}
+		if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+			_ = current.Close()
+			return nil, fmt.Errorf("%s is not a real directory", component)
+		}
+		next, err := current.OpenRoot(component)
+		if err != nil {
+			_ = current.Close()
+			return nil, err
+		}
+		opened, openedErr := next.Stat(".")
+		after, afterErr := current.Lstat(component)
+		if err := errors.Join(openedErr, afterErr); err != nil {
+			_ = next.Close()
+			_ = current.Close()
+			return nil, err
+		}
+		if after.Mode()&os.ModeSymlink != 0 ||
+			!after.IsDir() ||
+			!os.SameFile(before, opened) ||
+			!os.SameFile(after, opened) {
+			_ = next.Close()
+			_ = current.Close()
+			return nil, fmt.Errorf("%s changed while binding parent directory", component)
+		}
+		if err := current.Close(); err != nil {
+			_ = next.Close()
+			return nil, err
+		}
+		current = next
+	}
+	return current, nil
+}
+
+func createRootTemporaryFile(root *os.Root) (string, *os.File, error) {
+	var random [16]byte
+	for range 128 {
+		if _, err := rand.Read(random[:]); err != nil {
+			return "", nil, fmt.Errorf("generate temporary file name: %w", err)
+		}
+		name := fmt.Sprintf(".pgdrill-file-%x.tmp", random[:])
+		file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("create private temporary file: %w", err)
+		}
+		if err := bindRootFile(root, name, file); err != nil {
+			return "", nil, errors.Join(
+				fmt.Errorf("bind private temporary file: %w", err),
+				file.Close(),
+				root.Remove(name),
+			)
+		}
+		return name, file, nil
+	}
+	return "", nil, fmt.Errorf("create private temporary file: name collision limit exceeded")
+}
+
+func bindPrivateSingleLinkFile(root *os.Root, path string, file *os.File) error {
+	return bindSingleLinkFile(root, path, file, true)
+}
+
+func bindSingleLinkFile(
+	root *os.Root,
+	path string,
+	file *os.File,
+	requirePrivate bool,
+) error {
+	if err := bindRootFile(root, path, file); err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if requirePrivate && info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%s is not a private regular file", path)
+	}
+	links, err := regularFileLinkCount(file)
+	if err != nil {
+		return fmt.Errorf("inspect %s link count: %w", path, err)
+	}
+	if links != 1 {
+		return fmt.Errorf("%s has link count %d, expected 1", path, links)
+	}
+	return nil
+}
+
+func parseTargetFileMode(value string) (os.FileMode, error) {
+	if value == "" {
+		return 0o600, nil
+	}
+	parsed, err := strconv.ParseUint(value, 8, 16)
+	if err != nil {
+		return 0, fmt.Errorf("parse file mode %q: %w", value, err)
+	}
+	if parsed > 0o777 {
+		return 0, fmt.Errorf("file mode %q contains bits outside 0777", value)
+	}
+	return os.FileMode(parsed), nil
+}
+
+func bindRootFile(root *os.Root, path string, file *os.File) error {
+	pathInfo, pathErr := root.Lstat(path)
+	fileInfo, fileErr := file.Stat()
+	if err := errors.Join(pathErr, fileErr); err != nil {
+		return err
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular non-symbolic-link file", path)
+	}
+	if !fileInfo.Mode().IsRegular() || !os.SameFile(pathInfo, fileInfo) {
+		return fmt.Errorf("%s changed while opening or writing", path)
+	}
+	return nil
+}
+
+func syncRootDirectory(root *os.Root, path string) error {
+	directory, err := root.Open(path)
+	if err != nil {
+		return err
+	}
+	info, statErr := directory.Stat()
+	if statErr == nil && !info.IsDir() {
+		statErr = fmt.Errorf("%s is not a directory", path)
+	}
+	return errors.Join(statErr, directory.Sync(), directory.Close())
 }
 
 func (t *Target) ensurePathInWorkDir(path string) error {
@@ -1155,7 +1839,7 @@ func prepareEmptyWorkDir(path string) (bool, error) {
 		}
 		return false, nil
 	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	if err := durablefs.MkdirAll(path, 0o700); err != nil {
 		return false, fmt.Errorf("create local target work_dir %s: %w", path, err)
 	}
 	if err := os.Chmod(path, 0o700); err != nil {
@@ -1181,12 +1865,16 @@ func inspectEmptyWorkDir(path string) (bool, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return false, fmt.Errorf("local target work_dir must be a real directory: %s", path)
 	}
-	entries, err := os.ReadDir(path)
+	_, err = durablefs.ReadDirBounded(path, 0)
 	if err != nil {
+		var limitErr *durablefs.DirectoryLimitError
+		if errors.As(err, &limitErr) {
+			return false, fmt.Errorf(
+				"local target work_dir must be empty before a drill: %s",
+				path,
+			)
+		}
 		return false, fmt.Errorf("read local target work_dir %s: %w", path, err)
-	}
-	if len(entries) != 0 {
-		return false, fmt.Errorf("local target work_dir must be empty before a drill: %s", path)
 	}
 	return true, nil
 }
@@ -1202,20 +1890,26 @@ func writeOwnershipMarker(path, ownerID string) error {
 	}
 	payload := ownershipMarker(ownerID)
 	written, writeErr := file.WriteString(payload)
-	closeErr := file.Close()
 	if writeErr != nil {
-		_ = os.Remove(path)
+		_ = file.Close()
+		_ = durablefs.Remove(path)
 		return writeErr
 	}
 	if written != len(payload) {
-		_ = os.Remove(path)
+		_ = file.Close()
+		_ = durablefs.Remove(path)
 		return fmt.Errorf("short marker write: wrote %d of %d bytes", written, len(payload))
 	}
-	if closeErr != nil {
-		_ = os.Remove(path)
-		return closeErr
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = durablefs.Remove(path)
+		return err
 	}
-	return nil
+	if err := file.Close(); err != nil {
+		_ = durablefs.Remove(path)
+		return err
+	}
+	return durablefs.SyncDirectory(filepath.Dir(path))
 }
 
 func readOwnershipMarker(path string) (string, error) {
@@ -1366,7 +2060,7 @@ func runtimeEvidence(operation string, attributes map[string]string, collectedAt
 	}
 }
 
-func (t *Target) stopPostgres() (model.EvidenceRecord, error) {
+func (t *Target) stopPostgres(ctx context.Context) (model.EvidenceRecord, error) {
 	process := t.postgres
 
 	attributes := map[string]string{
@@ -1383,6 +2077,11 @@ func (t *Target) stopPostgres() (model.EvidenceRecord, error) {
 		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
 	default:
 	}
+	if err := ctx.Err(); err != nil {
+		attributes["postgres_shutdown"] = "context_canceled"
+		attributes["error"] = err.Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
+	}
 
 	if err := terminateStartedProcess(process.cmd.Process); err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
@@ -1396,12 +2095,18 @@ func (t *Target) stopPostgres() (model.EvidenceRecord, error) {
 		}
 	}
 
+	shutdownTimer := time.NewTimer(t.shutdownTimeout())
+	defer shutdownTimer.Stop()
 	select {
 	case err := <-process.done:
 		t.postgres = nil
 		attributes["postgres_shutdown"] = "terminated"
 		attributes["exit_error"] = errorString(err)
-	case <-time.After(t.shutdownTimeout()):
+	case <-ctx.Done():
+		attributes["postgres_shutdown"] = "context_canceled"
+		attributes["error"] = ctx.Err().Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), ctx.Err()
+	case <-shutdownTimer.C:
 		attributes["postgres_shutdown"] = "killed"
 		if err := process.cmd.Process.Kill(); err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
@@ -1412,11 +2117,17 @@ func (t *Target) stopPostgres() (model.EvidenceRecord, error) {
 			attributes["error"] = err.Error()
 			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
 		}
+		killTimer := time.NewTimer(t.shutdownTimeout())
+		defer killTimer.Stop()
 		select {
 		case err := <-process.done:
 			t.postgres = nil
 			attributes["exit_error"] = errorString(err)
-		case <-time.After(t.shutdownTimeout()):
+		case <-ctx.Done():
+			attributes["postgres_shutdown"] = "context_canceled"
+			attributes["error"] = ctx.Err().Error()
+			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), ctx.Err()
+		case <-killTimer.C:
 			err := fmt.Errorf("postgres process %d did not exit after kill", process.cmd.Process.Pid)
 			attributes["error"] = err.Error()
 			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
@@ -1426,7 +2137,7 @@ func (t *Target) stopPostgres() (model.EvidenceRecord, error) {
 	return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
 }
 
-func (t *Target) stopRecoveredPostgres() (model.EvidenceRecord, error) {
+func (t *Target) stopRecoveredPostgres(ctx context.Context) (model.EvidenceRecord, error) {
 	process := t.recovered
 	attributes := map[string]string{
 		"log_path":  process.logPath,
@@ -1436,6 +2147,11 @@ func (t *Target) stopRecoveredPostgres() (model.EvidenceRecord, error) {
 	}
 	if err := t.validateOwnedWorkDir(); err != nil {
 		attributes["postgres_shutdown"] = "ownership_unproven"
+		attributes["error"] = err.Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
+	}
+	if err := ctx.Err(); err != nil {
+		attributes["postgres_shutdown"] = "context_canceled"
 		attributes["error"] = err.Error()
 		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
 	}
@@ -1456,7 +2172,23 @@ func (t *Target) stopRecoveredPostgres() (model.EvidenceRecord, error) {
 		attributes["error"] = err.Error()
 		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
 	}
-	active, err := postgresProcessMatches(process.dataDirectory, process.pid)
+	boundProcess, err := t.openRecoveredProcess(
+		process.pid,
+		process.receipt.ProcessIdentity,
+	)
+	if err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			t.recovered = nil
+			attributes["postgres_shutdown"] = "already_exited"
+			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
+		}
+		attributes["postgres_shutdown"] = "inspect_failed"
+		attributes["error"] = err.Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
+	}
+	defer boundProcess.Close() //nolint:errcheck
+
+	active, err := boundProcess.Running()
 	if err != nil {
 		attributes["postgres_shutdown"] = "inspect_failed"
 		attributes["error"] = err.Error()
@@ -1467,7 +2199,22 @@ func (t *Target) stopRecoveredPostgres() (model.EvidenceRecord, error) {
 		attributes["postgres_shutdown"] = "already_exited"
 		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
 	}
-	if err := terminateProcessByPID(process.pid); err != nil {
+	ownedDataDirectory, err := postgresDataDirectoryMatches(
+		process.dataDirectory,
+		process.pid,
+	)
+	if err != nil {
+		attributes["postgres_shutdown"] = "inspect_failed"
+		attributes["error"] = err.Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
+	}
+	if !ownedDataDirectory {
+		err := fmt.Errorf("recovered postgres process is not bound to the recorded data directory")
+		attributes["postgres_shutdown"] = "ownership_unproven"
+		attributes["error"] = err.Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
+	}
+	if err := boundProcess.Terminate(); err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			t.recovered = nil
 			attributes["postgres_shutdown"] = "already_exited"
@@ -1478,23 +2225,19 @@ func (t *Target) stopRecoveredPostgres() (model.EvidenceRecord, error) {
 			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
 		}
 	}
-	deadline := time.Now().Add(t.shutdownTimeout())
-	for time.Now().Before(deadline) {
-		active, err := postgresProcessExists(process.pid)
-		if err != nil {
-			attributes["postgres_shutdown"] = "inspect_failed"
-			attributes["error"] = err.Error()
-			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
-		}
-		if !active {
-			t.recovered = nil
-			attributes["postgres_shutdown"] = "terminated"
-			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
-		}
-		time.Sleep(25 * time.Millisecond)
+	stopped, err := waitForRecoveredProcess(ctx, boundProcess, t.shutdownTimeout())
+	if err != nil {
+		attributes["postgres_shutdown"] = shutdownErrorStatus(err)
+		attributes["error"] = err.Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
+	}
+	if stopped {
+		t.recovered = nil
+		attributes["postgres_shutdown"] = "terminated"
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
 	}
 	attributes["postgres_shutdown"] = "killed"
-	active, err = postgresProcessMatches(process.dataDirectory, process.pid)
+	active, err = boundProcess.Running()
 	if err != nil {
 		attributes["postgres_shutdown"] = "inspect_failed"
 		attributes["error"] = err.Error()
@@ -1505,7 +2248,7 @@ func (t *Target) stopRecoveredPostgres() (model.EvidenceRecord, error) {
 		attributes["postgres_shutdown"] = "terminated"
 		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
 	}
-	if err := killProcessByPID(process.pid); err != nil {
+	if err := boundProcess.Kill(); err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			t.recovered = nil
 			attributes["postgres_shutdown"] = "terminated"
@@ -1514,42 +2257,163 @@ func (t *Target) stopRecoveredPostgres() (model.EvidenceRecord, error) {
 		attributes["error"] = err.Error()
 		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
 	}
-	deadline = time.Now().Add(t.shutdownTimeout())
-	for time.Now().Before(deadline) {
-		active, err := postgresProcessExists(process.pid)
-		if err != nil {
-			attributes["postgres_shutdown"] = "inspect_failed"
-			attributes["error"] = err.Error()
-			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
-		}
-		if !active {
-			t.recovered = nil
-			return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
-		}
-		time.Sleep(25 * time.Millisecond)
+	stopped, err = waitForRecoveredProcess(ctx, boundProcess, t.shutdownTimeout())
+	if err != nil {
+		attributes["postgres_shutdown"] = shutdownErrorStatus(err)
+		attributes["error"] = err.Error()
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
+	}
+	if stopped {
+		t.recovered = nil
+		return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), nil
 	}
 	err = fmt.Errorf("recovered postgres process %d did not exit after kill", process.pid)
 	attributes["error"] = err.Error()
 	return runtimeEvidence("postgres-stop", attributes, time.Now().UTC()), err
 }
 
-func (t *Target) validateOwnedWorkDir() error {
-	if err := requirePrivateDirectory(t.workDir); err != nil {
-		return fmt.Errorf("validate owned local target work_dir: %w", err)
+func waitForRecoveredProcess(
+	ctx context.Context,
+	process recoveredProcessHandle,
+	timeout time.Duration,
+) (bool, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		running, err := process.Running()
+		if err != nil {
+			return false, err
+		}
+		if !running {
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-timer.C:
+			return false, nil
+		case <-ticker.C:
+		}
 	}
-	marker, err := readOwnershipMarker(filepath.Join(t.workDir, markerFile))
+}
+
+func shutdownErrorStatus(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "context_canceled"
+	}
+	return "inspect_failed"
+}
+
+func (t *Target) cleanupQuarantinePath() string {
+	digest := sha256.Sum256([]byte(t.ownerID))
+	name := fmt.Sprintf(".pgdrill-delete-%x", digest[:8])
+	return filepath.Join(filepath.Dir(t.workDir), name)
+}
+
+func quarantineOwnedWorkDir(
+	source string,
+	target string,
+	expected os.FileInfo,
+	ownerID string,
+) error {
+	if expected == nil {
+		return fmt.Errorf("quarantine local target work_dir: expected directory identity is required")
+	}
+	if filepath.Dir(filepath.Clean(source)) != filepath.Dir(filepath.Clean(target)) {
+		return fmt.Errorf("quarantine local target work_dir: source and target must share a parent")
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return fmt.Errorf("quarantine local target work_dir: target already exists: %s", target)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect local target quarantine %s: %w", target, err)
+	}
+	if err := os.Rename(source, target); err != nil {
+		return fmt.Errorf("quarantine local target work_dir %s: %w", source, err)
+	}
+	if err := durablefs.SyncRename(source, target); err != nil {
+		return restoreQuarantinedWorkDir(
+			source,
+			target,
+			fmt.Errorf("persist local target quarantine rename: %w", err),
+		)
+	}
+	actual, err := os.Lstat(target)
 	if err != nil {
-		return fmt.Errorf("read owned local target marker: %w", err)
+		return restoreQuarantinedWorkDir(
+			source,
+			target,
+			fmt.Errorf("inspect quarantined local target work_dir %s: %w", target, err),
+		)
 	}
-	if t.ownerID == "" || marker != ownershipMarker(t.ownerID) {
-		return fmt.Errorf("local target ownership marker does not match bound attempt")
+	if actual.Mode()&os.ModeSymlink != 0 ||
+		!actual.IsDir() ||
+		!os.SameFile(expected, actual) {
+		return restoreQuarantinedWorkDir(
+			source,
+			target,
+			fmt.Errorf("local target work_dir changed before quarantine"),
+		)
+	}
+	if err := validateOwnedDirectory(target, ownerID); err != nil {
+		return restoreQuarantinedWorkDir(
+			source,
+			target,
+			fmt.Errorf("validate quarantined local target work_dir: %w", err),
+		)
+	}
+	return nil
+}
+
+func restoreQuarantinedWorkDir(source, target string, cause error) error {
+	if _, err := os.Lstat(source); err == nil {
+		return errors.Join(
+			cause,
+			fmt.Errorf("cannot restore local target quarantine: source path already exists"),
+		)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(cause, fmt.Errorf("inspect local target source before restore: %w", err))
+	}
+	if err := os.Rename(target, source); err != nil {
+		return errors.Join(cause, fmt.Errorf("restore local target quarantine: %w", err))
+	}
+	if err := durablefs.SyncRename(target, source); err != nil {
+		return errors.Join(cause, fmt.Errorf("persist local target quarantine restore: %w", err))
+	}
+	return cause
+}
+
+func validateOwnedDirectory(path, ownerID string) error {
+	if err := requirePrivateDirectory(path); err != nil {
+		return err
+	}
+	marker, err := readOwnershipMarker(filepath.Join(path, markerFile))
+	if err != nil {
+		return fmt.Errorf("read ownership marker: %w", err)
+	}
+	if ownerID == "" || marker != ownershipMarker(ownerID) {
+		return fmt.Errorf("mismatched ownership marker for bound attempt")
+	}
+	return nil
+}
+
+func (t *Target) validateOwnedWorkDir() error {
+	if err := validateOwnedDirectory(t.workDir, t.ownerID); err != nil {
+		return fmt.Errorf("validate owned local target work_dir: %w", err)
 	}
 	return nil
 }
 
 func (t *Target) runtimePort(port int) (int, error) {
+	if port < 0 || port > 65535 {
+		return 0, fmt.Errorf("runtime postgres port must be between 0 and 65535")
+	}
 	if port > 0 {
 		return port, nil
+	}
+	if t.cfg.Port < 0 || t.cfg.Port > 65535 {
+		return 0, fmt.Errorf("configured postgres port must be between 0 and 65535")
 	}
 	if t.cfg.Port > 0 {
 		return t.cfg.Port, nil
@@ -1590,12 +2454,21 @@ func mergeEnv(base, override map[string]string) map[string]string {
 	return result
 }
 
-func envList(env map[string]string) []string {
-	values := make([]string, 0, len(env))
-	for key, value := range env {
-		values = append(values, key+"="+value)
+func mergeProcessEnvironment(inherited []string, overrides map[string]string) []string {
+	effective := make([]string, 0, len(inherited)+len(overrides))
+	for _, entry := range inherited {
+		name, _, found := strings.Cut(entry, "=")
+		if found {
+			if _, overridden := overrides[name]; overridden {
+				continue
+			}
+		}
+		effective = append(effective, entry)
 	}
-	return values
+	for key, value := range overrides {
+		effective = append(effective, key+"="+value)
+	}
+	return effective
 }
 
 func firstNonEmpty(values ...string) string {

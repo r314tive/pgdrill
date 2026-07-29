@@ -76,6 +76,38 @@ func TestNativeDigestChangesWithNonSecretExecutionConfig(t *testing.T) {
 	}
 }
 
+func TestRunSpecsRejectCanonicalRedactionOverlap(t *testing.T) {
+	const secret = "canonical-secret"
+
+	t.Run("native", func(t *testing.T) {
+		cfg := nativeConfig()
+		cfg.Cluster.Name = "production-" + secret
+		cfg.Target.RedactValues = []string{secret}
+
+		_, err := Native(cfg, model.BackupSelection{})
+		if err == nil || !strings.Contains(err.Error(), "canonical intent") {
+			t.Fatalf("Native() error = %v", err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("Native() error leaked configured value: %v", err)
+		}
+	})
+
+	t.Run("managed CNPG", func(t *testing.T) {
+		cfg := managedConfig()
+		cfg.Target.CNPG.SourceCluster = "source-" + secret
+		cfg.Target.RedactValues = []string{secret}
+
+		_, err := ManagedCNPG(cfg, true)
+		if err == nil || !strings.Contains(err.Error(), "canonical intent") {
+			t.Fatalf("ManagedCNPG() error = %v", err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("ManagedCNPG() error leaked configured value: %v", err)
+		}
+	})
+}
+
 func TestManagedCNPGCapturesDiscoveryOrExactSelection(t *testing.T) {
 	cfg := managedConfig()
 	latest, err := ManagedCNPG(cfg, true)

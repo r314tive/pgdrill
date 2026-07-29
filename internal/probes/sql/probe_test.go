@@ -76,6 +76,22 @@ func TestRunFailsWithoutQuery(t *testing.T) {
 	}
 }
 
+func TestDescriptorAndConfigContract(t *testing.T) {
+	probe := New(Config{Name: " select_1 ", Query: "select 1"}, &fakeRunner{})
+	if probe.Type() != model.ProbeSQL {
+		t.Fatalf("Type() = %q", probe.Type())
+	}
+	if got, want := probe.Descriptor(), (model.ProbeDescriptor{Type: model.ProbeSQL, Name: "select_1"}); got != want {
+		t.Fatalf("Descriptor() = %#v, want %#v", got, want)
+	}
+	if err := ValidateConfig(Config{Query: "select 1"}); err != nil {
+		t.Fatalf("ValidateConfig(valid) error = %v", err)
+	}
+	if err := ValidateConfig(Config{}); err == nil || !strings.Contains(err.Error(), "query is required") {
+		t.Fatalf("ValidateConfig(empty) error = %v", err)
+	}
+}
+
 type fakeRunner struct {
 	invocation command.Invocation
 	result     command.Result

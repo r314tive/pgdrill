@@ -346,7 +346,7 @@ func TestDirectoryStoreMigrationPreservesCleanRetentionLayout(t *testing.T) {
 	}
 }
 
-func TestDirectoryStoreMigrationPreservesReadOnlyDirectoryMode(t *testing.T) {
+func TestDirectoryStoreMigrationNormalizesReadOnlyDirectoryMode(t *testing.T) {
 	t.Parallel()
 
 	source := extractHistoryFixture(
@@ -384,8 +384,8 @@ func TestDirectoryStoreMigrationPreservesReadOnlyDirectoryMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o500 {
-		t.Fatalf("migrated runs permissions = %o, want 500", info.Mode().Perm())
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("migrated runs permissions = %o, want 700", info.Mode().Perm())
 	}
 	info, err = os.Lstat(filepath.Join(destination, reportRelative))
 	if err != nil {
@@ -393,6 +393,71 @@ func TestDirectoryStoreMigrationPreservesReadOnlyDirectoryMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o400 {
 		t.Fatalf("migrated report permissions = %o, want 400", info.Mode().Perm())
+	}
+	next := validResult(t, "post-migration-run", "attempt-1", model.DrillStatusFailed)
+	if err := (DirectoryStore{Path: destination}).WriteEvent(
+		context.Background(),
+		validEvents(next)[0],
+	); err != nil {
+		t.Fatalf("WriteEvent() on migrated stable store error = %v", err)
+	}
+}
+
+func TestDirectoryStoreMigrationRejectsIntermediateDestinationSymlink(t *testing.T) {
+	source := extractHistoryFixture(
+		t,
+		filepath.Join("testdata", PreGACompatibilityFloor, "history-store.tar.gz"),
+	)
+	_, _, _, err := ensureRetentionBase(source)
+	if err != nil {
+		t.Fatalf("initialize source retention layout: %v", err)
+	}
+	sourceBefore, err := snapshotMigrationTree(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destinationRoot := filepath.Join(t.TempDir(), "destination")
+	if err := os.Mkdir(destinationRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(destinationRoot, "retention-alias")
+	if err := os.Symlink(filepath.Join(source, retentionDirectoryName), alias); err != nil {
+		t.Skipf("symbolic links are unavailable: %v", err)
+	}
+	destination := filepath.Join(
+		alias,
+		retentionOperationsDirectory,
+		"history-stable",
+	)
+	store := DirectoryStore{Path: source}
+	if _, err := store.PlanMigration(context.Background(), destination); err == nil ||
+		!strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("PlanMigration() error = %v, want intermediate symlink refusal", err)
+	}
+	if _, err := store.ApplyMigration(
+		context.Background(),
+		destination,
+		"sha256:"+strings.Repeat("0", 64),
+	); err == nil || !strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("ApplyMigration() error = %v, want intermediate symlink refusal", err)
+	}
+
+	lockPath := filepath.Join(
+		source,
+		retentionDirectoryName,
+		retentionOperationsDirectory,
+		migrationParentLockFileName,
+	)
+	if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migration created a lock through intermediate symlink: %v", err)
+	}
+	sourceAfter, err := snapshotMigrationTree(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceAfter != sourceBefore {
+		t.Fatalf("source changed after rejected intermediate symlink")
 	}
 }
 
@@ -549,6 +614,38 @@ func TestDirectoryStoreMigrationRejectsUnsafeState(t *testing.T) {
 		}
 		if payload, err := os.ReadFile(sentinel); err != nil || string(payload) != "keep" {
 			t.Fatalf("symbolic stage target changed: %q, %v", payload, err)
+		}
+	})
+
+	t.Run("foreign private stage", func(t *testing.T) {
+		source := extractHistoryFixture(
+			t,
+			filepath.Join("testdata", PreGACompatibilityFloor, "history-store.tar.gz"),
+		)
+		destination := filepath.Join(filepath.Dir(source), "stable")
+		store := DirectoryStore{Path: source}
+		plan, err := store.PlanMigration(context.Background(), destination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage := migrationStagePath(destination, plan.Digest)
+		if err := os.Mkdir(stage, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		sentinel := filepath.Join(stage, "sentinel")
+		if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := store.ApplyMigration(
+			context.Background(),
+			destination,
+			plan.Digest,
+		); err == nil || !strings.Contains(err.Error(), "valid ownership record") {
+			t.Fatalf("ApplyMigration() foreign stage error = %v", err)
+		}
+		if payload, err := os.ReadFile(sentinel); err != nil || string(payload) != "keep" {
+			t.Fatalf("foreign stage changed: %q, %v", payload, err)
 		}
 	})
 

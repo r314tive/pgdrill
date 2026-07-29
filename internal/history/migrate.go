@@ -193,7 +193,7 @@ func (s DirectoryStore) ApplyMigration(
 				pathContains(root, stage) || pathContains(stage, root) {
 				return fmt.Errorf("history migration stage overlaps source or destination")
 			}
-			if err := resetMigrationStage(stage); err != nil {
+			if err := resetMigrationStage(stage, plan); err != nil {
 				return err
 			}
 			if err := copyMigrationStage(ctx, root, stage, plan, store.callMigrationHook); err != nil {
@@ -393,7 +393,14 @@ func snapshotMigrationTree(
 			return err
 		}
 		if relative != "store.json" && relative != migrationRecordFileName {
-			if err := payloadEncoder.Encode(manifest); err != nil {
+			payloadManifest := manifest
+			if info.IsDir() {
+				// Stable stores must remain writable after migration. Directory
+				// modes are therefore canonicalized while immutable file bytes
+				// and file modes remain part of the historical payload identity.
+				payloadManifest.Mode = 0o700
+			}
+			if err := payloadEncoder.Encode(payloadManifest); err != nil {
 				return err
 			}
 		}
@@ -619,7 +626,7 @@ func copyMigrationStage(
 			}
 			directories = append(directories, migrationDirectory{
 				path: target,
-				mode: info.Mode().Perm(),
+				mode: 0o700,
 			})
 			return nil
 		}
@@ -762,7 +769,7 @@ func writeMigrationFile(
 	return syncDirectory(filepath.Dir(path))
 }
 
-func resetMigrationStage(stage string) error {
+func resetMigrationStage(stage string, plan MigrationPlan) error {
 	info, err := os.Lstat(stage)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -772,6 +779,22 @@ func resetMigrationStage(stage string) error {
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("history migration stage %s is not a private real directory", stage)
+	}
+	record, err := readJSONFile[migrationRecord](
+		filepath.Join(stage, migrationRecordFileName),
+		MaxIdentityBytes,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"history migration stage does not contain a valid ownership record: %w",
+			err,
+		)
+	}
+	if err := record.validate(plan); err != nil {
+		return fmt.Errorf(
+			"history migration stage ownership does not match confirmed plan: %w",
+			err,
+		)
 	}
 	if err := removePrivateTree(stage); err != nil {
 		return fmt.Errorf("reset history migration stage: %w", err)
@@ -981,10 +1004,23 @@ func migrationPaths(source, destination string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("resolve history migration source: %w", err)
 	}
+	sourcePath := source
+	source, err = filepath.EvalSymlinks(source)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve physical history migration source: %w", err)
+	}
 	destination, err = filepath.Abs(filepath.Clean(destination))
 	if err != nil {
 		return "", "", fmt.Errorf("resolve history migration destination: %w", err)
 	}
+	if err := requireDestinationAncestors(sourcePath, filepath.Dir(destination)); err != nil {
+		return "", "", err
+	}
+	destinationParent, err := filepath.EvalSymlinks(filepath.Dir(destination))
+	if err != nil {
+		return "", "", fmt.Errorf("resolve physical history migration destination parent: %w", err)
+	}
+	destination = filepath.Join(destinationParent, filepath.Base(destination))
 	if source == destination {
 		return "", "", fmt.Errorf("history migration destination must differ from source")
 	}
@@ -992,6 +1028,31 @@ func migrationPaths(source, destination string) (string, string, error) {
 		return "", "", fmt.Errorf("history migration source and destination must not contain each other")
 	}
 	return source, destination, nil
+}
+
+func requireDestinationAncestors(source, destinationParent string) error {
+	current := destinationParent
+	for {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return fmt.Errorf("inspect history migration destination ancestor %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if !pathContains(current, source) {
+				return fmt.Errorf(
+					"history migration destination ancestor %s must not be a symbolic link",
+					current,
+				)
+			}
+		} else if !info.IsDir() {
+			return fmt.Errorf("history migration destination ancestor %s is not a directory", current)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+		current = parent
+	}
 }
 
 func pathContains(parent, child string) bool {
@@ -1015,17 +1076,7 @@ func withMigrationParentLock(
 	operation func() error,
 ) error {
 	path := filepath.Join(parent, migrationParentLockFileName)
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return fmt.Errorf("history migration parent lock must be a regular non-symbolic-link file")
-		}
-		if info.Mode().Perm()&0o077 != 0 {
-			return fmt.Errorf("history migration parent lock permissions %o are not private", info.Mode().Perm())
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect history migration parent lock: %w", err)
-	}
-	lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := filelock.OpenPrivate(path, os.O_CREATE|os.O_RDWR)
 	if err != nil {
 		return fmt.Errorf("open history migration parent lock: %w", err)
 	}
@@ -1038,15 +1089,27 @@ func withMigrationParentLock(
 }
 
 func requireMigrationParent(path string) error {
-	info, err := os.Lstat(path)
+	path, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("%s is not a real directory", path)
-	}
-	if info.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("%s permissions %o permit untrusted writes", path, info.Mode().Perm())
+	current := path
+	for {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("%s is not a real directory", current)
+		}
+		if current == path && info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("%s permissions %o permit untrusted writes", path, info.Mode().Perm())
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
 	}
 	return nil
 }

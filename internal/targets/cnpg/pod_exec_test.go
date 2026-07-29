@@ -96,6 +96,41 @@ func TestPodExecRunnerRejectsWorkDir(t *testing.T) {
 	}
 }
 
+func TestPodExecRunnerRejectsEnvironmentNamesThatChangeEnvParsing(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "empty", env: "", want: "is required"},
+		{name: "invalid utf8", env: string([]byte{0xff}), want: "valid UTF-8"},
+		{name: "nul", env: "PG\x00USER", want: "NUL"},
+		{name: "assignment", env: "PGUSER=postgres", want: "must not contain '='"},
+		{name: "option", env: "--unset", want: "must not start with '-'"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &fakeCommandRunner{}
+			runner := NewPodExecRunner(
+				KubectlConfig{},
+				testVerifyClusterSpec(t),
+				transport,
+			)
+
+			_, err := runner.Run(context.Background(), command.Invocation{
+				Path: "psql",
+				Env:  map[string]string{test.env: "value"},
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Run() error = %v, want %q", err, test.want)
+			}
+			if len(transport.invocations) != 0 {
+				t.Fatalf("transport invoked after validation failure: %#v", transport.invocations)
+			}
+		})
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

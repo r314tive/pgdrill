@@ -92,6 +92,22 @@ func TestRunRejectsUnsupportedMode(t *testing.T) {
 	}
 }
 
+func TestDescriptorAndConfigContract(t *testing.T) {
+	probe := New(Config{Name: " logical-check "}, &fakeRunner{})
+	if probe.Type() != model.ProbePGDump {
+		t.Fatalf("Type() = %q", probe.Type())
+	}
+	if got, want := probe.Descriptor(), (model.ProbeDescriptor{Type: model.ProbePGDump, Name: "logical-check"}); got != want {
+		t.Fatalf("Descriptor() = %#v, want %#v", got, want)
+	}
+	if err := ValidateConfig(Config{Mode: "schema", Args: map[string]string{"schema": "public"}}); err != nil {
+		t.Fatalf("ValidateConfig(valid) error = %v", err)
+	}
+	if err := ValidateConfig(Config{Mode: "future"}); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("ValidateConfig(invalid) error = %v", err)
+	}
+}
+
 type fakeRunner struct {
 	invocation command.Invocation
 	result     command.Result

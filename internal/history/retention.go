@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/filelock"
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -201,6 +202,12 @@ func (s DirectoryStore) ApplyRetention(
 					"completed retention operation %s uses a different policy",
 					confirmation,
 				)
+			}
+			if err := durablefs.SyncRename(
+				retentionOperationPath(root, confirmation),
+				retentionPendingPath(root, confirmation),
+			); err != nil {
+				return fmt.Errorf("persist completed retention move: %w", err)
 			}
 			if err := removePrivateTree(retentionPendingPath(root, confirmation)); err != nil {
 				return fmt.Errorf("finish completed retention cleanup: %w", err)
@@ -546,12 +553,9 @@ func readAllRuns(root string) ([]RunRecord, error) {
 		}
 		return nil, err
 	}
-	entries, err := os.ReadDir(runsDir)
+	entries, err := durablefs.ReadDirBounded(runsDir, MaxRuns)
 	if err != nil {
 		return nil, fmt.Errorf("read history runs: %w", err)
-	}
-	if len(entries) > MaxRuns {
-		return nil, fmt.Errorf("history store exceeds maximum run count %d", MaxRuns)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	records := make([]RunRecord, 0, len(entries))
@@ -714,7 +718,7 @@ func inspectRetentionState(root string) (retentionState, error) {
 		}
 		return retentionState{}, fmt.Errorf("inspect history retention state: %w", err)
 	}
-	entries, err := os.ReadDir(retentionRoot)
+	entries, err := durablefs.ReadDirBounded(retentionRoot, 3)
 	if err != nil {
 		return retentionState{}, fmt.Errorf("read history retention state: %w", err)
 	}
@@ -762,7 +766,7 @@ func readDigestDirectories(path, description string) ([]string, error) {
 		}
 		return nil, err
 	}
-	entries, err := os.ReadDir(path)
+	entries, err := durablefs.ReadDirBounded(path, MaxTotalAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", description, err)
 	}
@@ -915,7 +919,7 @@ func (s DirectoryStore) executeRetentionOperation(ctx context.Context, root stri
 		return err
 	}
 
-	_, _, pendingParent, err := ensureRetentionBase(root)
+	_, _, _, err = ensureRetentionBase(root)
 	if err != nil {
 		return err
 	}
@@ -928,11 +932,8 @@ func (s DirectoryStore) executeRetentionOperation(ctx context.Context, root stri
 	if err := os.Rename(operationPath, pendingPath); err != nil {
 		return fmt.Errorf("finalize retention operation: %w", err)
 	}
-	if err := syncDirectory(filepath.Dir(operationPath)); err != nil {
-		return fmt.Errorf("sync retention operations directory: %w", err)
-	}
-	if err := syncDirectory(pendingParent); err != nil {
-		return fmt.Errorf("sync retention pending-delete directory: %w", err)
+	if err := durablefs.SyncRename(operationPath, pendingPath); err != nil {
+		return fmt.Errorf("persist finalized retention operation: %w", err)
 	}
 	if err := s.callRetentionHook(retentionStepAfterFinalizeMove, len(plan.Attempts)); err != nil {
 		return err
@@ -1021,12 +1022,11 @@ func (s DirectoryStore) applyRetentionAttempt(
 			if err := os.Rename(source, target); err != nil {
 				return fmt.Errorf("move attempt to retention trash: %w", err)
 			}
-			if err := syncDirectory(filepath.Dir(source)); err != nil {
-				return err
-			}
-			if err := syncDirectory(filepath.Dir(target)); err != nil {
-				return err
-			}
+		}
+		if err := durablefs.SyncRename(source, target); err != nil {
+			return fmt.Errorf("persist attempt in retention trash: %w", err)
+		}
+		if sourceExists {
 			if err := s.callRetentionHook(retentionStepAfterAttemptRename, index); err != nil {
 				return err
 			}
@@ -1102,12 +1102,11 @@ func (s DirectoryStore) applyRetentionRun(
 			if err := os.Rename(source, target); err != nil {
 				return fmt.Errorf("move empty run to retention trash: %w", err)
 			}
-			if err := syncDirectory(filepath.Dir(source)); err != nil {
-				return err
-			}
-			if err := syncDirectory(filepath.Dir(target)); err != nil {
-				return err
-			}
+		}
+		if err := durablefs.SyncRename(source, target); err != nil {
+			return fmt.Errorf("persist run in retention trash: %w", err)
+		}
+		if sourceExists {
 			if err := s.callRetentionHook(retentionStepAfterRunRename, index); err != nil {
 				return err
 			}
@@ -1159,7 +1158,7 @@ func validateEmptyRetentionRun(path string, item RetentionRun) error {
 	if err := requireDirectory(attemptsDir); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(attemptsDir)
+	entries, err := durablefs.ReadDirBounded(attemptsDir, 0)
 	if err != nil {
 		return err
 	}

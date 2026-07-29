@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,20 +12,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	DefaultProviderTimeout          = 30 * time.Minute
-	DefaultRestoreTimeout           = 6 * time.Hour
-	DefaultValidationTimeout        = 2 * time.Hour
-	DefaultProbeTimeout             = time.Hour
-	DefaultKubernetesCommandTimeout = 2 * time.Minute
-	DefaultKubernetesWaitTimeout    = 2 * time.Hour
-	DefaultKubernetesPollInterval   = 5 * time.Second
-	DefaultCNPGPluginName           = "barman-cloud.cloudnative-pg.io"
-	DefaultCNPGRecoverySource       = "source"
+	MaxConfigBytes                  int64 = 4 << 20
+	DefaultProviderTimeout                = 30 * time.Minute
+	DefaultRestoreTimeout                 = 6 * time.Hour
+	DefaultValidationTimeout              = 2 * time.Hour
+	DefaultProbeTimeout                   = time.Hour
+	DefaultKubernetesCommandTimeout       = 2 * time.Minute
+	DefaultKubernetesWaitTimeout          = 2 * time.Hour
+	DefaultKubernetesPollInterval         = 5 * time.Second
+	DefaultCNPGPluginName                 = "barman-cloud.cloudnative-pg.io"
+	DefaultCNPGRecoverySource             = "source"
 )
 
 type CNPGRecoveryMethod string
@@ -137,6 +140,7 @@ type TargetConfig struct {
 	CNPG            CNPGTargetConfig        `json:"cnpg,omitempty" yaml:"cnpg,omitempty"`
 	Env             map[string]string       `json:"env,omitempty" yaml:"env,omitempty"`
 	PostgresBinary  string                  `json:"postgres_binary,omitempty" yaml:"postgres_binary,omitempty"`
+	PSQLBinary      string                  `json:"psql_binary,omitempty" yaml:"psql_binary,omitempty"`
 	PostgresPort    int                     `json:"postgres_port,omitempty" yaml:"postgres_port,omitempty"`
 	StartupTimeout  Duration                `json:"startup_timeout,omitempty" yaml:"startup_timeout,omitempty"`
 	ShutdownTimeout Duration                `json:"shutdown_timeout,omitempty" yaml:"shutdown_timeout,omitempty"`
@@ -278,20 +282,36 @@ func LoadTarget(reader io.Reader, format string) (Config, error) {
 }
 
 func load(reader io.Reader, format string, validate func(Config) error) (Config, error) {
+	if reader == nil {
+		return Config{}, fmt.Errorf("config input is required")
+	}
+	payload, err := io.ReadAll(io.LimitReader(reader, MaxConfigBytes+1))
+	if err != nil {
+		return Config{}, fmt.Errorf("read config: %w", err)
+	}
+	if int64(len(payload)) > MaxConfigBytes {
+		return Config{}, fmt.Errorf("config exceeds %d bytes", MaxConfigBytes)
+	}
+
 	var cfg Config
 
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "json":
-		decoder := json.NewDecoder(reader)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&cfg); err != nil {
+		if err := jsonutil.DecodeOneStrict(payload, &cfg); err != nil {
 			return Config{}, fmt.Errorf("parse json config: %w", err)
 		}
 	case "yaml", "yml", "":
-		decoder := yaml.NewDecoder(reader)
+		decoder := yaml.NewDecoder(bytes.NewReader(payload))
 		decoder.KnownFields(true)
 		if err := decoder.Decode(&cfg); err != nil {
 			return Config{}, fmt.Errorf("parse yaml config: %w", err)
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				return Config{}, fmt.Errorf("parse yaml config: multiple YAML documents")
+			}
+			return Config{}, fmt.Errorf("parse yaml config trailing data: %w", err)
 		}
 	default:
 		return Config{}, fmt.Errorf("unsupported config format %q", format)

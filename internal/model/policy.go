@@ -55,6 +55,9 @@ func (p RecoveryPolicy) Validate() error {
 		if duration < time.Millisecond {
 			return fmt.Errorf("%s must be at least 1ms", field.name)
 		}
+		if duration%time.Millisecond != 0 {
+			return fmt.Errorf("%s must use whole-millisecond precision", field.name)
+		}
 	}
 	return nil
 }
@@ -81,6 +84,9 @@ func policyDuration(name, value string) (time.Duration, error) {
 	}
 	if duration < time.Millisecond {
 		return 0, fmt.Errorf("%s must be at least 1ms", name)
+	}
+	if duration%time.Millisecond != 0 {
+		return 0, fmt.Errorf("%s must use whole-millisecond precision", name)
 	}
 	return duration, nil
 }
@@ -205,6 +211,9 @@ func (v PolicyVerdict) Validate() error {
 	if !policyBasisAllowed(v.Assertion, v.Basis) {
 		return fmt.Errorf("basis %q is not valid for assertion %q", v.Basis, v.Assertion)
 	}
+	if !policyBasisStatusAllowed(v.Basis, v.Status) {
+		return fmt.Errorf("status %q is not valid for basis %q", v.Status, v.Basis)
+	}
 	if !utf8.ValidString(v.Message) {
 		return fmt.Errorf("message must be valid UTF-8")
 	}
@@ -245,6 +254,9 @@ func (v PolicyVerdict) Validate() error {
 		if v.ObservedMillis != nil && *v.ObservedMillis < 0 {
 			return fmt.Errorf("observed_millis must not be negative")
 		}
+		if v.ObservedMillis != nil && !policyBasisAllowsObservation(v.Basis) {
+			return fmt.Errorf("basis %q must not contain observed_millis", v.Basis)
+		}
 		if v.Status != PolicyVerdictUnknown && v.ObservedMillis == nil {
 			return fmt.Errorf("terminal duration verdict requires observed_millis")
 		}
@@ -258,6 +270,15 @@ func (v PolicyVerdict) Validate() error {
 				if *v.ObservedMillis <= *v.LimitMillis {
 					return fmt.Errorf("failed duration verdict does not exceed its limit")
 				}
+			}
+		}
+		if v.Status == PolicyVerdictUnknown &&
+			(v.Basis == PolicyBasisBackupFinishLowerBound ||
+				v.Basis == PolicyBasisBackupStartLowerBound) {
+			if v.ObservedMillis == nil || *v.ObservedMillis <= *v.LimitMillis {
+				return fmt.Errorf(
+					"unknown lower-bound verdict requires observed_millis above its limit",
+				)
 			}
 		}
 	case PolicyAssertionRecoveryTarget, PolicyAssertionCleanup:
@@ -326,6 +347,48 @@ func policyBasisAllowed(assertion PolicyAssertion, basis PolicyVerdictBasis) boo
 		}
 	}
 	return false
+}
+
+func policyBasisStatusAllowed(basis PolicyVerdictBasis, status PolicyVerdictStatus) bool {
+	switch basis {
+	case PolicyBasisNotConfigured:
+		return status == PolicyVerdictNotConfigured
+	case PolicyBasisDrillStartToRecoveryProof,
+		PolicyBasisDrillStartToRequestedTime,
+		PolicyBasisDrillStartToBackupFinish:
+		return status == PolicyVerdictPassed || status == PolicyVerdictFailed
+	case PolicyBasisBackupFinishLowerBound, PolicyBasisBackupStartLowerBound:
+		return status == PolicyVerdictPassed || status == PolicyVerdictUnknown
+	case PolicyBasisPostRestoreProbes, PolicyBasisNoOwnedTarget:
+		return status == PolicyVerdictPassed
+	case PolicyBasisCleanupCheckpoint:
+		return status == PolicyVerdictPassed ||
+			status == PolicyVerdictFailed ||
+			status == PolicyVerdictUnknown
+	case PolicyBasisMissingRecoveryProof,
+		PolicyBasisMissingBackupFinish,
+		PolicyBasisMissingBackupStart,
+		PolicyBasisNonTemporalRecoveryTarget,
+		PolicyBasisFutureRecoveryTarget,
+		PolicyBasisInvalidTimeOrder,
+		PolicyBasisMissingCleanupCheckpoint:
+		return status == PolicyVerdictUnknown
+	default:
+		return false
+	}
+}
+
+func policyBasisAllowsObservation(basis PolicyVerdictBasis) bool {
+	switch basis {
+	case PolicyBasisDrillStartToRecoveryProof,
+		PolicyBasisDrillStartToRequestedTime,
+		PolicyBasisBackupFinishLowerBound,
+		PolicyBasisBackupStartLowerBound,
+		PolicyBasisDrillStartToBackupFinish:
+		return true
+	default:
+		return false
+	}
 }
 
 type RecoveryPolicyEvaluation struct {

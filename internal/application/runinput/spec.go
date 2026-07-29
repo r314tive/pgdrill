@@ -77,6 +77,9 @@ func Native(cfg config.Config, selection model.BackupSelection) (runspec.Spec, e
 			Probes: descriptors,
 		},
 	}
+	if err := rejectCanonicalRedactions(document, allRedactions(cfg)...); err != nil {
+		return runspec.Spec{}, fmt.Errorf("validate native drill spec redaction: %w", err)
+	}
 	spec, err := runspec.New(document)
 	if err != nil {
 		return runspec.Spec{}, fmt.Errorf("build native drill spec: %w", err)
@@ -202,6 +205,9 @@ func ManagedCNPG(cfg config.Config, discover bool) (runspec.Spec, error) {
 			Probes: descriptors,
 		},
 	}
+	if err := rejectCanonicalRedactions(document, allRedactions(cfg)...); err != nil {
+		return runspec.Spec{}, fmt.Errorf("validate managed CNPG drill spec redaction: %w", err)
+	}
 	spec, err := runspec.New(document)
 	if err != nil {
 		return runspec.Spec{}, fmt.Errorf("build managed CNPG drill spec: %w", err)
@@ -291,6 +297,28 @@ func probeRedactions(probes []config.ProbeConfig) []string {
 		result = append(result, probe.RedactValues...)
 	}
 	return result
+}
+
+func allRedactions(cfg config.Config) []string {
+	result := providerRedactions(cfg.Provider, cfg.Restore)
+	result = append(result, cfg.Target.RedactValues...)
+	result = append(result, probeRedactions(cfg.Probes)...)
+	return result
+}
+
+func rejectCanonicalRedactions(value any, redactions ...string) error {
+	if len(redactions) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode canonical intent: %w", err)
+	}
+	redactor := command.NewRedactor(redactions...)
+	if redactor.RedactString(string(raw)) != string(raw) {
+		return fmt.Errorf("canonical intent contains a configured redaction value")
+	}
+	return nil
 }
 
 func componentRevision(value any, redactions ...string) (string, error) {

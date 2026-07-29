@@ -3,7 +3,6 @@ package compatibility
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/report"
 	"gopkg.in/yaml.v3"
@@ -719,7 +719,7 @@ func hasCNPGVersionEvidence(result model.DrillResult, claim string) bool {
 			continue
 		}
 		var value any
-		if err := json.Unmarshal([]byte(evidence.Command.Stdout), &value); err != nil {
+		if err := jsonutil.DecodeOne([]byte(evidence.Command.Stdout), &value); err != nil {
 			continue
 		}
 		if jsonContainsStringField(value, "cnpg.io/operatorVersion", claim) {

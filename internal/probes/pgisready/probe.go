@@ -15,6 +15,7 @@ const (
 	defaultBinary         = "pg_isready"
 	defaultAttemptTimeout = 3 * time.Second
 	defaultRetryInterval  = time.Second
+	maxRetainedEvidence   = 64
 )
 
 type Config struct {
@@ -55,7 +56,12 @@ func (p *Probe) Descriptor() model.ProbeDescriptor {
 
 func (p *Probe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error) {
 	if pg.ConnString == "" {
-		check := p.check(model.CheckStatusFailed, "running postgres conn_string is required", nil)
+		check := p.check(
+			model.CheckStatusFailed,
+			"running postgres conn_string is required",
+			nil,
+			0,
+		)
 		return model.CheckReport{Checks: []model.Check{check}}, nil
 	}
 
@@ -67,7 +73,7 @@ func (p *Probe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckR
 	defer cancel()
 
 	report := model.CheckReport{}
-	evidenceIDs := []string{}
+	evidenceIDs := make([]string, 0, maxRetainedEvidence)
 	for attempt := 1; ; attempt++ {
 		attemptTimeout := p.attemptTimeout(runCtx)
 		result, err := p.runner.Run(runCtx, command.Invocation{
@@ -77,11 +83,10 @@ func (p *Probe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckR
 			RedactValues: append(append([]string{}, p.cfg.RedactValues...), pg.ConnString),
 		})
 		evidence := commandEvidence(attempt, result.Evidence)
-		report.Evidence = append(report.Evidence, evidence)
-		evidenceIDs = append(evidenceIDs, evidence.ID)
+		retainAttemptEvidence(&report, &evidenceIDs, evidence)
 
 		if err != nil {
-			report.Checks = []model.Check{p.check(model.CheckStatusFailed, "pg_isready could not be executed: "+err.Error(), evidenceIDs)}
+			report.Checks = []model.Check{p.check(model.CheckStatusFailed, "pg_isready could not be executed: "+err.Error(), evidenceIDs, attempt)}
 			return report, nil
 		}
 		if result.Evidence.ExitStatus.Success {
@@ -89,29 +94,29 @@ func (p *Probe) Run(ctx context.Context, pg model.RunningPostgres) (model.CheckR
 			if attempt > 1 {
 				message += fmt.Sprintf(" after %d attempts", attempt)
 			}
-			report.Checks = []model.Check{p.check(model.CheckStatusPassed, message, evidenceIDs)}
+			report.Checks = []model.Check{p.check(model.CheckStatusPassed, message, evidenceIDs, attempt)}
 			return report, nil
 		}
 
 		failure := commandFailureMessage(result.Evidence)
 		if err := ctx.Err(); err != nil {
-			report.Checks = []model.Check{p.check(model.CheckStatusFailed, failure, evidenceIDs)}
+			report.Checks = []model.Check{p.check(model.CheckStatusFailed, failure, evidenceIDs, attempt)}
 			return report, err
 		}
 		if p.cfg.Timeout <= 0 || !retryable(result.Evidence.ExitStatus) {
-			report.Checks = []model.Check{p.check(model.CheckStatusFailed, failure, evidenceIDs)}
+			report.Checks = []model.Check{p.check(model.CheckStatusFailed, failure, evidenceIDs, attempt)}
 			return report, nil
 		}
 		if runCtx.Err() != nil {
-			report.Checks = []model.Check{p.check(model.CheckStatusFailed, readinessDeadlineMessage(attempt, failure), evidenceIDs)}
+			report.Checks = []model.Check{p.check(model.CheckStatusFailed, readinessDeadlineMessage(attempt, failure), evidenceIDs, attempt)}
 			return report, nil
 		}
 		if err := waitForRetry(runCtx, p.retryInterval); err != nil {
 			if parentErr := ctx.Err(); parentErr != nil {
-				report.Checks = []model.Check{p.check(model.CheckStatusFailed, failure, evidenceIDs)}
+				report.Checks = []model.Check{p.check(model.CheckStatusFailed, failure, evidenceIDs, attempt)}
 				return report, parentErr
 			}
-			report.Checks = []model.Check{p.check(model.CheckStatusFailed, readinessDeadlineMessage(attempt, failure), evidenceIDs)}
+			report.Checks = []model.Check{p.check(model.CheckStatusFailed, readinessDeadlineMessage(attempt, failure), evidenceIDs, attempt)}
 			return report, nil
 		}
 	}
@@ -193,10 +198,22 @@ func readinessDeadlineMessage(attempt int, failure string) string {
 	return fmt.Sprintf("pg_isready readiness deadline exceeded after %d %s: %s", attempt, word, failure)
 }
 
-func (p *Probe) check(status model.CheckStatus, message string, evidenceIDs []string) model.Check {
+func (p *Probe) check(
+	status model.CheckStatus,
+	message string,
+	evidenceIDs []string,
+	attemptCount int,
+) model.Check {
 	name := p.cfg.Name
 	if name == "" {
 		name = "pg_isready"
+	}
+	attributes := map[string]string{
+		"attempt_count":             strconv.Itoa(attemptCount),
+		"retained_attempt_evidence": strconv.Itoa(len(evidenceIDs)),
+	}
+	if attemptCount > len(evidenceIDs) {
+		attributes["attempt_evidence_truncated"] = "true"
 	}
 	return model.Check{
 		Name:        name,
@@ -204,7 +221,23 @@ func (p *Probe) check(status model.CheckStatus, message string, evidenceIDs []st
 		Status:      status,
 		Message:     message,
 		EvidenceIDs: evidenceIDs,
+		Attributes:  attributes,
 	}
+}
+
+func retainAttemptEvidence(
+	report *model.CheckReport,
+	evidenceIDs *[]string,
+	evidence model.EvidenceRecord,
+) {
+	if len(report.Evidence) < maxRetainedEvidence {
+		report.Evidence = append(report.Evidence, evidence)
+		*evidenceIDs = append(*evidenceIDs, evidence.ID)
+		return
+	}
+	last := maxRetainedEvidence - 1
+	report.Evidence[last] = evidence
+	(*evidenceIDs)[last] = evidence.ID
 }
 
 func commandEvidence(attempt int, evidence model.CommandEvidence) model.EvidenceRecord {

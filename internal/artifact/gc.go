@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/filelock"
 	"github.com/r314tive/pgdrill/internal/model"
 )
@@ -33,6 +34,8 @@ const (
 	gcStepAfterItemMarker     = "after_item_marker"
 	gcStepAfterComplete       = "after_complete"
 	gcStepAfterFinalizeRename = "after_finalize_rename"
+
+	maxUnpublishedGCMetadataTemporaryFiles = 32
 )
 
 type GCPolicy struct {
@@ -229,6 +232,12 @@ func (s DirectoryStore) ApplyGC(
 			if err != nil {
 				return err
 			}
+			if err := durablefs.SyncRename(
+				gcOperationPath(settings.root, confirmation),
+				gcPendingPath(settings.root, confirmation),
+			); err != nil {
+				return fmt.Errorf("persist completed artifact GC move: %w", err)
+			}
 			if err := removePrivateTree(gcPendingPath(settings.root, confirmation)); err != nil {
 				return fmt.Errorf("remove completed artifact GC operation: %w", err)
 			}
@@ -250,7 +259,43 @@ func (s DirectoryStore) ApplyGC(
 			}
 			plan, err = readGCOperation(settings.root, confirmation)
 			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) || len(state.trash) != 0 {
+					return err
+				}
+				operationPath := gcOperationPath(settings.root, confirmation)
+				if err := recoverUnpublishedGCOperation(operationPath); err != nil {
+					return err
+				}
+				plan, err = buildGCPlan(settings, policy, inventory)
+				if err != nil {
+					return err
+				}
+				if plan.Digest != confirmation {
+					return fmt.Errorf(
+						"artifact GC confirmation %s is stale; current plan digest is %s",
+						confirmation,
+						plan.Digest,
+					)
+				}
+				if err := createGCOperation(ctx, settings.root, plan); err != nil {
+					return err
+				}
+			}
+			if _, err := ensurePrivateChildDirectory(
+				gcOperationPath(settings.root, confirmation),
+				gcProgressDirectory,
+			); err != nil {
+				return fmt.Errorf("restore artifact GC progress directory: %w", err)
+			}
+			_, trashParent, _, err := ensureGCBase(settings.root)
+			if err != nil {
 				return err
+			}
+			if _, err := ensurePrivateChildDirectory(
+				trashParent,
+				strings.TrimPrefix(confirmation, "sha256:"),
+			); err != nil {
+				return fmt.Errorf("restore artifact GC trash directory: %w", err)
 			}
 			scopeChanged, err := validateResumeInputs(
 				plan,
@@ -749,7 +794,7 @@ func inspectGCState(root string) (gcState, error) {
 		}
 		return gcState{}, fmt.Errorf("inspect artifact GC state: %w", err)
 	}
-	entries, err := os.ReadDir(gcRoot)
+	entries, err := durablefs.ReadDirBounded(gcRoot, 3)
 	if err != nil {
 		return gcState{}, fmt.Errorf("read artifact GC state: %w", err)
 	}
@@ -797,7 +842,7 @@ func readDigestDirectories(path, description string) ([]string, error) {
 		}
 		return nil, err
 	}
-	entries, err := os.ReadDir(path)
+	entries, err := durablefs.ReadDirBounded(path, MaxTemporaryFiles)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", description, err)
 	}
@@ -958,7 +1003,7 @@ func (s DirectoryStore) executeGCOperation(
 	if err := s.callGCHook(gcStepAfterComplete, len(plan.Blobs)+len(plan.TemporaryFiles)); err != nil {
 		return err
 	}
-	_, _, pendingParent, err := ensureGCBase(root)
+	_, _, _, err = ensureGCBase(root)
 	if err != nil {
 		return err
 	}
@@ -971,11 +1016,8 @@ func (s DirectoryStore) executeGCOperation(
 	if err := os.Rename(operationPath, pendingPath); err != nil {
 		return fmt.Errorf("finalize artifact GC operation: %w", err)
 	}
-	if err := syncDirectory(filepath.Dir(operationPath)); err != nil {
-		return fmt.Errorf("sync artifact GC operations: %w", err)
-	}
-	if err := syncDirectory(pendingParent); err != nil {
-		return fmt.Errorf("sync artifact GC pending cleanup: %w", err)
+	if err := durablefs.SyncRename(operationPath, pendingPath); err != nil {
+		return fmt.Errorf("persist finalized artifact GC operation: %w", err)
 	}
 	if err := s.callGCHook(gcStepAfterFinalizeRename, len(plan.Blobs)+len(plan.TemporaryFiles)); err != nil {
 		return err
@@ -1069,12 +1111,11 @@ func (s DirectoryStore) applyGCBlob(
 		if err := os.Rename(sourceBlob, targetBlob); err != nil {
 			return fmt.Errorf("move artifact blob to GC trash: %w", err)
 		}
-		if err := syncDirectory(filepath.Dir(sourceBlob)); err != nil {
-			return err
-		}
-		if err := syncDirectory(filepath.Dir(targetBlob)); err != nil {
-			return err
-		}
+	}
+	if err := durablefs.SyncRename(sourceBlob, targetBlob); err != nil {
+		return fmt.Errorf("persist artifact blob in GC trash: %w", err)
+	}
+	if sourceExists {
 		if err := s.callGCHook(gcStepAfterBlobRename, index); err != nil {
 			return err
 		}
@@ -1161,12 +1202,9 @@ func (s DirectoryStore) applyGCTemporary(
 		if err := os.Rename(source, target); err != nil {
 			return fmt.Errorf("move artifact temporary file to GC trash: %w", err)
 		}
-		if err := syncDirectory(filepath.Dir(source)); err != nil {
-			return err
-		}
-		if err := syncDirectory(filepath.Dir(target)); err != nil {
-			return err
-		}
+	}
+	if err := durablefs.SyncRename(source, target); err != nil {
+		return fmt.Errorf("persist artifact temporary file in GC trash: %w", err)
 	}
 	if err := writeGCProgress(ctx, root, planDigest, expected, markerPath); err != nil {
 		return err
@@ -1234,16 +1272,17 @@ func readClaimsAt(path, artifactID string, sizeBytes int64) ([]blobClaim, error)
 	if err := requireRealDirectory(path); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(path)
+	entries, err := durablefs.ReadDirBounded(path, MaxClaimsPerBlob)
 	if err != nil {
+		var limitErr *durablefs.DirectoryLimitError
+		if errors.As(err, &limitErr) {
+			return nil, fmt.Errorf(
+				"artifact %s exceeds maximum claim count %d",
+				artifactID,
+				MaxClaimsPerBlob,
+			)
+		}
 		return nil, err
-	}
-	if len(entries) > MaxClaimsPerBlob {
-		return nil, fmt.Errorf(
-			"artifact %s exceeds maximum claim count %d",
-			artifactID,
-			MaxClaimsPerBlob,
-		)
 	}
 	claims := make([]blobClaim, 0, len(entries))
 	for _, entry := range entries {
@@ -1298,7 +1337,7 @@ func moveGCClaims(source, target string, legacy bool) error {
 		return fmt.Errorf("artifact claims are missing from active store and GC trash")
 	}
 	if targetExists {
-		return nil
+		return durablefs.SyncRename(source, target)
 	}
 	if err := requireRealDirectory(filepath.Dir(target)); err != nil {
 		return err
@@ -1306,10 +1345,7 @@ func moveGCClaims(source, target string, legacy bool) error {
 	if err := os.Rename(source, target); err != nil {
 		return fmt.Errorf("move artifact claims to GC trash: %w", err)
 	}
-	if err := syncDirectory(filepath.Dir(source)); err != nil {
-		return err
-	}
-	return syncDirectory(filepath.Dir(target))
+	return durablefs.SyncRename(source, target)
 }
 
 func validateGCTemporaryAt(path string, item GCTemporaryFile) error {
@@ -1466,6 +1502,79 @@ func removePrivateFile(path string) error {
 		return err
 	}
 	return syncDirectory(parent)
+}
+
+func recoverUnpublishedGCOperation(path string) error {
+	entries, err := durablefs.ReadDirBounded(
+		path,
+		maxUnpublishedGCMetadataTemporaryFiles,
+	)
+	if err != nil {
+		var limitErr *durablefs.DirectoryLimitError
+		if errors.As(err, &limitErr) {
+			return fmt.Errorf(
+				"unpublished artifact GC operation exceeds maximum temporary file count %d",
+				maxUnpublishedGCMetadataTemporaryFiles,
+			)
+		}
+		return fmt.Errorf("inspect unpublished artifact GC operation: %w", err)
+	}
+	temporaryCount := 0
+	for _, entry := range entries {
+		if !isArtifactMetadataTemporaryFileName(entry.Name()) {
+			return fmt.Errorf("artifact GC operation has state but no readable plan")
+		}
+		temporaryCount++
+		if temporaryCount > maxUnpublishedGCMetadataTemporaryFiles {
+			return fmt.Errorf(
+				"unpublished artifact GC operation exceeds maximum temporary file count %d",
+				maxUnpublishedGCMetadataTemporaryFiles,
+			)
+		}
+		tempPath := filepath.Join(path, entry.Name())
+		info, err := os.Lstat(tempPath)
+		if err != nil {
+			return fmt.Errorf("inspect unpublished artifact GC temporary file: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() ||
+			info.Mode().Perm()&0o077 != 0 {
+			return fmt.Errorf(
+				"unpublished artifact GC temporary file is not private and regular: %s",
+				tempPath,
+			)
+		}
+		if info.Size() > maxGCPlanJSONBytes {
+			return fmt.Errorf(
+				"unpublished artifact GC temporary file %s exceeds %d bytes",
+				tempPath,
+				maxGCPlanJSONBytes,
+			)
+		}
+	}
+	if err := removePrivateTree(path); err != nil {
+		return fmt.Errorf("remove unpublished artifact GC operation: %w", err)
+	}
+	return nil
+}
+
+func isArtifactMetadataTemporaryFileName(name string) bool {
+	const (
+		prefix = ".artifact-metadata-"
+		suffix = ".tmp"
+	)
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	random := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if random == "" {
+		return false
+	}
+	for _, character := range random {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func removePrivateTree(path string) error {

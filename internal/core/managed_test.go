@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/model"
+	"github.com/r314tive/pgdrill/internal/recoveryproof"
 	"github.com/r314tive/pgdrill/internal/runspec"
 )
 
@@ -72,6 +74,10 @@ func TestManagedEngineRunsResolvedTargetChecksAndCleanup(t *testing.T) {
 	if checker.calls != 1 {
 		t.Fatalf("checker calls = %d, want 1", checker.calls)
 	}
+	if len(result.Checks) < 2 ||
+		result.Checks[len(result.Checks)-1].Attributes[model.ProbeNameAttribute] != "select_1" {
+		t.Fatalf("managed probe checks were not bound to their descriptor: %#v", result.Checks)
+	}
 	if !sink.called || sink.result.Status != model.DrillStatusPassed {
 		t.Fatalf("unexpected sink %#v", sink)
 	}
@@ -125,6 +131,55 @@ func TestManagedEnginePersistsDiscoveryFailure(t *testing.T) {
 	}
 }
 
+func TestManagedEngineReservesRecoveryProofAndProbeCapacityBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		report model.CheckReport
+		want   string
+	}{
+		{
+			name: "checks",
+			report: model.CheckReport{
+				Checks: repeatedPassedChecks(model.MaxChecksPerReport - 2),
+			},
+			want: "requires 3 checks",
+		},
+		{
+			name: "evidence",
+			report: model.CheckReport{
+				Evidence: repeatedEvidence(model.MaxEvidenceRecordsPerReport - 1),
+			},
+			want: "requires at least 2 evidence records",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := &fakeManagedTarget{}
+			resolver := &fakeManagedResolver{
+				resolution: managedResolution(target, &fakePostRestoreChecker{}),
+				report:     test.report,
+			}
+			result, err := (ManagedEngine{
+				Checkpoints: checkpoint.NewMemoryStore(),
+				Resolver:    resolver,
+				Clock:       fixedClock("2026-07-21T01:00:00Z"),
+			}).Run(context.Background(), managedRequest("managed-capacity-"+test.name))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Run() error = %v, want %q", err, test.want)
+			}
+			if result.Status != model.DrillStatusFailed ||
+				result.Failure == nil ||
+				result.Failure.Stage != model.DrillStageTargetDiscovery {
+				t.Fatalf("unexpected result %#v", result)
+			}
+			if len(target.calls) != 0 {
+				t.Fatalf("capacity failure mutated target: %#v", target.calls)
+			}
+		})
+	}
+}
+
 func TestManagedEngineRequiresImmutableDrillSpecBeforeResolution(t *testing.T) {
 	resolver := &fakeManagedResolver{resolution: managedResolution(&fakeManagedTarget{}, &fakePostRestoreChecker{})}
 	sink := &fakeSink{}
@@ -132,11 +187,32 @@ func TestManagedEngineRequiresImmutableDrillSpecBeforeResolution(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "drill spec is required") {
 		t.Fatalf("Run() error = %v, want missing spec error", err)
 	}
-	if result.Failure == nil || result.Failure.Stage != model.DrillStageRequestValidation || resolver.calls != 0 {
+	if !reflect.DeepEqual(result, model.DrillResult{}) || resolver.calls != 0 {
 		t.Fatalf("unexpected result=%#v resolver_calls=%d", result, resolver.calls)
 	}
-	if !sink.called {
-		t.Fatal("missing managed spec failure was not persisted")
+	if sink.called {
+		t.Fatal("invalid managed request must not enter the report lifecycle")
+	}
+}
+
+func TestManagedEngineRejectsFutureStartBeforeResolution(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	resolver := &fakeManagedResolver{
+		resolution: managedResolution(&fakeManagedTarget{}, &fakePostRestoreChecker{}),
+	}
+	request := managedRequest("managed-future-start")
+	request.StartedAt = now.Add(time.Nanosecond)
+
+	result, err := (ManagedEngine{
+		Checkpoints: checkpoint.NewMemoryStore(),
+		Resolver:    resolver,
+		Clock:       func() time.Time { return now },
+	}).Run(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "later than current time") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(result, model.DrillResult{}) || resolver.calls != 0 {
+		t.Fatalf("result=%#v resolver_calls=%d", result, resolver.calls)
 	}
 }
 
@@ -168,6 +244,100 @@ func TestManagedEngineRejectsAndSanitizesMalformedProvisionalBackup(t *testing.T
 	}
 }
 
+func TestValidateProvisionalManagedBackupContract(t *testing.T) {
+	valid := []model.Backup{
+		{},
+		{Kind: model.BackupKindFull, Status: model.BackupStatusAvailable},
+		{
+			ID:         "cnpg:backup-1",
+			ProviderID: "backup-1",
+			Kind:       model.BackupKindFull,
+			Status:     model.BackupStatusAvailable,
+		},
+		{
+			ID:         "wal-g:base_1",
+			Provider:   model.ProviderWALG,
+			ProviderID: "base_1",
+			Kind:       model.BackupKindFull,
+			Status:     model.BackupStatusAvailable,
+		},
+	}
+	for _, backup := range valid {
+		if err := validateProvisionalManagedBackup(backup); err != nil {
+			t.Fatalf("valid provisional backup rejected: %#v: %v", backup, err)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		backup model.Backup
+		want   string
+	}{
+		{
+			name:   "provider identity without id",
+			backup: model.Backup{Provider: model.ProviderWALG, ProviderID: "base_1"},
+			want:   "backup id is required",
+		},
+		{
+			name:   "unknown empty kind",
+			backup: model.Backup{Kind: model.BackupKind("snapshot")},
+			want:   "kind",
+		},
+		{
+			name:   "unknown empty status",
+			backup: model.Backup{Status: model.BackupStatus("corrupt")},
+			want:   "status",
+		},
+		{
+			name: "id whitespace",
+			backup: model.Backup{
+				ID: " cnpg:backup-1", ProviderID: "backup-1",
+				Kind: model.BackupKindFull, Status: model.BackupStatusAvailable,
+			},
+			want: "id must not contain",
+		},
+		{
+			name: "missing provider id",
+			backup: model.Backup{
+				ID: "cnpg:backup-1", Kind: model.BackupKindFull, Status: model.BackupStatusAvailable,
+			},
+			want: "provider_id is required",
+		},
+		{
+			name: "provider id whitespace",
+			backup: model.Backup{
+				ID: "cnpg:backup-1", ProviderID: " backup-1",
+				Kind: model.BackupKindFull, Status: model.BackupStatusAvailable,
+			},
+			want: "provider_id must not contain",
+		},
+		{
+			name: "unknown provider",
+			backup: model.Backup{
+				ID: "unknown:backup-1", Provider: model.ProviderType("unknown"), ProviderID: "backup-1",
+				Kind: model.BackupKindFull, Status: model.BackupStatusAvailable,
+			},
+			want: "provider",
+		},
+		{
+			name: "provider scoped mismatch",
+			backup: model.Backup{
+				ID: "wal-g:base_2", Provider: model.ProviderWALG, ProviderID: "base_1",
+				Kind: model.BackupKindFull, Status: model.BackupStatusAvailable,
+			},
+			want: "provider-scoped",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateProvisionalManagedBackup(test.backup); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validateProvisionalManagedBackup() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestManagedEngineDoesNotRepeatTargetFailureCleanup(t *testing.T) {
 	wantErr := errors.New("operator recovery failed")
 	target := &fakeManagedTarget{startErr: wantErr}
@@ -195,6 +365,48 @@ func TestManagedEngineCleansUpAfterCheckFailure(t *testing.T) {
 	}
 	if result.Failure == nil || result.Failure.Stage != model.DrillStageProbeExecution {
 		t.Fatalf("unexpected result %#v", result)
+	}
+	if got, want := target.calls, []string{"start", "destroy"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("target calls = %#v, want %#v", got, want)
+	}
+}
+
+func TestManagedEngineFailsClosedBeforeChecksWhenRecoveryTargetIsNotProven(t *testing.T) {
+	target := &fakeManagedTarget{}
+	checker := &fakePostRestoreChecker{}
+	verifier := &fakeRecoveryTargetVerifier{report: model.CheckReport{
+		Checks: []model.Check{{
+			Name:    recoveryproof.CheckName,
+			Status:  model.CheckStatusFailed,
+			Message: "latest recovery is still in progress",
+		}},
+	}}
+	resolution := managedResolution(target, checker)
+	resolution.RecoveryVerifier = verifier
+	resolver := &fakeManagedResolver{resolution: resolution}
+
+	result, err := ManagedEngine{
+		Checkpoints: checkpoint.NewMemoryStore(),
+		Resolver:    resolver,
+	}.Run(
+		context.Background(),
+		managedRequest("managed-recovery-proof-failure"),
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "recovery target proof check did not pass") {
+		t.Fatalf("Run() error = %v, want recovery target proof failure", err)
+	}
+	if result.Status != model.DrillStatusFailed ||
+		result.Failure == nil ||
+		result.Failure.Stage != model.DrillStageProbeExecution {
+		t.Fatalf("unexpected recovery proof failure result %#v", result)
+	}
+	if verifier.calls != 1 || checker.calls != 0 {
+		t.Fatalf(
+			"recovery proof/check calls = %d/%d, want 1/0",
+			verifier.calls,
+			checker.calls,
+		)
 	}
 	if got, want := target.calls, []string{"start", "destroy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("target calls = %#v, want %#v", got, want)
@@ -254,12 +466,26 @@ func TestManagedEngineValidatesResolutionBeforeMutation(t *testing.T) {
 	}{
 		{name: "target", resolution: ManagedResolution{Backup: managedBackup(), RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "target is required"},
 		{name: "checker", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Probes: managedProbeDescriptors()}, want: "checker is required"},
+		{name: "recovery verifier", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "recovery target verifier is required"},
 		{name: "backup", resolution: ManagedResolution{Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "backup id"},
 		{name: "status", resolution: ManagedResolution{Backup: func() model.Backup {
 			backup := managedBackup()
 			backup.Status = model.BackupStatusFailed
 			return backup
 		}(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "not available"},
+		{name: "backup timestamps", resolution: ManagedResolution{Backup: func() model.Backup {
+			backup := managedBackup()
+			now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+			backup.StartedAt = &now
+			finished := now.Add(-time.Second)
+			backup.FinishedAt = &finished
+			return backup
+		}(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "invalid recovery metadata"},
+		{name: "backup wal range", resolution: ManagedResolution{Backup: func() model.Backup {
+			backup := managedBackup()
+			backup.WALRange.StartLSN = "not-an-lsn"
+			return backup
+		}(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "invalid recovery metadata"},
 		{name: "recovery target", resolution: ManagedResolution{Backup: managedBackup(), Target: &fakeManagedTarget{}, RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetImmediate}, Checks: &fakePostRestoreChecker{}, Probes: managedProbeDescriptors()}, want: "does not match requested"},
 	}
 	for _, tt := range tests {
@@ -273,6 +499,43 @@ func TestManagedEngineValidatesResolutionBeforeMutation(t *testing.T) {
 				t.Fatalf("unexpected result %#v", result)
 			}
 		})
+	}
+}
+
+func TestManagedEngineRejectsAmbiguousProbeCheckAttribution(t *testing.T) {
+	request := managedRequest("managed-ambiguous-probe")
+	document := request.Spec.Document()
+	document.ProbeProfile.Probes = []model.ProbeDescriptor{
+		{Type: model.ProbeSQL, Name: "select_1"},
+		{Type: model.ProbeSQL, Name: "select_catalog"},
+	}
+	spec, err := runspec.New(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Spec = spec
+	checker := PostRestoreCheckerFunc(func(context.Context, model.RunningPostgres) (model.CheckReport, error) {
+		return model.CheckReport{Checks: []model.Check{{
+			Name:   "sql-result",
+			Probe:  model.ProbeSQL,
+			Status: model.CheckStatusPassed,
+		}}}, nil
+	})
+	resolution := managedResolution(&fakeManagedTarget{}, checker)
+	resolution.Probes = append([]model.ProbeDescriptor(nil), document.ProbeProfile.Probes...)
+
+	result, err := (ManagedEngine{
+		Checkpoints: checkpoint.NewMemoryStore(),
+		Resolver:    &fakeManagedResolver{resolution: resolution},
+		Clock:       fixedClock("2026-07-21T01:00:00Z"),
+	}).Run(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "cannot be attributed unambiguously") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Status != model.DrillStatusFailed ||
+		result.Failure == nil ||
+		result.Failure.Stage != model.DrillStageProbeExecution {
+		t.Fatalf("unexpected result %#v", result)
 	}
 }
 
@@ -347,7 +610,16 @@ func (c *fakePostRestoreChecker) Check(context.Context, model.RunningPostgres) (
 	if c.err != nil {
 		status = model.CheckStatusFailed
 	}
-	return model.CheckReport{Checks: []model.Check{{Name: "select_1", Probe: model.ProbeSQL, Status: status}}}, c.err
+	report := model.CheckReport{Checks: []model.Check{{
+		Name:   "select_1",
+		Probe:  model.ProbeSQL,
+		Status: status,
+	}}}
+	if status == model.CheckStatusPassed {
+		report.Checks[0].EvidenceIDs = []string{"probe:managed-select-1"}
+		report.Evidence = []model.EvidenceRecord{testEvidence("probe:managed-select-1")}
+	}
+	return report, c.err
 }
 
 func managedResolution(target ManagedRestoreTarget, checker PostRestoreChecker) ManagedResolution {
@@ -355,8 +627,12 @@ func managedResolution(target ManagedRestoreTarget, checker PostRestoreChecker) 
 		Backup:         managedBackup(),
 		Target:         target,
 		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
-		Checks:         checker,
-		Probes:         managedProbeDescriptors(),
+		RecoveryVerifier: &fakeRecoveryTargetVerifier{report: testRecoveryProof(
+			model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC),
+		)},
+		Checks: checker,
+		Probes: managedProbeDescriptors(),
 	}
 }
 
@@ -380,6 +656,25 @@ func managedArtifactRef(t *testing.T) model.ArtifactRef {
 
 func managedProbeDescriptors() []model.ProbeDescriptor {
 	return []model.ProbeDescriptor{{Type: model.ProbeSQL, Name: "select_1"}}
+}
+
+func repeatedPassedChecks(count int) []model.Check {
+	checks := make([]model.Check, count)
+	for index := range checks {
+		checks[index] = model.Check{
+			Name:   fmt.Sprintf("discovery-%d", index),
+			Status: model.CheckStatusPassed,
+		}
+	}
+	return checks
+}
+
+func repeatedEvidence(count int) []model.EvidenceRecord {
+	evidence := make([]model.EvidenceRecord, count)
+	for index := range evidence {
+		evidence[index] = testEvidence(fmt.Sprintf("discovery-%d", index))
+	}
+	return evidence
 }
 
 func managedRequest(id string) ManagedDrillRequest {

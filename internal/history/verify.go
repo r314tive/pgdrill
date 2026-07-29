@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -165,7 +166,10 @@ func validateRetentionOperationState(root, digest string, hasTrash bool) error {
 		}
 		return fmt.Errorf("inspect retention progress: %w", err)
 	}
-	entries, err := os.ReadDir(progressDir)
+	entries, err := durablefs.ReadDirBounded(
+		progressDir,
+		MaxTotalAttempts+MaxRuns,
+	)
 	if err != nil {
 		return fmt.Errorf("read retention progress: %w", err)
 	}
@@ -282,7 +286,7 @@ func validateCompletedRetentionOperation(root, digest string) (RetentionPlan, er
 		return RetentionPlan{}, fmt.Errorf("retention completion does not match confirmed plan")
 	}
 
-	entries, err := os.ReadDir(path)
+	entries, err := durablefs.ReadDirBounded(path, 3)
 	if err != nil {
 		return RetentionPlan{}, fmt.Errorf("read completed retention operation: %w", err)
 	}
@@ -308,7 +312,10 @@ func validateCompletedRetentionOperation(root, digest string) (RetentionPlan, er
 	if err := requireDirectory(progressDir); err != nil {
 		return RetentionPlan{}, fmt.Errorf("inspect completed retention progress: %w", err)
 	}
-	progressEntries, err := os.ReadDir(progressDir)
+	progressEntries, err := durablefs.ReadDirBounded(
+		progressDir,
+		MaxTotalAttempts+MaxRuns,
+	)
 	if err != nil {
 		return RetentionPlan{}, fmt.Errorf("read completed retention progress: %w", err)
 	}

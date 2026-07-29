@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"regexp"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -42,9 +42,8 @@ func New(document model.DrillSpec) (Spec, error) {
 	return spec, nil
 }
 
-// Snapshot captures invalid input as well as valid input. The engine uses this
-// only to persist request-validation failures with the canonical attempted
-// spec.
+// Snapshot captures invalid input as well as valid input for diagnostics and
+// tests. Execution entry points accept only a validated current-schema Spec.
 func Snapshot(document model.DrillSpec) (Spec, error) {
 	document = normalize(document)
 	canonical, err := json.Marshal(document)
@@ -60,18 +59,9 @@ func Snapshot(document model.DrillSpec) (Spec, error) {
 }
 
 func Parse(data []byte) (Spec, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	var document model.DrillSpec
-	if err := decoder.Decode(&document); err != nil {
+	if err := jsonutil.DecodeOneStrict(data, &document); err != nil {
 		return Spec{}, fmt.Errorf("parse drill spec: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return Spec{}, fmt.Errorf("parse drill spec: multiple JSON values")
-		}
-		return Spec{}, fmt.Errorf("parse drill spec trailing data: %w", err)
 	}
 	return New(document)
 }
@@ -261,6 +251,13 @@ func validateDocument(document model.DrillSpec) error {
 	}
 	if len(document.ProbeProfile.Probes) == 0 {
 		return fmt.Errorf("probe profile requires at least one probe")
+	}
+	maxProbeCount := model.MaxChecksPerReport - 1
+	if len(document.ProbeProfile.Probes) > maxProbeCount {
+		return fmt.Errorf(
+			"probe profile exceeds maximum probe count %d",
+			maxProbeCount,
+		)
 	}
 	seenNames := make(map[string]struct{}, len(document.ProbeProfile.Probes))
 	for i, probe := range document.ProbeProfile.Probes {

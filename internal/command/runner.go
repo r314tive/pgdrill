@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -18,10 +20,16 @@ import (
 
 const (
 	DefaultMaxOutputBytes   int64 = 64 << 20
-	DefaultMaxEvidenceBytes int64 = 1 << 20
+	DefaultMaxEvidenceBytes int64 = model.MaxCommandEvidenceBytes
 	DefaultWaitDelay              = 2 * time.Second
 )
 
+var errRedactedPrefixLimit = errors.New("redacted output prefix limit reached")
+
+// Runner implementations must apply Invocation.RedactValues to durable
+// Result.Evidence. Custom implementations can return
+// result.WithRedactValues(inv.RedactValues...) to satisfy that contract while
+// preserving Result.Raw for in-process parsing.
 type Runner interface {
 	Run(ctx context.Context, inv Invocation) (Result, error)
 }
@@ -54,6 +62,81 @@ type RawEvidence struct {
 type Result struct {
 	Raw      RawEvidence
 	Evidence model.CommandEvidence
+	redactor Redactor
+}
+
+func (r Result) RedactString(value string) string {
+	return durableRedactedString(value, r.redactor)
+}
+
+func (r Result) RedactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedError{message: r.RedactString(err.Error())}
+}
+
+// WithRedactValues applies the invocation redaction contract to durable
+// evidence and attaches it for subsequent parser-error redaction. Raw adapter
+// input remains unchanged. ExecRunner does this during result construction.
+func (r Result) WithRedactValues(values ...string) Result {
+	r.redactor = r.redactor.WithValues(values...)
+	r.Evidence = redactCommandEvidence(r.Evidence, r.redactor)
+	return r
+}
+
+func redactCommandEvidence(
+	evidence model.CommandEvidence,
+	redactor Redactor,
+) model.CommandEvidence {
+	evidence.Path = durableRedactedString(evidence.Path, redactor)
+	evidence.ResolvedPath = durableRedactedString(evidence.ResolvedPath, redactor)
+	evidence.Args = redactStrings(evidence.Args, redactor)
+	evidence.Env = redactEvidenceEnv(evidence.Env, redactor)
+	evidence.WorkDir = durableRedactedString(evidence.WorkDir, redactor)
+	evidence.ExitStatus.Error, _ = boundedDurableRedactedString(
+		evidence.ExitStatus.Error,
+		model.MaxCommandErrorBytes,
+		redactor,
+	)
+	var truncated bool
+	evidence.Stdout, truncated = evidenceOutput(
+		[]byte(evidence.Stdout),
+		evidence.StdoutTruncated,
+		model.MaxCommandEvidenceBytes,
+		redactor,
+	)
+	evidence.StdoutTruncated = truncated
+	evidence.Stderr, truncated = evidenceOutput(
+		[]byte(evidence.Stderr),
+		evidence.StderrTruncated,
+		model.MaxCommandEvidenceBytes,
+		redactor,
+	)
+	evidence.StderrTruncated = truncated
+	return evidence
+}
+
+func redactEvidenceEnv(
+	env map[string]string,
+	redactor Redactor,
+) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(env))
+	replacement := strings.ToValidUTF8(redactor.replacement(), "\uFFFD")
+	for key, value := range env {
+		if key != durableRedactedString(key, redactor) {
+			continue
+		}
+		if IsSensitiveEnvName(key) && value != "" {
+			result[key] = replacement
+			continue
+		}
+		result[key] = durableRedactedString(value, redactor)
+	}
+	return result
 }
 
 type Options struct {
@@ -74,24 +157,48 @@ type ExecRunner struct {
 
 func NewRunner(opts Options) *ExecRunner {
 	return &ExecRunner{
-		defaultTimeout:          opts.DefaultTimeout,
-		defaultMaxOutputBytes:   positiveOrDefault(opts.DefaultMaxOutputBytes, DefaultMaxOutputBytes),
-		defaultMaxEvidenceBytes: positiveOrDefault(opts.DefaultMaxEvidenceBytes, DefaultMaxEvidenceBytes),
-		waitDelay:               durationOrDefault(opts.WaitDelay, DefaultWaitDelay),
-		redactor:                opts.Redactor,
+		defaultTimeout: opts.DefaultTimeout,
+		defaultMaxOutputBytes: boundedPositiveOrDefault(
+			opts.DefaultMaxOutputBytes,
+			DefaultMaxOutputBytes,
+			DefaultMaxOutputBytes,
+		),
+		defaultMaxEvidenceBytes: boundedPositiveOrDefault(
+			opts.DefaultMaxEvidenceBytes,
+			DefaultMaxEvidenceBytes,
+			DefaultMaxEvidenceBytes,
+		),
+		waitDelay: durationOrDefault(opts.WaitDelay, DefaultWaitDelay),
+		redactor:  opts.Redactor,
 	}
 }
 
 func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
+	if ctx == nil {
+		return Result{}, fmt.Errorf("command context is required")
+	}
+	if r == nil {
+		return Result{}, fmt.Errorf("command runner is required")
+	}
+	if err := validateInvocationCardinality(inv); err != nil {
+		return Result{}, err
+	}
+	inheritedEnv := os.Environ()
+	redactor := r.effectiveRedactor(inv, inheritedEnv)
+	if err := validateInvocation(inv, redactor); err != nil {
+		return Result{}, err
+	}
 	timeout := inv.Timeout
 	if timeout == 0 {
 		timeout = r.defaultTimeout
 	}
 
-	runCtx := ctx
-	cancel := func() {}
+	var runCtx context.Context
+	var cancel context.CancelFunc
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		runCtx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
 
@@ -99,17 +206,32 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 	configureCommandProcessGroup(cmd)
 	cmd.WaitDelay = r.waitDelay
 	cmd.Dir = inv.WorkDir
-	if len(inv.Env) > 0 {
-		cmd.Env = mergeEnv(os.Environ(), inv.Env)
-	}
+	// Execute against the same inherited-environment snapshot used to derive
+	// redactions, so a concurrent environment change cannot bypass evidence
+	// sanitization.
+	cmd.Env = mergeEnv(inheritedEnv, inv.Env)
 	if inv.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(inv.Stdin)
 	}
 
-	maxOutputBytes := positiveOrDefault(inv.MaxOutputBytes, r.defaultMaxOutputBytes)
-	maxEvidenceBytes := positiveOrDefault(inv.MaxEvidenceBytes, r.defaultMaxEvidenceBytes)
-	stdout := newLimitedBuffer(maxOutputBytes)
-	stderr := newLimitedBuffer(maxOutputBytes)
+	maxOutputBytes := boundedPositiveOrDefault(
+		inv.MaxOutputBytes,
+		r.defaultMaxOutputBytes,
+		DefaultMaxOutputBytes,
+	)
+	maxEvidenceBytes := boundedPositiveOrDefault(
+		inv.MaxEvidenceBytes,
+		r.defaultMaxEvidenceBytes,
+		DefaultMaxEvidenceBytes,
+	)
+	var outputLimitExceeded atomic.Bool
+	var cancelForOutputLimit sync.Once
+	onOutputLimit := func() {
+		outputLimitExceeded.Store(true)
+		cancelForOutputLimit.Do(cancel)
+	}
+	stdout := newLimitedBuffer(maxOutputBytes, onOutputLimit)
+	stderr := newLimitedBuffer(maxOutputBytes, onOutputLimit)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -117,26 +239,31 @@ func (r *ExecRunner) Run(ctx context.Context, inv Invocation) (Result, error) {
 	err := cmd.Run()
 	finishedAt := time.Now().UTC()
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
-	canceled := errors.Is(runCtx.Err(), context.Canceled)
+	outputLimited := outputLimitExceeded.Load() && !timedOut && ctx.Err() == nil
+	canceled := errors.Is(runCtx.Err(), context.Canceled) && !outputLimited
 
 	status := exitStatus(cmd.ProcessState, err, timedOut, canceled)
-	result := buildResult(inv, cmd.Path, stdout, stderr, maxEvidenceBytes, status, startedAt, finishedAt, r.effectiveRedactor(inv))
-	if errors.Is(err, exec.ErrWaitDelay) {
+	result := buildResult(inv, cmd.Path, stdout, stderr, maxEvidenceBytes, status, startedAt, finishedAt, redactor)
+	if outputLimited {
 		terminateCommandProcessGroup(cmd)
-		return result, redactedError{message: result.Evidence.ExitStatus.Error, cause: err}
-	}
-	if cmd.ProcessState == nil && err != nil {
-		if runCtx.Err() != nil {
-			return result, runCtx.Err()
-		}
-		return result, redactedError{message: result.Evidence.ExitStatus.Error, cause: err}
-	}
-	if runCtx.Err() == nil && (stdout.Truncated() || stderr.Truncated()) {
 		return result, &OutputLimitError{
 			LimitBytes:  maxOutputBytes,
 			StdoutBytes: stdout.TotalBytes(),
 			StderrBytes: stderr.TotalBytes(),
 		}
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		terminateCommandProcessGroup(cmd)
+		return result, redactedError{
+			message: result.Evidence.ExitStatus.Error,
+			kind:    exec.ErrWaitDelay,
+		}
+	}
+	if cmd.ProcessState == nil && err != nil {
+		if runCtx.Err() != nil {
+			return result, runCtx.Err()
+		}
+		return result, redactedError{message: result.Evidence.ExitStatus.Error}
 	}
 	return result, nil
 }
@@ -153,25 +280,60 @@ func (e *OutputLimitError) Error() string {
 
 type redactedError struct {
 	message string
-	cause   error
+	kind    error
 }
 
 func (e redactedError) Error() string {
 	return e.message
 }
 
-func (e redactedError) Unwrap() error {
-	return e.cause
+func (e redactedError) Is(target error) bool {
+	return e.kind != nil && errors.Is(e.kind, target)
 }
 
-func (r *ExecRunner) effectiveRedactor(inv Invocation) Redactor {
-	redactor := r.redactor.WithValues(inv.RedactValues...)
-	for name, value := range inv.Env {
-		if IsSensitiveEnvName(name) {
-			redactor = redactor.WithValues(value)
+func (r *ExecRunner) effectiveRedactor(inv Invocation, inheritedEnv []string) Redactor {
+	if r.redactor.validationErr != nil {
+		return r.redactor
+	}
+	values := make([]string, 0, min(
+		maxRedactionValues,
+		len(r.redactor.values)+len(inv.RedactValues)+len(inv.Env),
+	))
+	overflow := false
+	appendValue := func(value string) {
+		if value == "" || overflow {
+			return
+		}
+		if len(values) == maxRedactionValues {
+			overflow = true
+			return
+		}
+		values = append(values, value)
+	}
+	for _, value := range r.redactor.values {
+		appendValue(value)
+	}
+	for _, value := range inv.RedactValues {
+		appendValue(value)
+	}
+	for _, entry := range inheritedEnv {
+		name, value, found := strings.Cut(entry, "=")
+		if found && IsSensitiveEnvName(name) {
+			appendValue(value)
 		}
 	}
-	return redactor
+	for name, value := range inv.Env {
+		if IsSensitiveEnvName(name) {
+			appendValue(value)
+		}
+	}
+	if overflow {
+		return invalidRedactor(
+			r.redactor.replacement(),
+			fmt.Errorf("values exceed maximum count %d", maxRedactionValues),
+		)
+	}
+	return compileRedactor(values, r.redactor.replacement())
 }
 
 func exitStatus(state *os.ProcessState, err error, timedOut, canceled bool) model.ExitStatus {
@@ -198,17 +360,21 @@ func buildResult(inv Invocation, resolvedPath string, stdout, stderr *limitedBuf
 	rawStdout := append([]byte{}, stdout.Bytes()...)
 	rawStderr := append([]byte{}, stderr.Bytes()...)
 	redactedStatus := status
-	redactedStatus.Error = redactor.RedactString(redactedStatus.Error)
+	redactedStatus.Error, _ = boundedDurableRedactedString(
+		redactedStatus.Error,
+		model.MaxCommandErrorBytes,
+		redactor,
+	)
 	redactedStdout, stdoutEvidenceTruncated := evidenceOutput(rawStdout, stdout.Truncated(), maxEvidenceBytes, redactor)
 	redactedStderr, stderrEvidenceTruncated := evidenceOutput(rawStderr, stderr.Truncated(), maxEvidenceBytes, redactor)
 
 	duration := finishedAt.Sub(startedAt)
 	evidence := model.CommandEvidence{
-		Path:            redactor.RedactString(inv.Path),
-		ResolvedPath:    redactor.RedactString(resolvedPath),
+		Path:            durableRedactedString(inv.Path, redactor),
+		ResolvedPath:    durableRedactedString(resolvedPath, redactor),
 		Args:            redactStrings(args, redactor),
 		Env:             redactEnv(env, redactor),
-		WorkDir:         redactor.RedactString(inv.WorkDir),
+		WorkDir:         durableRedactedString(inv.WorkDir, redactor),
 		StartedAt:       startedAt,
 		FinishedAt:      finishedAt,
 		DurationMillis:  duration.Milliseconds(),
@@ -235,19 +401,30 @@ func buildResult(inv Invocation, resolvedPath string, stdout, stderr *limitedBuf
 			StderrTruncated: stderr.Truncated(),
 		},
 		Evidence: evidence,
+		redactor: redactor,
 	}
 }
 
 func evidenceOutput(raw []byte, rawTruncated bool, limit int64, redactor Redactor) (string, bool) {
-	redacted := redactor.RedactString(string(raw))
+	if limit <= 0 {
+		return "", rawTruncated || len(raw) > 0
+	}
+	captureLimit := limit + utf8.UTFMax
+	if captureLimit < limit {
+		captureLimit = limit
+	}
+	writer := newLimitedPrefixWriter(captureLimit)
+	value := string(raw)
+	if rawTruncated {
+		value = redactor.redactTruncatedSuffix(value)
+	}
+	redactionErr := redactor.writeString(writer, value)
+	redacted := strings.ToValidUTF8(string(writer.Bytes()), "\uFFFD")
 	if int64(len(redacted)) <= limit {
-		return redacted, rawTruncated
+		return redacted, rawTruncated || redactionErr != nil
 	}
-	end := int(limit)
-	for end > 0 && !utf8.ValidString(redacted[:end]) {
-		end--
-	}
-	return redacted[:end], true
+	end := validUTF8Prefix(redacted, int(limit))
+	return strings.Clone(redacted[:end]), true
 }
 
 func positiveOrDefault(value, fallback int64) int64 {
@@ -257,6 +434,14 @@ func positiveOrDefault(value, fallback int64) int64 {
 	return fallback
 }
 
+func boundedPositiveOrDefault(value, fallback, maximum int64) int64 {
+	value = positiveOrDefault(value, fallback)
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
+
 func durationOrDefault(value, fallback time.Duration) time.Duration {
 	if value > 0 {
 		return value
@@ -264,15 +449,199 @@ func durationOrDefault(value, fallback time.Duration) time.Duration {
 	return fallback
 }
 
+func validateInvocation(inv Invocation, redactor Redactor) error {
+	if err := redactor.validate(); err != nil {
+		return fmt.Errorf("command redactor: %w", err)
+	}
+	if inv.Timeout < 0 {
+		return fmt.Errorf("command timeout must not be negative")
+	}
+	if err := validateInvocationText(
+		"command path",
+		inv.Path,
+		model.MaxCommandPathBytes,
+		true,
+	); err != nil {
+		return err
+	}
+	if err := validateRedactedText(
+		"redacted command path",
+		inv.Path,
+		model.MaxCommandPathBytes,
+		redactor,
+	); err != nil {
+		return err
+	}
+	if err := validateInvocationText(
+		"command work directory",
+		inv.WorkDir,
+		model.MaxCommandPathBytes,
+		false,
+	); err != nil {
+		return err
+	}
+	if err := validateRedactedText(
+		"redacted command work directory",
+		inv.WorkDir,
+		model.MaxCommandPathBytes,
+		redactor,
+	); err != nil {
+		return err
+	}
+	for index, argument := range inv.Args {
+		if err := validateInvocationText(
+			fmt.Sprintf("command argument %d", index),
+			argument,
+			model.MaxCommandArgumentBytes,
+			false,
+		); err != nil {
+			return err
+		}
+		if err := validateRedactedText(
+			fmt.Sprintf("redacted command argument %d", index),
+			argument,
+			model.MaxCommandArgumentBytes,
+			redactor,
+		); err != nil {
+			return err
+		}
+	}
+	for name, value := range inv.Env {
+		if err := validateInvocationText(
+			"command environment name",
+			name,
+			model.MaxCommandEnvironmentNameBytes,
+			true,
+		); err != nil {
+			return err
+		}
+		if strings.Contains(name, "=") {
+			return fmt.Errorf("command environment name must not contain '='")
+		}
+		if redactor.RedactString(name) != name {
+			return fmt.Errorf(
+				"command environment name contains a configured redaction value",
+			)
+		}
+		if err := validateInvocationText(
+			fmt.Sprintf("command environment %q value", name),
+			value,
+			model.MaxCommandEnvironmentValueBytes,
+			false,
+		); err != nil {
+			return err
+		}
+		if err := validateRedactedText(
+			fmt.Sprintf("redacted command environment %q value", name),
+			value,
+			model.MaxCommandEnvironmentValueBytes,
+			redactor,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateInvocationCardinality(inv Invocation) error {
+	if len(inv.Args) > model.MaxCommandArguments {
+		return fmt.Errorf(
+			"command arguments exceed maximum count %d",
+			model.MaxCommandArguments,
+		)
+	}
+	if len(inv.Env) > model.MaxCommandEnvironmentEntries {
+		return fmt.Errorf(
+			"command environment exceeds maximum count %d",
+			model.MaxCommandEnvironmentEntries,
+		)
+	}
+	if len(inv.RedactValues) > maxRedactionValues {
+		return fmt.Errorf(
+			"command redaction values exceed maximum count %d",
+			maxRedactionValues,
+		)
+	}
+	return nil
+}
+
+func validateInvocationText(field, value string, maxBytes int, required bool) error {
+	if required && value == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%s must be valid UTF-8", field)
+	}
+	if strings.IndexByte(value, 0) >= 0 {
+		return fmt.Errorf("%s must not contain NUL", field)
+	}
+	return validateDurableText(field, value, maxBytes)
+}
+
+func validateDurableText(field, value string, maxBytes int) error {
+	if len(value) > maxBytes {
+		return fmt.Errorf("%s exceeds %d bytes", field, maxBytes)
+	}
+	return nil
+}
+
+func validateRedactedText(field, value string, maxBytes int, redactor Redactor) error {
+	_, truncated := boundedDurableRedactedString(value, maxBytes, redactor)
+	if truncated {
+		return fmt.Errorf("%s exceeds %d bytes", field, maxBytes)
+	}
+	return nil
+}
+
+func boundedDurableRedactedString(value string, maxBytes int, redactor Redactor) (string, bool) {
+	return evidenceOutput([]byte(value), false, int64(maxBytes), redactor)
+}
+
+func validUTF8Prefix(value string, limit int) int {
+	if limit > len(value) {
+		limit = len(value)
+	}
+	for limit > 0 && !utf8.ValidString(value[:limit]) {
+		limit--
+	}
+	return limit
+}
+
+type limitedPrefixWriter struct {
+	buffer bytes.Buffer
+	limit  int64
+}
+
+func newLimitedPrefixWriter(limit int64) *limitedPrefixWriter {
+	return &limitedPrefixWriter{limit: limit}
+}
+
+func (w *limitedPrefixWriter) Write(data []byte) (int, error) {
+	remaining := w.limit - int64(w.buffer.Len())
+	if int64(len(data)) <= remaining {
+		_, _ = w.buffer.Write(data)
+		return len(data), nil
+	}
+	if remaining > 0 {
+		_, _ = w.buffer.Write(data[:remaining])
+	}
+	return len(data), errRedactedPrefixLimit
+}
+
+func (w *limitedPrefixWriter) Bytes() []byte {
+	return w.buffer.Bytes()
+}
+
 type limitedBuffer struct {
 	buffer    bytes.Buffer
 	limit     int64
 	total     int64
 	truncated bool
+	onLimit   func()
 }
 
-func newLimitedBuffer(limit int64) *limitedBuffer {
-	return &limitedBuffer{limit: limit}
+func newLimitedBuffer(limit int64, onLimit func()) *limitedBuffer {
+	return &limitedBuffer{limit: limit, onLimit: onLimit}
 }
 
 func (b *limitedBuffer) Write(data []byte) (int, error) {
@@ -280,12 +649,18 @@ func (b *limitedBuffer) Write(data []byte) (int, error) {
 	remaining := b.limit - int64(b.buffer.Len())
 	if remaining <= 0 {
 		b.truncated = b.truncated || len(data) > 0
+		if len(data) > 0 && b.onLimit != nil {
+			b.onLimit()
+		}
 		return len(data), nil
 	}
 	writeBytes := int64(len(data))
 	if writeBytes > remaining {
 		writeBytes = remaining
 		b.truncated = true
+		if b.onLimit != nil {
+			b.onLimit()
+		}
 	}
 	_, _ = b.buffer.Write(data[:writeBytes])
 	return len(data), nil
@@ -347,7 +722,7 @@ func redactStrings(values []string, redactor Redactor) []string {
 	}
 	result := make([]string, len(values))
 	for i, value := range values {
-		result[i] = redactor.RedactString(value)
+		result[i] = durableRedactedString(value, redactor)
 	}
 	return result
 }
@@ -357,16 +732,17 @@ func redactEnv(env map[string]string, redactor Redactor) map[string]string {
 		return nil
 	}
 	result := make(map[string]string, len(env))
-	replacement := redactor.Replacement
-	if replacement == "" {
-		replacement = defaultReplacement
-	}
+	replacement := redactor.replacement()
 	for key, value := range env {
 		if IsSensitiveEnvName(key) && value != "" {
-			result[key] = replacement
+			result[key] = strings.ToValidUTF8(replacement, "\uFFFD")
 			continue
 		}
-		result[key] = redactor.RedactString(value)
+		result[key] = durableRedactedString(value, redactor)
 	}
 	return result
+}
+
+func durableRedactedString(value string, redactor Redactor) string {
+	return strings.ToValidUTF8(redactor.RedactString(value), "\uFFFD")
 }

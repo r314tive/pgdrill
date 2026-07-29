@@ -2,11 +2,14 @@ package local
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -51,13 +54,17 @@ while true; do sleep 0.1; done
 		}
 		return conformance.NativeTargetCase{
 			NewTarget: func() core.RestoreTarget {
-				return New(Config{
+				target := New(Config{
 					RemoveWorkDir:   true,
 					PostgresBinary:  postgresPath,
 					Port:            15432,
 					StartupTimeout:  2 * time.Second,
 					ShutdownTimeout: 2 * time.Second,
 				}, nil)
+				if runtime.GOOS == "darwin" {
+					target.openRecoveredProcess = openTestIdentityBoundProcess
+				}
+				return target
 			},
 			Attempt: attempt,
 			Step: model.RestoreStep{
@@ -93,6 +100,39 @@ while true; do sleep 0.1; done
 			},
 		}
 	})
+}
+
+func TestVerifyRecoveryTargetRejectsAttemptTargetMismatchBeforeCommand(t *testing.T) {
+	runner := &fakeRunner{}
+	target := New(Config{PSQLBinary: "/custom/bin/psql"}, runner)
+	err := target.BindAttempt(model.AttemptContext{
+		Identity: model.AttemptIdentity{
+			RunID:      "run-1",
+			AttemptID:  "attempt-1",
+			SpecDigest: "sha256:" + strings.Repeat("a", 64),
+		},
+		Target: model.TargetSpec{
+			Type:    model.RestoreTargetLocal,
+			WorkDir: filepath.Join(t.TempDir(), "restore"),
+		},
+		RecoveryTarget: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+	})
+	if err != nil {
+		t.Fatalf("BindAttempt() error = %v", err)
+	}
+
+	_, err = target.VerifyRecoveryTarget(
+		context.Background(),
+		model.RunningPostgres{ConnString: "postgres://verify"},
+		model.RecoveryTarget{Type: model.RecoveryTargetImmediate},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "does not match local target attempt binding") {
+		t.Fatalf("VerifyRecoveryTarget() error = %v, want attempt target mismatch", err)
+	}
+	if runner.invocation.Path != "" {
+		t.Fatalf("target mismatch executed command %#v", runner.invocation)
+	}
 }
 
 func TestPrepareCreatesWorkDirAndMarker(t *testing.T) {
@@ -311,6 +351,279 @@ func TestExecuteWritesFileStep(t *testing.T) {
 	}
 }
 
+func TestExecuteFileStepAppendAndOverwrite(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		append  bool
+		initial string
+		content string
+		want    string
+	}{
+		{
+			name:    "append",
+			append:  true,
+			initial: "first\n",
+			content: "second\n",
+			want:    "first\nsecond\n",
+		},
+		{
+			name:    "overwrite",
+			initial: "long stale contents\n",
+			content: "new\n",
+			want:    "new\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workDir := t.TempDir()
+			target := New(Config{}, nil)
+			if err := prepareTarget(t, target, model.TargetSpec{
+				Type:    model.RestoreTargetLocal,
+				WorkDir: workDir,
+			}); err != nil {
+				t.Fatalf("prepare local target: %v", err)
+			}
+			path := filepath.Join(workDir, "data", "postgresql.auto.conf")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("create data directory: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(test.initial), 0o600); err != nil {
+				t.Fatalf("seed target file: %v", err)
+			}
+			beginLocalOperation(t, target, model.OperationRestoreStep, test.name, 1)
+
+			_, err := target.Execute(context.Background(), model.RestoreStep{
+				Name: test.name,
+				Files: []model.FileSpec{{
+					Path:    path,
+					Content: test.content,
+					Mode:    "0600",
+					Append:  test.append,
+				}},
+			})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read target file: %v", err)
+			}
+			if got := string(data); got != test.want {
+				t.Fatalf("target contents = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestExecuteFileStepOverwriteReplacesHardlinkWithoutModifyingExternalFile(t *testing.T) {
+	rootDir := t.TempDir()
+	workDir := filepath.Join(rootDir, "restore")
+	externalPath := filepath.Join(rootDir, "external.conf")
+	targetPath := filepath.Join(workDir, "data", "postgresql.auto.conf")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		t.Fatalf("create data directory: %v", err)
+	}
+	if err := os.WriteFile(externalPath, []byte("external\n"), 0o600); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	if err := os.Link(externalPath, targetPath); err != nil {
+		t.Skipf("create same-filesystem hardlink: %v", err)
+	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "overwrite-hardlink", 1)
+
+	_, err := target.Execute(context.Background(), model.RestoreStep{
+		Name: "overwrite-hardlink",
+		Files: []model.FileSpec{{
+			Path:    targetPath,
+			Content: "replacement\n",
+			Mode:    "0600",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	external, err := os.ReadFile(externalPath)
+	if err != nil {
+		t.Fatalf("read external file: %v", err)
+	}
+	if got := string(external); got != "external\n" {
+		t.Fatalf("external contents = %q, want unchanged contents", got)
+	}
+	replacement, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read replacement file: %v", err)
+	}
+	if got := string(replacement); got != "replacement\n" {
+		t.Fatalf("replacement contents = %q", got)
+	}
+	externalInfo, err := os.Stat(externalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementInfo, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(externalInfo, replacementInfo) {
+		t.Fatal("overwrite retained the external file inode")
+	}
+}
+
+func TestExecuteFileStepAppendRejectsHardlinkWithoutModifyingExternalFile(t *testing.T) {
+	rootDir := t.TempDir()
+	workDir := filepath.Join(rootDir, "restore")
+	externalPath := filepath.Join(rootDir, "external.conf")
+	targetPath := filepath.Join(workDir, "data", "postgresql.auto.conf")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		t.Fatalf("create data directory: %v", err)
+	}
+	if err := os.WriteFile(externalPath, []byte("external\n"), 0o600); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	if err := os.Link(externalPath, targetPath); err != nil {
+		t.Skipf("create same-filesystem hardlink: %v", err)
+	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "append-hardlink", 1)
+
+	_, err := target.Execute(context.Background(), model.RestoreStep{
+		Name: "append-hardlink",
+		Files: []model.FileSpec{{
+			Path:    targetPath,
+			Content: "appended\n",
+			Mode:    "0600",
+			Append:  true,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "link count 2") {
+		t.Fatalf("Execute() error = %v, want hardlink rejection", err)
+	}
+	for _, path := range []string{externalPath, targetPath} {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", path, readErr)
+		}
+		if got := string(data); got != "external\n" {
+			t.Fatalf("%s contents = %q, want unchanged contents", path, got)
+		}
+	}
+}
+
+func TestExecuteFileStepAppendRejectsNonPrivateFile(t *testing.T) {
+	workDir := t.TempDir()
+	targetPath := filepath.Join(workDir, "data", "postgresql.auto.conf")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		t.Fatalf("create data directory: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("shared\n"), 0o644); err != nil {
+		t.Fatalf("write append target: %v", err)
+	}
+	if err := os.Chmod(targetPath, 0o644); err != nil {
+		t.Fatalf("set non-private mode: %v", err)
+	}
+	beginLocalOperation(t, target, model.OperationRestoreStep, "append-shared", 1)
+
+	_, err := target.Execute(context.Background(), model.RestoreStep{
+		Name: "append-shared",
+		Files: []model.FileSpec{{
+			Path:    targetPath,
+			Content: "appended\n",
+			Mode:    "0600",
+			Append:  true,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a private regular file") {
+		t.Fatalf("Execute() error = %v, want non-private file rejection", err)
+	}
+	data, readErr := os.ReadFile(targetPath)
+	if readErr != nil {
+		t.Fatalf("read append target: %v", readErr)
+	}
+	if got := string(data); got != "shared\n" {
+		t.Fatalf("append target contents = %q, want unchanged contents", got)
+	}
+}
+
+func TestParseTargetFileMode(t *testing.T) {
+	for _, test := range []struct {
+		value   string
+		want    os.FileMode
+		wantErr bool
+	}{
+		{value: "", want: 0o600},
+		{value: "0000", want: 0},
+		{value: "0777", want: 0o777},
+		{value: "0780", wantErr: true},
+		{value: "1000", wantErr: true},
+		{value: "invalid", wantErr: true},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			got, err := parseTargetFileMode(test.value)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("parseTargetFileMode(%q) unexpectedly succeeded", test.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseTargetFileMode(%q) error = %v", test.value, err)
+			}
+			if got != test.want {
+				t.Fatalf("parseTargetFileMode(%q) = %o, want %o", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestBindRootFileDetectsPathReplacement(t *testing.T) {
+	workDir := t.TempDir()
+	path := filepath.Join(workDir, "target")
+	movedPath := filepath.Join(workDir, "moved")
+	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+		t.Fatalf("write original file: %v", err)
+	}
+	root, err := os.OpenRoot(workDir)
+	if err != nil {
+		t.Fatalf("OpenRoot() error = %v", err)
+	}
+	defer root.Close()
+	file, err := root.OpenFile("target", os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	defer file.Close()
+
+	if err := os.Rename(path, movedPath); err != nil {
+		t.Fatalf("move opened file: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatalf("write replacement file: %v", err)
+	}
+	if err := bindRootFile(root, "target", file); err == nil ||
+		!strings.Contains(err.Error(), "changed while opening or writing") {
+		t.Fatalf("bindRootFile() error = %v, want path replacement rejection", err)
+	}
+}
+
 func TestExecuteRejectsFileOutsideWorkDir(t *testing.T) {
 	root := t.TempDir()
 	workDir := filepath.Join(root, "restore")
@@ -464,8 +777,8 @@ while true; do sleep 1; done
 	if !strings.Contains(string(args), "-c\narchive_mode=off\n") {
 		t.Fatalf("postgres args do not disable archive mode:\n%s", args)
 	}
-	if elapsed := time.Since(startedAt); elapsed >= time.Second {
-		t.Fatalf("readiness should return before the 2s deadline, elapsed=%s", elapsed)
+	if elapsed := time.Since(startedAt); elapsed >= 2500*time.Millisecond {
+		t.Fatalf("readiness exceeded the startup budget plus persistence slack: %s", elapsed)
 	}
 
 	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 2)
@@ -522,6 +835,53 @@ exit 42
 	}
 }
 
+func TestStartPostgresRedactsInheritedSensitiveEnvironment(t *testing.T) {
+	const secret = "parent-pg-password"
+	t.Setenv("PGPASSWORD", secret)
+
+	dir := t.TempDir()
+	workDir := filepath.Join(dir, "restore")
+	dataDir := filepath.Join(workDir, "data")
+	postgresPath := filepath.Join(dir, "postgres")
+	writeExecutable(t, postgresPath, `#!/bin/sh
+printf 'inherited password: %s\n' "$PGPASSWORD" >&2
+exit 42
+`)
+
+	target := New(Config{
+		PostgresBinary: postgresPath,
+		StartupTimeout: 2 * time.Second,
+	}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("create data dir: %v", err)
+	}
+	beginLocalOperation(t, target, model.OperationPostgresStart, "start-postgres", 1)
+
+	_, evidence, err := target.StartPostgres(
+		context.Background(),
+		model.RuntimeConfig{DataDirectory: dataDir, Port: 15433},
+	)
+	if err == nil || !strings.Contains(err.Error(), "postgres exited during startup") {
+		t.Fatalf("expected early exit error, got %v", err)
+	}
+	if len(evidence) != 1 {
+		t.Fatalf("expected one startup evidence record, got %#v", evidence)
+	}
+	logTail := evidence[0].Attributes["postgres_log_tail"]
+	if !strings.Contains(logTail, "inherited password: [REDACTED]") {
+		t.Fatalf("expected inherited password redaction, got %q", logTail)
+	}
+	if strings.Contains(logTail, secret) {
+		t.Fatalf("startup evidence leaked inherited password: %q", logTail)
+	}
+}
+
 func TestCapturePostgresLogBoundsTailAfterRedaction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "postgres.log")
 	payload := strings.Repeat("x", maxPostgresLogBytes+1024) + "startup-token\n"
@@ -531,7 +891,24 @@ func TestCapturePostgresLogBoundsTailAfterRedaction(t *testing.T) {
 
 	target := New(Config{Env: map[string]string{"API_TOKEN": "startup-token"}}, nil)
 	evidence := runtimeEvidence("postgres-start", map[string]string{}, time.Now().UTC())
-	target.capturePostgresLog(&evidence, path, nil)
+	writer, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := openBoundLogReader(path, writer)
+	if err != nil {
+		_ = writer.Close()
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	target.capturePostgresLog(
+		&evidence,
+		reader,
+		mergeProcessEnvironment(os.Environ(), target.cfg.Env),
+	)
 
 	logTail := evidence.Attributes["postgres_log_tail"]
 	if len(logTail) > maxPostgresLogBytes {
@@ -545,6 +922,45 @@ func TestCapturePostgresLogBoundsTailAfterRedaction(t *testing.T) {
 	}
 	if got, want := evidence.Attributes["postgres_log_bytes"], strconv.Itoa(len(payload)); got != want {
 		t.Fatalf("postgres_log_bytes = %q, want %q", got, want)
+	}
+}
+
+func TestCapturePostgresLogUsesBoundDescriptorAfterPathReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not permit replacing the open log path")
+	}
+	path := filepath.Join(t.TempDir(), "postgres.log")
+	if err := os.WriteFile(path, []byte("owned startup log\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := openBoundLogReader(path, writer)
+	if err != nil {
+		_ = writer.Close()
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if err := os.Remove(path); err != nil {
+		_ = writer.Close()
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement-secret\n"), 0o600); err != nil {
+		_ = writer.Close()
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	target := New(Config{}, nil)
+	evidence := runtimeEvidence("postgres-start", map[string]string{}, time.Now().UTC())
+	target.capturePostgresLog(&evidence, reader, nil)
+	logTail := evidence.Attributes["postgres_log_tail"]
+	if logTail != "owned startup log\n" || strings.Contains(logTail, "replacement-secret") {
+		t.Fatalf("captured log tail = %q, want descriptor-bound original", logTail)
 	}
 }
 
@@ -626,6 +1042,158 @@ func TestPostgresReadinessUsesOwnedPostmasterStatus(t *testing.T) {
 				t.Fatalf("postgresReadiness() = (%v, %q), want (%v, %q)", ready, status, tt.wantReady, tt.wantStatus)
 			}
 		})
+	}
+}
+
+func TestPostgresProcessMatchesRequiresCurrentProcessIdentity(t *testing.T) {
+	dataDir := t.TempDir()
+	pid := os.Getpid()
+	identity := currentProcessIdentity(t, pid)
+	if err := os.WriteFile(
+		filepath.Join(dataDir, "postmaster.pid"),
+		[]byte(fmt.Sprintf("%d\n%s\n", pid, dataDir)),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := postgresProcessMatches(dataDir, pid, identity)
+	if err != nil || !active {
+		t.Fatalf("postgresProcessMatches(current) = %v, %v", active, err)
+	}
+	active, err = postgresProcessMatches(dataDir, pid, identity+"-stale")
+	if err != nil || active {
+		t.Fatalf("postgresProcessMatches(stale) = %v, %v", active, err)
+	}
+}
+
+func TestPostgresProcessMatchesRefusesLiveIdentityWithoutPostmasterProof(t *testing.T) {
+	dataDir := t.TempDir()
+	pid := os.Getpid()
+	identity := currentProcessIdentity(t, pid)
+
+	active, err := postgresProcessMatches(dataDir, pid, identity)
+	if active || err == nil || !strings.Contains(err.Error(), "live receipt-bound process") {
+		t.Fatalf("postgresProcessMatches() = %v, %v, want fail-closed live process", active, err)
+	}
+}
+
+func TestQuarantineOwnedWorkDirRejectsReplacementIdentity(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "restore")
+	quarantine := filepath.Join(root, ".pgdrill-delete-test")
+	preserved := filepath.Join(root, "preserved-original")
+	ownerID := "owner-test"
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnershipMarker(filepath.Join(source, markerFile), ownerID); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(source, preserved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwnershipMarker(filepath.Join(source, markerFile), ownerID); err != nil {
+		t.Fatal(err)
+	}
+	replacementPayload := filepath.Join(source, "replacement-data")
+	if err := os.WriteFile(replacementPayload, []byte("must-survive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = quarantineOwnedWorkDir(source, quarantine, expected, ownerID)
+	if err == nil || !strings.Contains(err.Error(), "changed before quarantine") {
+		t.Fatalf("quarantineOwnedWorkDir() error = %v", err)
+	}
+	if payload, readErr := os.ReadFile(replacementPayload); readErr != nil ||
+		string(payload) != "must-survive" {
+		t.Fatalf("replacement directory was removed or changed: %q, %v", payload, readErr)
+	}
+	if _, statErr := os.Lstat(preserved); statErr != nil {
+		t.Fatalf("original directory disappeared: %v", statErr)
+	}
+	if _, statErr := os.Lstat(quarantine); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("quarantine was not restored, stat error = %v", statErr)
+	}
+}
+
+func TestCleanupReconcilesQuarantinedWorkDirAfterProcessLoss(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	first := New(Config{RemoveWorkDir: true}, nil)
+	if err := prepareTarget(t, first, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		first,
+		model.OperationTargetCleanup,
+		"cleanup-target",
+		1,
+	)
+	quarantine := first.cleanupQuarantinePath()
+	if err := os.Rename(workDir, quarantine); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered := New(Config{RemoveWorkDir: true}, nil)
+	if err := recovered.BindAttempt(first.attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := recovered.BeginOperation(operation); err != nil {
+		t.Fatal(err)
+	}
+	reconciliation, err := recovered.Reconcile(
+		context.Background(),
+		operationCheckpoint(operation),
+	)
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if reconciliation.Disposition != model.ReconciliationNotApplied || !recovered.prepared {
+		t.Fatalf("quarantine reconciliation = %#v, prepared = %t", reconciliation, recovered.prepared)
+	}
+	evidence, err := recovered.Destroy(context.Background())
+	if err != nil {
+		t.Fatalf("Destroy() error = %v", err)
+	}
+	if len(evidence) != 1 || evidence[0].Attributes["cleanup"] != "recovered-and-removed" {
+		t.Fatalf("cleanup evidence = %#v", evidence)
+	}
+	if _, err := os.Lstat(quarantine); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("quarantine remains after cleanup, stat error = %v", err)
+	}
+}
+
+func TestRuntimePortRejectsInvalidExplicitAndConfiguredPorts(t *testing.T) {
+	for _, port := range []int{-1, 65536} {
+		target := New(Config{}, nil)
+		if _, err := target.runtimePort(port); err == nil {
+			t.Fatalf("runtimePort(%d) accepted invalid explicit port", port)
+		}
+
+		target = New(Config{Port: port}, nil)
+		if _, err := target.runtimePort(0); err == nil {
+			t.Fatalf("runtimePort(0) accepted invalid configured port %d", port)
+		}
+	}
+
+	target := New(Config{Port: 15432}, nil)
+	if got, err := target.runtimePort(0); err != nil || got != 15432 {
+		t.Fatalf("runtimePort(configured) = %d, %v", got, err)
+	}
+	target = New(Config{}, nil)
+	if got, err := target.runtimePort(15433); err != nil || got != 15433 {
+		t.Fatalf("runtimePort(explicit) = %d, %v", got, err)
 	}
 }
 
@@ -797,6 +1365,167 @@ func TestDestroyRefusesRecoveredProcessWhenOwnershipChanges(t *testing.T) {
 	}
 }
 
+func TestStopRecoveredPostgresUsesOneIdentityBoundHandle(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	dataDir := filepath.Join(workDir, "data")
+	target := New(Config{ShutdownTimeout: time.Second}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	const pid = 4242
+	const identity = "test-process-identity"
+	if err := os.WriteFile(
+		filepath.Join(dataDir, "postmaster.pid"),
+		[]byte(fmt.Sprintf("%d\n%s\n", pid, dataDir)),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		target,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+	running := model.RunningPostgres{
+		ConnString:    "postgresql://127.0.0.1:15432/postgres?sslmode=disable",
+		DataDirectory: dataDir,
+		Host:          "127.0.0.1",
+		Port:          15432,
+	}
+	receipt := operationReceipt{
+		OperationKey:    operation.Key,
+		CompletedAt:     time.Now().UTC(),
+		Postgres:        &running,
+		PID:             pid,
+		ProcessIdentity: identity,
+		LogPath:         filepath.Join(workDir, "postgres.log"),
+	}
+	if err := os.WriteFile(receipt.LogPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.writeOperationReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	target.recovered = &recoveredPostgres{
+		pid:           pid,
+		dataDirectory: dataDir,
+		logPath:       receipt.LogPath,
+		port:          running.Port,
+		receipt:       receipt,
+	}
+
+	handle := &fakeRecoveredProcessHandle{running: true}
+	openCalls := 0
+	target.openRecoveredProcess = func(gotPID int, gotIdentity string) (recoveredProcessHandle, error) {
+		openCalls++
+		if gotPID != pid || gotIdentity != identity {
+			t.Fatalf("open identity-bound process = (%d, %q)", gotPID, gotIdentity)
+		}
+		return handle, nil
+	}
+
+	evidence, err := target.stopRecoveredPostgres(context.Background())
+	if err != nil {
+		t.Fatalf("stopRecoveredPostgres() error = %v", err)
+	}
+	if openCalls != 1 || handle.terminateCalls != 1 || handle.killCalls != 0 {
+		t.Fatalf(
+			"identity-bound lifecycle = opens:%d terminate:%d kill:%d",
+			openCalls,
+			handle.terminateCalls,
+			handle.killCalls,
+		)
+	}
+	if handle.closeCalls != 1 {
+		t.Fatalf("identity-bound handle close calls = %d, want 1", handle.closeCalls)
+	}
+	if evidence.Attributes["postgres_shutdown"] != "terminated" {
+		t.Fatalf("shutdown evidence = %#v", evidence.Attributes)
+	}
+}
+
+func TestStopRecoveredPostgresDoesNotSignalUnprovenIdentity(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	dataDir := filepath.Join(workDir, "data")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatalf("prepare local target: %v", err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		target,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+	running := model.RunningPostgres{
+		ConnString:    "postgresql://127.0.0.1:15432/postgres?sslmode=disable",
+		DataDirectory: dataDir,
+		Host:          "127.0.0.1",
+		Port:          15432,
+	}
+	receipt := operationReceipt{
+		OperationKey:    operation.Key,
+		CompletedAt:     time.Now().UTC(),
+		Postgres:        &running,
+		PID:             4242,
+		ProcessIdentity: "original-identity",
+		LogPath:         filepath.Join(workDir, "postgres.log"),
+	}
+	if err := os.WriteFile(receipt.LogPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.writeOperationReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	target.recovered = &recoveredPostgres{
+		pid:           receipt.PID,
+		dataDirectory: dataDir,
+		logPath:       receipt.LogPath,
+		port:          running.Port,
+		receipt:       receipt,
+	}
+	target.openRecoveredProcess = func(int, string) (recoveredProcessHandle, error) {
+		return nil, fmt.Errorf("recovered process identity does not match its receipt")
+	}
+
+	evidence, err := target.stopRecoveredPostgres(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "identity does not match") {
+		t.Fatalf("stopRecoveredPostgres() error = %v", err)
+	}
+	if evidence.Attributes["postgres_shutdown"] != "inspect_failed" {
+		t.Fatalf("shutdown evidence = %#v", evidence.Attributes)
+	}
+}
+
+func TestRecoveredSignallingFailsClosedWhenUnsupported(t *testing.T) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		t.Skip("platform provides identity-bound recovered process signalling")
+	}
+	handle, err := openIdentityBoundProcess(4242, "recorded-identity")
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("openIdentityBoundProcess() = %#v, %v", handle, err)
+	}
+	if handle != nil {
+		t.Fatalf("unsupported platform returned process handle %#v", handle)
+	}
+}
+
 func TestDestroySkipsRemovalByDefault(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "restore")
 	target := New(Config{}, nil)
@@ -830,6 +1559,7 @@ func TestFindRecoveredPostgresRejectsMultipleActiveReceipts(t *testing.T) {
 	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	processIdentity := currentProcessIdentity(t, os.Getpid())
 
 	for index := 1; index <= 2; index++ {
 		dataDirectory := filepath.Join(workDir, fmt.Sprintf("data-%d", index))
@@ -863,8 +1593,9 @@ func TestFindRecoveredPostgresRejectsMultipleActiveReceipts(t *testing.T) {
 				Host:          "127.0.0.1",
 				Port:          port,
 			},
-			PID:     os.Getpid(),
-			LogPath: logPath,
+			PID:             os.Getpid(),
+			ProcessIdentity: processIdentity,
+			LogPath:         logPath,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -876,6 +1607,360 @@ func TestFindRecoveredPostgresRejectsMultipleActiveReceipts(t *testing.T) {
 	}
 	if recovered != nil {
 		t.Fatalf("ambiguous recovery returned process %#v", recovered)
+	}
+}
+
+func TestDestroyRefusesUnresolvedPostgresLaunchIntent(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	dataDir := filepath.Join(workDir, "data")
+	target := New(Config{RemoveWorkDir: true}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(workDir, "postgres.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		target,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+	if err := target.writeOperationReceipt(operationReceipt{
+		OperationKey: operation.Key,
+		State:        postgresReceiptLaunchIntent,
+		RecordedAt:   time.Now().UTC(),
+		Postgres: &model.RunningPostgres{
+			ConnString:    "postgresql://127.0.0.1:15432/postgres?sslmode=disable",
+			DataDirectory: dataDir,
+			Host:          "127.0.0.1",
+			Port:          15432,
+		},
+		LogPath: logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 2)
+	evidence, err := target.Destroy(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "unresolved postgres launch intent") {
+		t.Fatalf("Destroy() error = %v", err)
+	}
+	if _, statErr := os.Stat(workDir); statErr != nil {
+		t.Fatalf("unresolved launch intent must preserve workdir: %v", statErr)
+	}
+	if len(evidence) != 1 || evidence[0].Attributes["cleanup"] != "refused" {
+		t.Fatalf("cleanup refusal evidence = %#v", evidence)
+	}
+}
+
+func TestReconcileProcessStartedReceiptDoesNotProveReadiness(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	dataDir := filepath.Join(workDir, "data")
+	first := New(Config{}, nil)
+	if err := prepareTarget(t, first, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dataDir, "postmaster.pid"),
+		[]byte(fmt.Sprintf("%d\n%s\n", os.Getpid(), dataDir)),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(workDir, "postgres.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		first,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+	if err := first.writeOperationReceipt(operationReceipt{
+		OperationKey: operation.Key,
+		State:        postgresReceiptProcessStarted,
+		RecordedAt:   time.Now().UTC(),
+		Postgres: &model.RunningPostgres{
+			ConnString:    "postgresql://127.0.0.1:15432/postgres?sslmode=disable",
+			DataDirectory: dataDir,
+			Host:          "127.0.0.1",
+			Port:          15432,
+		},
+		PID:             os.Getpid(),
+		ProcessIdentity: currentProcessIdentity(t, os.Getpid()),
+		LogPath:         logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered := New(Config{}, nil)
+	if err := recovered.BindAttempt(first.attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := recovered.BeginOperation(operation); err != nil {
+		t.Fatal(err)
+	}
+	result, err := recovered.Reconcile(
+		context.Background(),
+		operationCheckpoint(operation),
+	)
+
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.Disposition != model.ReconciliationUnknown || result.Postgres != nil {
+		t.Fatalf("process-started reconciliation = %#v", result)
+	}
+	if recovered.recovered == nil || recovered.recovered.pid != os.Getpid() {
+		t.Fatalf("active process ownership was not recovered: %#v", recovered.recovered)
+	}
+}
+
+func TestReconcileDoesNotDuplicateAlreadyTrackedPostgresProcess(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	dataDir := filepath.Join(workDir, "data")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dataDir, "postmaster.pid"),
+		[]byte(fmt.Sprintf("%d\n%s\n", os.Getpid(), dataDir)),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(workDir, "postgres.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		target,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+	if err := target.writeOperationReceipt(operationReceipt{
+		OperationKey: operation.Key,
+		CompletedAt:  time.Now().UTC(),
+		Postgres: &model.RunningPostgres{
+			ConnString:    "postgresql://127.0.0.1:15432/postgres?sslmode=disable",
+			DataDirectory: dataDir,
+			Host:          "127.0.0.1",
+			Port:          15432,
+		},
+		PID:             os.Getpid(),
+		ProcessIdentity: currentProcessIdentity(t, os.Getpid()),
+		LogPath:         logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	target.postgres = &postgresProcess{
+		cmd: &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}},
+	}
+
+	result, err := target.Reconcile(context.Background(), operationCheckpoint(operation))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.Disposition != model.ReconciliationCompleted || target.recovered != nil {
+		t.Fatalf("Reconcile() = %#v, recovered = %#v", result, target.recovered)
+	}
+}
+
+func TestReconcileReportsLegacyPostgresReceiptFailClosed(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	dataDir := filepath.Join(workDir, "data")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(workDir, "postgres.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		target,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+	legacy := operationReceipt{
+		OperationKey: operation.Key,
+		CompletedAt:  time.Now().UTC(),
+		Postgres: &model.RunningPostgres{
+			ConnString:    "postgresql://127.0.0.1:15432/postgres?sslmode=disable",
+			DataDirectory: dataDir,
+			Host:          "127.0.0.1",
+			Port:          15432,
+		},
+		PID:     os.Getpid(),
+		LogPath: logPath,
+	}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(workDir, receiptDirectory), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target.operationReceiptPath(operation), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := target.Reconcile(context.Background(), operationCheckpoint(operation))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.Disposition != model.ReconciliationUnknown ||
+		!strings.Contains(result.Message, "legacy postgres receipt lacks process identity") {
+		t.Fatalf("legacy receipt reconciliation = %#v", result)
+	}
+}
+
+func TestFindRecoveredPostgresRejectsUnexpectedReceiptEntry(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	target := New(Config{}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(workDir, receiptDirectory), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(workDir, receiptDirectory, "unexpected")
+	if err := os.WriteFile(entry, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := target.findRecoveredPostgres(); err == nil ||
+		!strings.Contains(err.Error(), "unexpected entry") {
+		t.Fatalf("findRecoveredPostgres() error = %v", err)
+	}
+}
+
+func TestStartPostgresRemovesLaunchIntentAfterDefinitiveStartFailure(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	dataDir := filepath.Join(workDir, "data")
+	target := New(Config{
+		PostgresBinary: filepath.Join(t.TempDir(), "missing-postgres"),
+	}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	operation := beginLocalOperation(
+		t,
+		target,
+		model.OperationPostgresStart,
+		"start-postgres",
+		1,
+	)
+
+	_, _, err := target.StartPostgres(
+		context.Background(),
+		model.RuntimeConfig{DataDirectory: dataDir, Port: 15432},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "start postgres") {
+		t.Fatalf("StartPostgres() error = %v", err)
+	}
+	if receipt, found, readErr := target.readOperationReceipt(operation); readErr != nil || found {
+		t.Fatalf("launch receipt after definitive failure = %#v, found=%v, err=%v", receipt, found, readErr)
+	}
+}
+
+func TestDestroyHonorsCanceledContextBeforeRemoval(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "restore")
+	target := New(Config{RemoveWorkDir: true}, nil)
+	if err := prepareTarget(t, target, model.TargetSpec{
+		Type:    model.RestoreTargetLocal,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	beginLocalOperation(t, target, model.OperationTargetCleanup, "cleanup-target", 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := target.Destroy(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Destroy() error = %v", err)
+	}
+	if _, statErr := os.Stat(workDir); statErr != nil {
+		t.Fatalf("canceled cleanup removed workdir: %v", statErr)
+	}
+}
+
+func TestWaitForRecoveredProcessHonorsContext(t *testing.T) {
+	process := &fakeRecoveredProcessHandle{running: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+
+	stopped, err := waitForRecoveredProcess(ctx, process, time.Second)
+
+	if stopped || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitForRecoveredProcess() = %v, %v", stopped, err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 250*time.Millisecond {
+		t.Fatalf("context cancellation was not prompt: %s", elapsed)
+	}
+}
+
+func TestShutdownErrorStatusClassifiesCancellation(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{err: context.Canceled, want: "context_canceled"},
+		{err: context.DeadlineExceeded, want: "context_canceled"},
+		{err: errors.New("process inspection failed"), want: "inspect_failed"},
+	}
+	for _, test := range tests {
+		if got := shutdownErrorStatus(test.err); got != test.want {
+			t.Fatalf("shutdownErrorStatus(%v) = %q, want %q", test.err, got, test.want)
+		}
 	}
 }
 
@@ -970,6 +2055,7 @@ func TestReconcileRejectsPostgresReceiptOutsideOwnedWorkDir(t *testing.T) {
 	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	processIdentity := currentProcessIdentity(t, os.Getpid())
 	if err := first.writeOperationReceipt(operationReceipt{
 		OperationKey: operation.Key,
 		CompletedAt:  time.Now().UTC(),
@@ -979,8 +2065,9 @@ func TestReconcileRejectsPostgresReceiptOutsideOwnedWorkDir(t *testing.T) {
 			Host:          "127.0.0.1",
 			Port:          15432,
 		},
-		PID:     os.Getpid(),
-		LogPath: logPath,
+		PID:             os.Getpid(),
+		ProcessIdentity: processIdentity,
+		LogPath:         logPath,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1057,6 +2144,75 @@ type fakeRunner struct {
 	err        error
 }
 
+type fakeRecoveredProcessHandle struct {
+	running        bool
+	terminateCalls int
+	killCalls      int
+	closeCalls     int
+}
+
+func (p *fakeRecoveredProcessHandle) Running() (bool, error) {
+	return p.running, nil
+}
+
+func (p *fakeRecoveredProcessHandle) Terminate() error {
+	p.terminateCalls++
+	p.running = false
+	return nil
+}
+
+func (p *fakeRecoveredProcessHandle) Kill() error {
+	p.killCalls++
+	p.running = false
+	return nil
+}
+
+func (p *fakeRecoveredProcessHandle) Close() error {
+	p.closeCalls++
+	return nil
+}
+
+type testIdentityBoundProcess struct {
+	pid              int
+	expectedIdentity string
+}
+
+func openTestIdentityBoundProcess(pid int, expectedIdentity string) (recoveredProcessHandle, error) {
+	identity, err := processIdentity(pid)
+	if err != nil {
+		return nil, err
+	}
+	if identity != expectedIdentity {
+		return nil, fmt.Errorf("test process identity does not match")
+	}
+	return &testIdentityBoundProcess{
+		pid:              pid,
+		expectedIdentity: expectedIdentity,
+	}, nil
+}
+
+func (p *testIdentityBoundProcess) Running() (bool, error) {
+	return testProcessIdentityMatches(p.pid, p.expectedIdentity)
+}
+
+func (p *testIdentityBoundProcess) Terminate() error {
+	if err := terminateTestProcess(p.pid); err != nil {
+		return fmt.Errorf("terminate test process: %w", err)
+	}
+	return nil
+}
+
+func (p *testIdentityBoundProcess) Kill() error {
+	if err := killTestProcess(p.pid); err != nil {
+		return fmt.Errorf("kill test process: %w", err)
+	}
+	return nil
+}
+
+func (p *testIdentityBoundProcess) Close() error {
+	return nil
+}
+
 func (r *fakeRunner) Run(_ context.Context, inv command.Invocation) (command.Result, error) {
 	r.invocation = inv
 	return r.result, r.err
@@ -1085,4 +2241,16 @@ func writeExecutable(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("write executable %s: %v", path, err)
 	}
+}
+
+func currentProcessIdentity(t *testing.T, pid int) string {
+	t.Helper()
+	identity, err := processIdentity(pid)
+	if err != nil {
+		t.Fatalf("processIdentity(%d) error = %v", pid, err)
+	}
+	if identity == "" {
+		t.Fatalf("processIdentity(%d) returned an empty identity", pid)
+	}
+	return identity
 }

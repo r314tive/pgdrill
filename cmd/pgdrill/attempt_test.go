@@ -152,6 +152,20 @@ report:
 		len(plan.Checkpoints) != 2 {
 		t.Fatalf("unexpected plan %#v", plan)
 	}
+	var text bytes.Buffer
+	if err := writeAttemptRecoveryPlanText(&text, plan); err != nil {
+		t.Fatalf("format recovery plan: %v", err)
+	}
+	for _, want := range []string{
+		"plan only",
+		"Intent:",
+		plan.CleanupOperation.Key,
+		plan.Digest,
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("attempt recovery plan text missing %q:\n%s", want, text.String())
+		}
+	}
 	if _, err := os.Lstat(workDir); err != nil {
 		t.Fatalf("plan mutated target: %v", err)
 	}
@@ -207,6 +221,19 @@ report:
 		len(result.UnresolvedOperations) != 1 {
 		t.Fatalf("unexpected result %#v", result)
 	}
+	text.Reset()
+	if err := writeAttemptRecoveryResultText(&text, result); err != nil {
+		t.Fatalf("format recovery result: %v", err)
+	}
+	for _, want := range []string{
+		"Target ready for retry:",
+		"UNRESOLVED OPERATIONS",
+		restore.Name,
+	} {
+		if !strings.Contains(strings.ToUpper(text.String()), strings.ToUpper(want)) {
+			t.Fatalf("attempt recovery result text missing %q:\n%s", want, text.String())
+		}
+	}
 	if _, err := os.Lstat(workDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("owned target remains after recovery, stat error = %v", err)
 	}
@@ -247,6 +274,16 @@ func TestAttemptRecoverRequiresExplicitHistoryStore(t *testing.T) {
 	}, &stdout, &stderr)
 	if code != 2 || !strings.Contains(stderr.String(), "explicit -history-store") {
 		t.Fatalf("code = %d, stderr = %s", code, stderr.String())
+	}
+}
+
+func TestAttemptHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"attempt", "help"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("attempt help code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "pgdrill attempt <command>") {
+		t.Fatalf("attempt help output = %q", stdout.String())
 	}
 }
 

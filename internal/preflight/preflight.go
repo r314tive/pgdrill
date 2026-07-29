@@ -2,13 +2,13 @@ package preflight
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -68,10 +68,25 @@ func (c Checker) Run(ctx context.Context, requirements []Requirement) (Result, e
 	if now == nil {
 		now = time.Now
 	}
+	startedAt := now().UTC()
+	if len(requirements) > model.MaxChecksPerReport {
+		result := Result{
+			SchemaVersion: CurrentSchemaVersion,
+			Status:        model.DrillStatusFailed,
+			StartedAt:     startedAt,
+			FinishedAt:    now().UTC(),
+			Checks:        []model.Check{},
+			Evidence:      []model.EvidenceRecord{},
+		}
+		return result, fmt.Errorf(
+			"preflight requirements exceed maximum count %d",
+			model.MaxChecksPerReport,
+		)
+	}
 	result := Result{
 		SchemaVersion: CurrentSchemaVersion,
 		Status:        model.DrillStatusPassed,
-		StartedAt:     now().UTC(),
+		StartedAt:     startedAt,
 		Checks:        make([]model.Check, 0, len(requirements)),
 		Evidence:      make([]model.EvidenceRecord, 0, len(requirements)),
 	}
@@ -196,7 +211,7 @@ func versionText(tool model.ToolType, stdout, stderr string) string {
 				GitVersion string `json:"gitVersion"`
 			} `json:"clientVersion"`
 		}
-		if json.Unmarshal([]byte(stdout), &output) == nil && output.ClientVersion.GitVersion != "" {
+		if jsonutil.DecodeOne([]byte(stdout), &output) == nil && output.ClientVersion.GitVersion != "" {
 			return output.ClientVersion.GitVersion
 		}
 	}

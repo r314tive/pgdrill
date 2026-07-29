@@ -9,6 +9,7 @@ import (
 const (
 	CurrentDrillSpecSchemaVersion = "pgdrill.drill-spec/v1"
 	LegacyDrillSpecSchemaVersion  = "pgdrill.drill-spec/v1alpha1"
+	ProbeNameAttribute            = "probe_name"
 )
 
 type DrillMode string

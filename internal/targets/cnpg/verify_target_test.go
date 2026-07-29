@@ -48,7 +48,7 @@ func TestTargetConformance(t *testing.T) {
 			},
 			Attempt: attempt,
 			AfterStart: func() {
-				client.ownedCluster = OwnedCluster{Found: true, Name: spec.Name}
+				client.ownedCluster = testOwnedCluster(t, spec)
 			},
 			AfterDestroy: func() {
 				client.ownedCluster = OwnedCluster{}
@@ -131,7 +131,7 @@ func TestVerifyTargetReconcilesOwnedReadyClusterAfterExecutorLoss(t *testing.T) 
 		ConnString: "host=/controller/run dbname=postgres user=postgres",
 	}}
 	target, start, _ := boundVerifyTarget(t, spec, client, LifecycleOptions{})
-	client.ownedCluster = OwnedCluster{Found: true, Name: target.Spec.Name}
+	client.ownedCluster = testOwnedCluster(t, target.Spec)
 
 	reconciliation, err := target.Reconcile(context.Background(), verifyCheckpoint(start))
 	if err != nil {
@@ -154,7 +154,7 @@ func TestVerifyTargetReconcilesOwnedReadyClusterAfterExecutorLoss(t *testing.T) 
 func TestVerifyTargetReconciliationDoesNotCreateMissingCluster(t *testing.T) {
 	spec := testVerifyClusterSpec(t)
 	client := &fakeLifecycleClient{}
-	target, start, cleanup := boundVerifyTarget(t, spec, client, LifecycleOptions{})
+	target, start, cleanup := boundVerifyTarget(t, spec, client, LifecycleOptions{CleanupPVC: true})
 
 	startResult, err := target.Reconcile(context.Background(), verifyCheckpoint(start))
 	if err != nil {
@@ -173,15 +173,68 @@ func TestVerifyTargetReconciliationDoesNotCreateMissingCluster(t *testing.T) {
 	if cleanupResult.Disposition != model.ReconciliationCompleted {
 		t.Fatalf("cleanup reconciliation = %#v", cleanupResult)
 	}
+	if !slices.Contains(client.calls, "find-owned-pvcs") {
+		t.Fatalf("cleanup completion did not observe owned PVCs: %v", client.calls)
+	}
 	if slices.Contains(client.calls, "create") {
 		t.Fatalf("reconciliation invoked create: %v", client.calls)
+	}
+}
+
+func TestVerifyTargetCleanupReconciliationRejectsPVCsRemainingAfterDeleteError(t *testing.T) {
+	wantErr := errors.New("PVC delete timed out")
+	spec := testVerifyClusterSpec(t)
+	client := &fakeLifecycleClient{
+		ownedPVCs:     OwnedPVCs{Items: []OwnedPVC{{Name: spec.Name + "-1"}}},
+		deletePVCsErr: wantErr,
+	}
+	target, _, cleanup := boundVerifyTarget(t, spec, client, LifecycleOptions{CleanupPVC: true})
+	target.controller.created = true
+	if err := target.BeginOperation(cleanup); err != nil {
+		t.Fatalf("BeginOperation(cleanup) error = %v", err)
+	}
+
+	_, err := target.Destroy(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Destroy() error = %v, want PVC delete error", err)
+	}
+	reconciliation, err := target.Reconcile(context.Background(), verifyCheckpoint(cleanup))
+	if err != nil {
+		t.Fatalf("Reconcile(cleanup) error = %v", err)
+	}
+	if reconciliation.Disposition != model.ReconciliationNotApplied {
+		t.Fatalf("cleanup reconciliation = %#v, want not applied", reconciliation)
+	}
+	if got, want := client.calls, []string{"find-owned", "find-owned-pvcs", "delete-cluster", "find-owned", "find-owned-pvcs", "delete-pvcs", "find-owned", "find-owned-pvcs"}; !slices.Equal(got, want) {
+		t.Fatalf("cleanup and reconciliation calls = %#v, want %#v", got, want)
+	}
+}
+
+func TestVerifyTargetCleanupReconciliationFailsClosedOnPVCObservationError(t *testing.T) {
+	wantErr := errors.New("PVC observation denied")
+	spec := testVerifyClusterSpec(t)
+	client := &fakeLifecycleClient{findPVCsErr: wantErr}
+	target, _, cleanup := boundVerifyTarget(t, spec, client, LifecycleOptions{CleanupPVC: true})
+	if err := target.BeginOperation(cleanup); err != nil {
+		t.Fatalf("BeginOperation(cleanup) error = %v", err)
+	}
+
+	reconciliation, err := target.Reconcile(context.Background(), verifyCheckpoint(cleanup))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Reconcile(cleanup) error = %v, want PVC observation error", err)
+	}
+	if reconciliation.Disposition == model.ReconciliationCompleted {
+		t.Fatalf("unknown PVC state must not complete reconciliation: %#v", reconciliation)
+	}
+	if got, want := client.calls, []string{"find-owned", "find-owned-pvcs"}; !slices.Equal(got, want) {
+		t.Fatalf("reconciliation calls = %#v, want %#v", got, want)
 	}
 }
 
 func TestVerifyTargetUnknownReconciliationRetainsManifestArtifact(t *testing.T) {
 	spec := testVerifyClusterSpec(t)
 	client := &fakeLifecycleClient{
-		ownedCluster: OwnedCluster{Found: true, Name: spec.Name},
+		ownedCluster: testOwnedCluster(t, spec),
 		waitErr:      errors.New("readiness observation timed out"),
 	}
 	target, start, _ := boundVerifyTarget(t, spec, client, LifecycleOptions{})

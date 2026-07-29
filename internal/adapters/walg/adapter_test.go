@@ -2,7 +2,9 @@ package walg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -125,6 +127,38 @@ func TestParseBackupListRejectsMalformedWALLocation(t *testing.T) {
 	}
 }
 
+func TestParseBackupListRejectsConflictingAliases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "backup name",
+			input: `[{"name":"base_a","backup_name":"base_b"}]`,
+			want:  "backup name aliases",
+		},
+		{
+			name:  "last modified",
+			input: `[{"name":"base_a","last_modified":"2026-07-01T00:00:00Z","modified":"2026-07-02T00:00:00Z"}]`,
+			want:  "last modified time aliases",
+		},
+		{
+			name:  "PostgreSQL version",
+			input: `[{"name":"base_a","pg_version":"16","postgres_version":"17"}]`,
+			want:  "PostgreSQL version aliases",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParseBackupList([]byte(test.input)); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ParseBackupList() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestAdapterDiscoverBackupsRunsWALGBackupList(t *testing.T) {
 	fixture := readFixture(t, "testdata/backup-list-detail.json")
 	runner := &fakeRunner{result: successResult(fixture)}
@@ -157,6 +191,52 @@ func TestAdapterDiscoverBackupsRunsWALGBackupList(t *testing.T) {
 	}
 	if runner.invocation.Timeout != 30*time.Second {
 		t.Fatalf("unexpected timeout %s", runner.invocation.Timeout)
+	}
+}
+
+func TestDiscoverRedactsMetadataWithoutBreakingWALGRestoreIdentity(t *testing.T) {
+	adapter := New(Config{RedactValues: []string{"true"}}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/backup-list-detail.json")),
+	})
+
+	catalog, err := adapter.DiscoverBackups(context.Background())
+	if err != nil {
+		t.Fatalf("discover backups: %v", err)
+	}
+	backup := catalog.Backups[0]
+	if backup.ProviderID == "" || backup.Metadata["has_user_data"] != "[REDACTED]" {
+		t.Fatalf("unexpected redacted backup %#v", backup)
+	}
+	plan, err := adapter.PlanRestore(
+		context.Background(),
+		backup,
+		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		model.TargetSpec{
+			Type:    model.RestoreTargetLocal,
+			WorkDir: filepath.Join(t.TempDir(), "restore"),
+		},
+	)
+	if err != nil {
+		t.Fatalf("plan discovered backup: %v", err)
+	}
+	if plan.BackupID != backup.ID {
+		t.Fatalf("restore plan identity drift: plan=%q backup=%q", plan.BackupID, backup.ID)
+	}
+}
+
+func TestDiscoverRejectsRedactionOfCanonicalWALGIdentityWithoutLeak(t *testing.T) {
+	const secret = "base_00000001000000000000007F_D_000000010000000000000080"
+	adapter := New(Config{RedactValues: []string{secret}}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/backup-list-detail.json")),
+	})
+
+	_, err := adapter.DiscoverBackups(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "canonical field") {
+		t.Fatalf("DiscoverBackups() error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("DiscoverBackups() leaked canonical identity: %v", err)
 	}
 }
 
@@ -296,6 +376,7 @@ func TestPlanRestoreBuildsBackupFetchStep(t *testing.T) {
 		"recovery_target_time = '2026-07-06 01:00:00+00:00'",
 		"recovery_target_timeline = 'latest'",
 		"recovery_target_inclusive = false",
+		"recovery_target_action = 'pause'",
 	} {
 		if !strings.Contains(autoConf.Content, expected) {
 			t.Fatalf("expected recovery config to contain %q, got:\n%s", expected, autoConf.Content)
@@ -322,6 +403,45 @@ func TestRecoveryConfigConvertsRFC3339TimestampForPostgreSQL(t *testing.T) {
 	}
 	if strings.Contains(config, "T17:44:07.531376+05:00") {
 		t.Fatalf("RFC3339 transport form leaked into PostgreSQL configuration:\n%s", config)
+	}
+	if !strings.Contains(config, "recovery_target_action = 'pause'") {
+		t.Fatalf("targeted recovery must pause at target attainment:\n%s", config)
+	}
+}
+
+func TestRecoveryConfigPausesEveryTargetedRecovery(t *testing.T) {
+	adapter := New(Config{}, nil)
+	targets := []model.RecoveryTarget{
+		{Type: model.RecoveryTargetImmediate},
+		{Type: model.RecoveryTargetTimestamp, Value: "2026-07-27T12:44:07Z"},
+		{Type: model.RecoveryTargetLSN, Value: "0/420000C0"},
+		{Type: model.RecoveryTargetXID, Value: "757"},
+		{Type: model.RecoveryTargetRestorePoint, Value: "before_upgrade"},
+	}
+
+	for _, target := range targets {
+		t.Run(string(target.Type), func(t *testing.T) {
+			config, err := adapter.recoveryConfig(target)
+			if err != nil {
+				t.Fatalf("recoveryConfig() error = %v", err)
+			}
+			if !strings.Contains(config, "recovery_target_action = 'pause'") ||
+				strings.Contains(config, "recovery_target_action = 'promote'") {
+				t.Fatalf("targeted recovery action is not fail-closed pause:\n%s", config)
+			}
+		})
+	}
+}
+
+func TestRecoveryConfigDoesNotSetTargetActionForLatestRecovery(t *testing.T) {
+	adapter := New(Config{}, nil)
+
+	config, err := adapter.recoveryConfig(model.RecoveryTarget{Type: model.RecoveryTargetLatest})
+	if err != nil {
+		t.Fatalf("recovery config: %v", err)
+	}
+	if strings.Contains(config, "recovery_target_action") {
+		t.Fatalf("latest recovery must not configure a target action:\n%s", config)
 	}
 }
 
@@ -458,6 +578,93 @@ func TestValidateCatalogReportsWALVerifyFailureStatus(t *testing.T) {
 	}
 }
 
+func TestValidateCatalogFailsClosedOnUnknownWALVerifyStatus(t *testing.T) {
+	for _, status := range []string{"BROKEN", ""} {
+		t.Run(status, func(t *testing.T) {
+			runner := &fakeRunner{result: successResult([]byte(
+				`{"integrity":{"status":"` + status + `","details":[]}}`,
+			))}
+			report, err := New(Config{
+				WALVerify: WALVerifyConfig{Enabled: true},
+			}, runner).ValidateCatalog(
+				context.Background(),
+				model.BackupCatalog{},
+				model.Backup{
+					ID:         "wal-g:base_1",
+					Provider:   model.ProviderWALG,
+					ProviderID: "base_1",
+				},
+				model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			)
+			if err != nil {
+				t.Fatalf("ValidateCatalog() error = %v", err)
+			}
+			if len(report.Checks) != 1 ||
+				report.Checks[0].Status != model.CheckStatusFailed ||
+				!strings.Contains(report.Checks[0].Message, "unknown status") {
+				t.Fatalf("unknown status was not failed closed: %#v", report.Checks)
+			}
+		})
+	}
+}
+
+func TestValidateCatalogBoundsWALVerifyOutputCardinality(t *testing.T) {
+	output := make(map[string]map[string]string, maxWALVerifyChecks+1)
+	for index := 0; index <= maxWALVerifyChecks; index++ {
+		output[fmt.Sprintf("check-%04d", index)] = map[string]string{"status": "OK"}
+	}
+	payload, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("marshal oversized wal-verify output: %v", err)
+	}
+
+	checks := walVerifyChecks(
+		payload,
+		[]string{"integrity"},
+		"evidence-1",
+		model.ExitStatus{Success: true},
+		nil,
+	)
+
+	if len(checks) != 1 ||
+		checks[0].Status != model.CheckStatusFailed ||
+		!strings.Contains(checks[0].Message, "exceed maximum count") {
+		t.Fatalf("oversized wal-verify output was not failed closed: %#v", checks)
+	}
+}
+
+func TestValidateCatalogRejectsInvalidWALVerifyOutputCheckName(t *testing.T) {
+	checks := walVerifyChecks(
+		[]byte("{\"bad\\nname\":{\"status\":\"OK\"}}"),
+		nil,
+		"evidence-1",
+		model.ExitStatus{Success: true},
+		nil,
+	)
+
+	if len(checks) != 1 ||
+		checks[0].Status != model.CheckStatusFailed ||
+		!strings.Contains(checks[0].Message, "invalid check name") {
+		t.Fatalf("invalid wal-verify check name was not failed closed: %#v", checks)
+	}
+}
+
+func TestWALVerifyArgsRejectsExcessiveConfiguredChecks(t *testing.T) {
+	checks := make([]string, maxWALVerifyChecks+1)
+	for index := range checks {
+		checks[index] = fmt.Sprintf("check-%04d", index)
+	}
+	adapter := New(Config{
+		WALVerify: WALVerifyConfig{Enabled: true, Checks: checks},
+	}, &fakeRunner{})
+
+	_, err := adapter.walVerifyArgs(model.Backup{ProviderID: "base_1"})
+
+	if err == nil || !strings.Contains(err.Error(), "checks exceed maximum count") {
+		t.Fatalf("walVerifyArgs() error = %v", err)
+	}
+}
+
 func TestValidateCatalogRequiresBackupNameForIntegrity(t *testing.T) {
 	_, err := New(Config{
 		WALVerify: WALVerifyConfig{Enabled: true},
@@ -516,6 +723,62 @@ func TestPlanRestoreRejectsDifferentProvider(t *testing.T) {
 	}
 }
 
+func TestParseBackupListRejectsNonArray(t *testing.T) {
+	for _, input := range []string{"null", `{}`, `"backup"`} {
+		if _, err := ParseBackupList([]byte(input)); err == nil {
+			t.Fatalf("ParseBackupList(%s) succeeded, want array-shape error", input)
+		}
+	}
+}
+
+func TestParseBackupListRejectsExcessiveBackupCount(t *testing.T) {
+	payload := "[" +
+		strings.Repeat(`{"name":"backup"},`, model.MaxBackupsPerCatalog) +
+		`{"name":"backup"}]`
+	_, err := ParseBackupList([]byte(payload))
+	if err == nil || !strings.Contains(err.Error(), "exceed maximum count") {
+		t.Fatalf("ParseBackupList() error = %v", err)
+	}
+}
+
+func TestParseBackupListRejectsDuplicateJSONMembers(t *testing.T) {
+	if _, err := ParseBackupList([]byte(`[{"name":"base","name":"other"}]`)); err == nil ||
+		!strings.Contains(err.Error(), `duplicate JSON object member "name"`) {
+		t.Fatalf("ParseBackupList() error = %v", err)
+	}
+}
+
+func FuzzParseBackupList(f *testing.F) {
+	fixture, err := os.ReadFile("testdata/backup-list-detail.json")
+	if err != nil {
+		f.Fatalf("read fuzz seed: %v", err)
+	}
+	f.Add(fixture)
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`null`))
+	f.Add([]byte(`[{"name":"base_1","start_lsn":"0/1"}]`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		first, firstErr := ParseBackupList(data)
+		second, secondErr := ParseBackupList(data)
+		if (firstErr == nil) != (secondErr == nil) {
+			t.Fatalf("ParseBackupList() acceptance is not deterministic: first=%v second=%v", firstErr, secondErr)
+		}
+		if firstErr != nil {
+			return
+		}
+		if !reflect.DeepEqual(first, second) {
+			t.Fatal("ParseBackupList() result is not deterministic")
+		}
+		for _, backup := range first {
+			if backup.Provider != model.ProviderWALG || backup.ProviderID == "" ||
+				backup.ID != model.ProviderScopedID(model.ProviderWALG, backup.ProviderID) {
+				t.Fatalf("ParseBackupList() returned invalid identity %#v", backup)
+			}
+		}
+	})
+}
+
 type fakeRunner struct {
 	invocation command.Invocation
 	result     command.Result
@@ -524,7 +787,7 @@ type fakeRunner struct {
 
 func (r *fakeRunner) Run(_ context.Context, inv command.Invocation) (command.Result, error) {
 	r.invocation = inv
-	return r.result, r.err
+	return r.result.WithRedactValues(inv.RedactValues...), r.err
 }
 
 func successResult(stdout []byte) command.Result {

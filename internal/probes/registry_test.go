@@ -114,6 +114,23 @@ func TestExpandConfigsRejectsUnknownPreset(t *testing.T) {
 	}
 }
 
+func TestExpandConfigsBoundsConfiguredAndExpandedProbeCounts(t *testing.T) {
+	configured := make([]config.ProbeConfig, model.MaxChecksPerReport+1)
+	if _, err := ExpandConfigs(configured); err == nil ||
+		!strings.Contains(err.Error(), "configurations exceed maximum count") {
+		t.Fatalf("ExpandConfigs(configured) error = %v", err)
+	}
+
+	presets := make([]config.ProbeConfig, model.MaxChecksPerReport/2+1)
+	for index := range presets {
+		presets[index].Preset = PresetSmoke
+	}
+	if _, err := ExpandConfigs(presets); err == nil ||
+		!strings.Contains(err.Error(), "expanded probes exceed maximum count") {
+		t.Fatalf("ExpandConfigs(presets) error = %v", err)
+	}
+}
+
 func TestNewProbeRejectsInvalidSemanticConfig(t *testing.T) {
 	tests := []struct {
 		name string
@@ -130,6 +147,15 @@ func TestNewProbeRejectsInvalidSemanticConfig(t *testing.T) {
 		{name: "pgdump mode", cfg: config.ProbeConfig{Type: model.ProbePGDump, Mode: "custom"}, want: "unsupported pg_dump mode"},
 		{name: "pgdump arg", cfg: config.ProbeConfig{Type: model.ProbePGDump, Args: map[string]string{"future": "true"}}, want: "unsupported pg_dump arg"},
 		{name: "unexpanded preset", cfg: config.ProbeConfig{Preset: "smoke"}, want: "must be expanded"},
+		{
+			name: "redacted probe name",
+			cfg: config.ProbeConfig{
+				Type:         model.ProbePGIsReady,
+				Name:         "readiness-secret",
+				RedactValues: []string{"secret"},
+			},
+			want: "probe name contains a configured redaction value",
+		},
 	}
 
 	for _, tt := range tests {

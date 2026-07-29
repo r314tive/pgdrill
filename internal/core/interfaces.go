@@ -62,6 +62,17 @@ type PostRestoreChecker interface {
 	Check(ctx context.Context, pg model.RunningPostgres) (model.CheckReport, error)
 }
 
+// RecoveryTargetVerifier attests that the running PostgreSQL instance uses
+// the requested recovery settings and has reached the corresponding terminal
+// or paused-at-target state.
+type RecoveryTargetVerifier interface {
+	VerifyRecoveryTarget(
+		ctx context.Context,
+		pg model.RunningPostgres,
+		target model.RecoveryTarget,
+	) (model.CheckReport, error)
+}
+
 // TargetValidator performs read-only target precondition checks before native
 // tool preflight or backup repository access. Prepare must still recheck any
 // mutable filesystem or remote-state assumptions.
@@ -76,6 +87,9 @@ type Probe interface {
 }
 
 type EvidenceSink interface {
+	// Write replaces any previously published result for the same attempt.
+	// Implementations must be idempotent because acceptance can be uncertain
+	// and the engine may rewrite a passed result as failed.
 	Write(ctx context.Context, result model.DrillResult) error
 }
 

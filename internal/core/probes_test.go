@@ -13,14 +13,14 @@ func TestRunProbesAggregatesChecksAndEvidence(t *testing.T) {
 	first := &testProbe{
 		probeType: model.ProbePGIsReady,
 		report: model.CheckReport{
-			Checks:   []model.Check{{Name: "ready", Status: model.CheckStatusPassed}},
+			Checks:   []model.Check{{Name: "ready", Status: model.CheckStatusPassed, EvidenceIDs: []string{"ready"}}},
 			Evidence: []model.EvidenceRecord{testEvidence("ready")},
 		},
 	}
 	second := &testProbe{
 		probeType: model.ProbeSQL,
 		report: model.CheckReport{
-			Checks:   []model.Check{{Name: "select_1", Status: model.CheckStatusPassed}},
+			Checks:   []model.Check{{Name: "select_1", Status: model.CheckStatusPassed, EvidenceIDs: []string{"select_1"}}},
 			Evidence: []model.EvidenceRecord{testEvidence("select_1")},
 		},
 	}
@@ -35,6 +35,10 @@ func TestRunProbesAggregatesChecksAndEvidence(t *testing.T) {
 	if report.Checks[0].Probe != model.ProbePGIsReady || report.Checks[1].Probe != model.ProbeSQL {
 		t.Fatalf("expected normalized probe identities, got %#v", report.Checks)
 	}
+	if report.Checks[0].Attributes[model.ProbeNameAttribute] != model.DefaultProbeName(model.ProbePGIsReady) ||
+		report.Checks[1].Attributes[model.ProbeNameAttribute] != model.DefaultProbeName(model.ProbeSQL) {
+		t.Fatalf("expected bound probe descriptors, got %#v", report.Checks)
+	}
 }
 
 func TestRunProbesContinuesAfterOrdinaryProbeError(t *testing.T) {
@@ -45,10 +49,14 @@ func TestRunProbesContinuesAfterOrdinaryProbeError(t *testing.T) {
 	}
 	passed := &testProbe{
 		probeType: model.ProbePGDump,
-		report: model.CheckReport{Checks: []model.Check{{
-			Name:   "schema",
-			Status: model.CheckStatusPassed,
-		}}},
+		report: model.CheckReport{
+			Checks: []model.Check{{
+				Name:        "schema",
+				Status:      model.CheckStatusPassed,
+				EvidenceIDs: []string{"schema"},
+			}},
+			Evidence: []model.EvidenceRecord{testEvidence("schema")},
+		},
 	}
 
 	report, err := RunProbes(context.Background(), []Probe{failed, passed}, model.RunningPostgres{})
@@ -61,7 +69,7 @@ func TestRunProbesContinuesAfterOrdinaryProbeError(t *testing.T) {
 	if len(report.Checks) != 2 || report.Checks[0].Status != model.CheckStatusFailed || report.Checks[0].Message != "query failed" {
 		t.Fatalf("unexpected checks %#v", report.Checks)
 	}
-	if len(report.Evidence) != 1 || report.Evidence[0].ID != "failed" {
+	if len(report.Evidence) != 2 || report.Evidence[0].ID != "failed" || report.Evidence[1].ID != "schema" {
 		t.Fatalf("expected failed probe evidence, got %#v", report.Evidence)
 	}
 }
@@ -97,7 +105,14 @@ func TestRunProbesRejectsMalformedReportsAndContinues(t *testing.T) {
 			}
 			good := &testProbe{
 				probeType: model.ProbePGDump,
-				report:    model.CheckReport{Checks: []model.Check{{Name: "schema", Status: model.CheckStatusPassed}}},
+				report: model.CheckReport{
+					Checks: []model.Check{{
+						Name:        "schema",
+						Status:      model.CheckStatusPassed,
+						EvidenceIDs: []string{"schema"},
+					}},
+					Evidence: []model.EvidenceRecord{testEvidence("schema")},
+				},
 			}
 
 			report, err := RunProbes(context.Background(), []Probe{bad, good}, model.RunningPostgres{})
@@ -110,7 +125,7 @@ func TestRunProbesRejectsMalformedReportsAndContinues(t *testing.T) {
 			if len(report.Checks) != 2 || report.Checks[0].Status != model.CheckStatusFailed || !strings.Contains(report.Checks[0].Message, tt.want) {
 				t.Fatalf("unexpected normalized checks %#v", report.Checks)
 			}
-			if report.Checks[1].Probe != model.ProbePGDump || len(report.Evidence) != 1 {
+			if report.Checks[1].Probe != model.ProbePGDump || len(report.Evidence) != 2 {
 				t.Fatalf("expected valid later report and malformed evidence, got %#v", report)
 			}
 		})
@@ -168,6 +183,134 @@ func TestRunProbesRejectsNilProbe(t *testing.T) {
 	_, err := RunProbes(context.Background(), []Probe{nil}, model.RunningPostgres{})
 	if err == nil || !strings.Contains(err.Error(), "probe 0 is nil") {
 		t.Fatalf("expected nil probe error, got %v", err)
+	}
+}
+
+func TestRunProbesRejectsConflictingProbeNameAttribute(t *testing.T) {
+	probe := &testProbe{
+		probeType: model.ProbeSQL,
+		report: model.CheckReport{Checks: []model.Check{{
+			Name:       "select_1",
+			Status:     model.CheckStatusPassed,
+			Attributes: map[string]string{model.ProbeNameAttribute: "other-query"},
+		}}},
+	}
+
+	report, err := RunProbes(context.Background(), []Probe{probe}, model.RunningPostgres{})
+	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
+		t.Fatalf("expected aggregate protocol failure, got %v", err)
+	}
+	if len(report.Checks) != 1 ||
+		report.Checks[0].Status != model.CheckStatusFailed ||
+		!strings.Contains(report.Checks[0].Message, "does not match executing probe") {
+		t.Fatalf("unexpected check report %#v", report)
+	}
+	if got := report.Checks[0].Attributes[model.ProbeNameAttribute]; got != model.DefaultProbeName(model.ProbeSQL) {
+		t.Fatalf("synthetic failure probe_name = %q", got)
+	}
+}
+
+func TestRunProbesRequiresPassingCheckForEachProbe(t *testing.T) {
+	probe := &testProbe{
+		probeType: model.ProbeSQL,
+		report: model.CheckReport{Checks: []model.Check{{
+			Name:   "select_1",
+			Status: model.CheckStatusWarning,
+		}}},
+	}
+
+	report, err := RunProbes(context.Background(), []Probe{probe}, model.RunningPostgres{})
+	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
+		t.Fatalf("RunProbes() error = %v", err)
+	}
+	if len(report.Checks) != 1 ||
+		report.Checks[0].Status != model.CheckStatusWarning ||
+		report.Checks[0].Attributes[model.ProbeNameAttribute] != model.DefaultProbeName(model.ProbeSQL) {
+		t.Fatalf("RunProbes() report = %#v", report)
+	}
+}
+
+func TestRunProbesRejectsPassingCheckWithoutEvidence(t *testing.T) {
+	probe := &testProbe{
+		probeType: model.ProbeSQL,
+		report: model.CheckReport{Checks: []model.Check{{
+			Name:   "select_1",
+			Status: model.CheckStatusPassed,
+		}}},
+	}
+
+	report, err := RunProbes(context.Background(), []Probe{probe}, model.RunningPostgres{})
+	if err == nil || !strings.Contains(err.Error(), "one or more probes failed") {
+		t.Fatalf("RunProbes() error = %v", err)
+	}
+	if len(report.Checks) != 1 ||
+		report.Checks[0].Status != model.CheckStatusFailed ||
+		!strings.Contains(report.Checks[0].Message, "has no evidence references") {
+		t.Fatalf("RunProbes() report = %#v", report)
+	}
+}
+
+func TestValidateProbeEvidenceProofRejectsEvidenceSharedAcrossProbes(t *testing.T) {
+	expected := []model.ProbeDescriptor{
+		{Type: model.ProbeSQL, Name: "select_1"},
+		{Type: model.ProbePGDump, Name: "schema_dump"},
+	}
+	checks := []model.Check{
+		{
+			Name:        "select_1",
+			Probe:       model.ProbeSQL,
+			Status:      model.CheckStatusPassed,
+			EvidenceIDs: []string{"shared"},
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
+		},
+		{
+			Name:        "schema_dump",
+			Probe:       model.ProbePGDump,
+			Status:      model.CheckStatusPassed,
+			EvidenceIDs: []string{"shared"},
+			Attributes:  map[string]string{model.ProbeNameAttribute: "schema_dump"},
+		},
+	}
+	evidence := []model.EvidenceRecord{testEvidence("shared")}
+	evidence[0].Attributes = map[string]string{model.ProbeNameAttribute: "select_1"}
+
+	if err := validateProbeEvidenceProof(expected, checks, evidence); err == nil ||
+		!strings.Contains(err.Error(), "bound to another probe") {
+		t.Fatalf("validateProbeEvidenceProof() error = %v, want shared-evidence rejection", err)
+	}
+}
+
+func TestRunProbesEnforcesAggregateCheckCapacity(t *testing.T) {
+	checks := make([]model.Check, model.MaxChecksPerReport)
+	for index := range checks {
+		checks[index] = model.Check{
+			Name:        "check",
+			Status:      model.CheckStatusPassed,
+			EvidenceIDs: []string{"shared"},
+		}
+	}
+	first := &testProbe{
+		probeType: model.ProbeSQL,
+		report: model.CheckReport{
+			Checks:   checks,
+			Evidence: []model.EvidenceRecord{testEvidence("shared")},
+		},
+	}
+	second := &testProbe{probeType: model.ProbePGDump}
+
+	report, err := RunProbes(
+		context.Background(),
+		[]Probe{first, second},
+		model.RunningPostgres{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "maximum is") {
+		t.Fatalf("RunProbes() error = %v", err)
+	}
+	if len(report.Checks) != model.MaxChecksPerReport {
+		t.Fatalf("retained checks = %d, want %d", len(report.Checks), model.MaxChecksPerReport)
+	}
+	if first.calls != 1 || second.calls != 0 {
+		t.Fatalf("probe calls = %d/%d, want 1/0", first.calls, second.calls)
 	}
 }
 

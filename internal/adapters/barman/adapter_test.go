@@ -156,14 +156,164 @@ func TestParseBackupListSupportsBarman3191EpochTimestamps(t *testing.T) {
 	}
 }
 
-func TestGetTimeFallsThroughInvalidCandidates(t *testing.T) {
-	want := mustTime(t, "2026-07-21T13:07:34Z")
-	got := getTime(map[string]any{
+func TestParseBackupListRejectsUnrelatedRecursiveObjects(t *testing.T) {
+	for _, input := range []string{
+		`{
+		  "metadata": {
+		    "backup_id": "20240502T030405",
+		    "status": "DONE",
+		    "begin_time": "2024-05-02T03:04:05Z"
+		  }
+		}`,
+		`{
+		  "main": [],
+		  "metadata": {
+		    "nested": {
+		      "backup_id": "20240502T030405",
+		      "status": "DONE"
+		    }
+		  }
+		}`,
+		`{
+		  "main": {
+		    "metadata": {
+		      "backup_id": "20240502T030405",
+		      "status": "DONE"
+		    }
+		  }
+		}`,
+		`{
+		  "main": {
+		    "20240502T030405": {
+		      "details": {
+		        "backup_id": "20240502T030405",
+		        "status": "DONE"
+		      }
+		    }
+		  }
+		}`,
+	} {
+		if backups, err := ParseBackupList([]byte(input), "main"); err == nil {
+			t.Fatalf("ParseBackupList() accepted unrelated object as backups: %#v", backups)
+		}
+	}
+}
+
+func TestParseBackupListRejectsCoercedIdentityStatusAndBooleanFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "numeric backup id",
+			input: `{"main":[{"backup_id":20240502030405,"status":"DONE"}]}`,
+		},
+		{
+			name:  "boolean server name",
+			input: `{"main":[{"backup_id":"20240502T030405","server_name":true,"status":"DONE"}]}`,
+		},
+		{
+			name:  "boolean status",
+			input: `{"main":[{"backup_id":"20240502T030405","status":true}]}`,
+		},
+		{
+			name:  "numeric backup type",
+			input: `{"main":[{"backup_id":"20240502T030405","status":"DONE","backup_type":1}]}`,
+		},
+		{
+			name:  "numeric parent id",
+			input: `{"main":[{"backup_id":"20240502T030405","status":"DONE","parent_backup_id":1}]}`,
+		},
+		{
+			name:  "string permanent flag",
+			input: `{"main":[{"backup_id":"20240502T030405","status":"DONE","is_permanent":"true"}]}`,
+		},
+		{
+			name:  "boolean keep status",
+			input: `{"main":[{"backup_id":"20240502T030405","status":"DONE","keep":true}]}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if backups, err := ParseBackupList([]byte(test.input), "main"); err == nil {
+				t.Fatalf("ParseBackupList() accepted coerced field: %#v", backups)
+			}
+		})
+	}
+}
+
+func TestGetTimeRejectsFirstMalformedCandidate(t *testing.T) {
+	got, err := getTime(map[string]any{
 		"display_time": "Tue Jul 21 13:07:34 2026",
 		"exact_time":   "2026-07-21T13:07:34Z",
 	}, "display_time", "exact_time")
-	if got == nil || !got.Equal(want) {
-		t.Fatalf("time = %#v, want %s", got, want)
+	if err == nil || !strings.Contains(err.Error(), `field "display_time"`) {
+		t.Fatalf("getTime() = %#v, error = %v", got, err)
+	}
+}
+
+func TestParseBackupListRejectsMalformedTimestamp(t *testing.T) {
+	_, err := ParseBackupList([]byte(`{
+		"main": [{
+			"backup_id": "20240502T030405",
+			"status": "DONE",
+			"begin_time": "not-a-time"
+		}]
+	}`), "main")
+	if err == nil || !strings.Contains(err.Error(), "unsupported time format") {
+		t.Fatalf("ParseBackupList() error = %v", err)
+	}
+}
+
+func TestBackupListObjectsRejectsExcessiveBackupCount(t *testing.T) {
+	_, _, err := backupListObjects(map[string]any{
+		"main": make([]any, model.MaxBackupsPerCatalog+1),
+	}, "main")
+	if err == nil || !strings.Contains(err.Error(), "exceed maximum count") {
+		t.Fatalf("backupListObjects() error = %v", err)
+	}
+}
+
+func TestParseBackupListRejectsConflictingAliases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "backup id",
+			input: `{"main":[{"backup_id":"first","id":"second","status":"DONE"}]}`,
+			want:  "backup id aliases",
+		},
+		{
+			name: "backup start time",
+			input: `{"main":[{
+				"backup_id":"first",
+				"status":"DONE",
+				"begin_time":"2026-07-01T00:00:00Z",
+				"start_time":"2026-07-02T00:00:00Z"
+			}]}`,
+			want: "time aliases",
+		},
+		{
+			name: "start LSN",
+			input: `{"main":[{
+				"backup_id":"first",
+				"status":"DONE",
+				"begin_lsn":"0/1",
+				"start_lsn":"0/2"
+			}]}`,
+			want: "start LSN aliases",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseBackupList([]byte(test.input), "main")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ParseBackupList() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -198,6 +348,58 @@ func TestAdapterDiscoverBackupsRunsBarmanListBackups(t *testing.T) {
 	}
 	if runner.invocation.Timeout != 45*time.Second {
 		t.Fatalf("unexpected timeout %s", runner.invocation.Timeout)
+	}
+}
+
+func TestDiscoverRedactsMetadataWithoutBreakingBarmanRestoreIdentity(t *testing.T) {
+	adapter := New(Config{
+		Server:       "main",
+		RedactValues: []string{"nightly-main"},
+	}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/list-backups.json")),
+	})
+
+	catalog, err := adapter.DiscoverBackups(context.Background())
+	if err != nil {
+		t.Fatalf("discover backups: %v", err)
+	}
+	backup := catalog.Backups[0]
+	if backup.ProviderID == "" || backup.Metadata["backup_name"] != "[REDACTED]" {
+		t.Fatalf("unexpected redacted backup %#v", backup)
+	}
+	plan, err := adapter.PlanRestore(
+		context.Background(),
+		backup,
+		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		model.TargetSpec{
+			Type:    model.RestoreTargetLocal,
+			WorkDir: filepath.Join(t.TempDir(), "restore"),
+		},
+	)
+	if err != nil {
+		t.Fatalf("plan discovered backup: %v", err)
+	}
+	if plan.BackupID != backup.ID {
+		t.Fatalf("restore plan identity drift: plan=%q backup=%q", plan.BackupID, backup.ID)
+	}
+}
+
+func TestDiscoverRejectsRedactionOfCanonicalBarmanIdentityWithoutLeak(t *testing.T) {
+	const secret = "20240502T030405"
+	adapter := New(Config{
+		Server:       "main",
+		RedactValues: []string{secret},
+	}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/list-backups.json")),
+	})
+
+	_, err := adapter.DiscoverBackups(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "canonical field") {
+		t.Fatalf("DiscoverBackups() error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("DiscoverBackups() leaked canonical identity: %v", err)
 	}
 }
 
@@ -325,6 +527,80 @@ func TestValidateCatalogRunsBarmanChecks(t *testing.T) {
 		if got, want := inv.RedactValues, wantRedactions; !reflect.DeepEqual(got, want) {
 			t.Fatalf("unexpected invocation %d redactions: got %#v want %#v", i, got, want)
 		}
+	}
+}
+
+func TestValidateCatalogRejectsContradictoryShowBackupMetadata(t *testing.T) {
+	tests := []struct {
+		name        string
+		showBackup  string
+		wantMessage string
+	}{
+		{
+			name:        "different server",
+			showBackup:  `{"backup_id":"20240502T030405","server_name":"other","status":"DONE"}`,
+			wantMessage: `does not match requested server "main"`,
+		},
+		{
+			name:        "different backup id",
+			showBackup:  `{"backup_id":"other","server_name":"main","status":"DONE"}`,
+			wantMessage: `does not match requested backup "20240502T030405"`,
+		},
+		{
+			name:        "failed backup",
+			showBackup:  `{"backup_id":"20240502T030405","server_name":"main","status":"FAILED"}`,
+			wantMessage: `status "FAILED" is not an available terminal status`,
+		},
+		{
+			name:        "incomplete backup",
+			showBackup:  `{"backup_id":"20240502T030405","server_name":"main","status":"WAITING_FOR_WALS"}`,
+			wantMessage: `status "WAITING_FOR_WALS" is not an available terminal status`,
+		},
+		{
+			name:        "missing server",
+			showBackup:  `{"backup_id":"20240502T030405","status":"DONE"}`,
+			wantMessage: "missing server",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &fakeRunner{
+				results: []command.Result{
+					successResult([]byte("server main: OK\n")),
+					successResult([]byte("backup 20240502T030405: OK\n")),
+					successResult([]byte(test.showBackup)),
+				},
+			}
+			report, err := New(Config{Server: "main"}, runner).ValidateCatalog(
+				context.Background(),
+				model.BackupCatalog{},
+				model.Backup{
+					ID:         "barman:main/20240502T030405",
+					Provider:   model.ProviderBarman,
+					ProviderID: "main/20240502T030405",
+				},
+				model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			)
+			if err != nil {
+				t.Fatalf("ValidateCatalog() error = %v", err)
+			}
+			if len(report.Checks) != 5 {
+				t.Fatalf("ValidateCatalog() checks = %#v, want five", report.Checks)
+			}
+			showCheck := report.Checks[2]
+			if showCheck.Name != "barman-show-backup" ||
+				showCheck.Status != model.CheckStatusFailed {
+				t.Fatalf("show-backup check = %#v, want failed", showCheck)
+			}
+			if !strings.Contains(showCheck.Message, test.wantMessage) {
+				t.Fatalf(
+					"show-backup message = %q, want substring %q",
+					showCheck.Message,
+					test.wantMessage,
+				)
+			}
+		})
 	}
 }
 
@@ -511,7 +787,7 @@ func TestValidateCatalogReportsBarmanCheckFailure(t *testing.T) {
 	}
 }
 
-func TestValidateCatalogWarnsOnInvalidShowBackupJSON(t *testing.T) {
+func TestValidateCatalogFailsOnInvalidShowBackupJSON(t *testing.T) {
 	runner := &fakeRunner{
 		results: []command.Result{
 			successResult([]byte("server main: OK\n")),
@@ -530,11 +806,11 @@ func TestValidateCatalogWarnsOnInvalidShowBackupJSON(t *testing.T) {
 	if len(report.Checks) != 5 {
 		t.Fatalf("expected five checks, got %#v", report.Checks)
 	}
-	if report.Checks[2].Status != model.CheckStatusWarning {
-		t.Fatalf("expected show-backup warning, got %#v", report.Checks[2])
+	if report.Checks[2].Status != model.CheckStatusFailed {
+		t.Fatalf("expected show-backup failure, got %#v", report.Checks[2])
 	}
 	if !strings.Contains(report.Checks[2].Message, "parse barman show-backup json") {
-		t.Fatalf("unexpected warning message %#v", report.Checks[2])
+		t.Fatalf("unexpected failure message %#v", report.Checks[2])
 	}
 	if report.Checks[3].Status != model.CheckStatusSkipped || report.Checks[4].Status != model.CheckStatusSkipped {
 		t.Fatalf("expected skipped manifest and verify-backup checks, got %#v", report.Checks)
@@ -604,7 +880,7 @@ func TestPlanRestoreBuildsBarmanRestoreStep(t *testing.T) {
 		"--target-time", "2026-07-06T01:02:03Z",
 		"--target-tli", "latest",
 		"--exclusive",
-		"--target-action", "promote",
+		"--target-action", "pause",
 		"main",
 		"20240502T030405",
 		"/tmp/pgdrill/main/data",
@@ -626,6 +902,30 @@ func TestPlanRestoreBuildsBarmanRestoreStep(t *testing.T) {
 	}
 	if len(plan.Evidence) != 1 || plan.Evidence[0].Kind != model.EvidencePlan {
 		t.Fatalf("expected plan evidence, got %#v", plan.Evidence)
+	}
+}
+
+func TestBarmanRecoveryArgsPauseEveryTargetedRecovery(t *testing.T) {
+	targets := []model.RecoveryTarget{
+		{Type: model.RecoveryTargetImmediate},
+		{Type: model.RecoveryTargetTimestamp, Value: "2026-07-27T12:44:07Z"},
+		{Type: model.RecoveryTargetLSN, Value: "0/420000C0"},
+		{Type: model.RecoveryTargetXID, Value: "757"},
+		{Type: model.RecoveryTargetRestorePoint, Value: "before_upgrade"},
+	}
+
+	for _, target := range targets {
+		t.Run(string(target.Type), func(t *testing.T) {
+			args, err := barmanRecoveryArgs(target)
+			if err != nil {
+				t.Fatalf("barmanRecoveryArgs() error = %v", err)
+			}
+			joined := strings.Join(args, " ")
+			if !strings.Contains(joined, "--target-action pause") ||
+				strings.Contains(joined, "--target-action promote") {
+				t.Fatalf("targeted recovery action is not fail-closed pause: %#v", args)
+			}
+		})
 	}
 }
 
@@ -718,6 +1018,85 @@ func TestPlanRestoreRequiresRecoveryTargetValue(t *testing.T) {
 	}
 }
 
+func TestParseBackupListRejectsAmbiguousOrScalarJSON(t *testing.T) {
+	for _, input := range []string{
+		`[] []`,
+		`[] trailing`,
+		`[{"backup_id":"a","backup_id":"b"}]`,
+		`null`,
+		`42`,
+		`"backup"`,
+		`[]`,
+	} {
+		if _, err := ParseBackupList([]byte(input), "main"); err == nil {
+			t.Fatalf("ParseBackupList(%s) succeeded, want strict JSON error", input)
+		}
+	}
+}
+
+func FuzzParseBackupList(f *testing.F) {
+	fixture, err := os.ReadFile("testdata/list-backups.json")
+	if err != nil {
+		f.Fatalf("read fuzz seed: %v", err)
+	}
+	f.Add(fixture)
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`null`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		first, firstErr := ParseBackupList(data, "main")
+		second, secondErr := ParseBackupList(data, "main")
+		if (firstErr == nil) != (secondErr == nil) {
+			t.Fatalf("ParseBackupList() acceptance is not deterministic: first=%v second=%v", firstErr, secondErr)
+		}
+		if firstErr != nil {
+			return
+		}
+		if !reflect.DeepEqual(first, second) {
+			t.Fatal("ParseBackupList() result is not deterministic")
+		}
+		for _, backup := range first {
+			if backup.Provider != model.ProviderBarman || backup.ProviderID == "" ||
+				backup.ID != model.ProviderScopedID(model.ProviderBarman, backup.ProviderID) {
+				t.Fatalf("ParseBackupList() returned invalid identity %#v", backup)
+			}
+		}
+	})
+}
+
+func FuzzShowBackupAttributes(f *testing.F) {
+	f.Add([]byte(`{
+		"backup_id":"20240502T030405",
+		"server_name":"main",
+		"status":"DONE"
+	}`))
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`null`))
+	f.Add([]byte(`not-json`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		first, firstErr := showBackupAttributes(data)
+		second, secondErr := showBackupAttributes(data)
+		if (firstErr == nil) != (secondErr == nil) {
+			t.Fatalf(
+				"showBackupAttributes() acceptance is not deterministic: first=%v second=%v",
+				firstErr,
+				secondErr,
+			)
+		}
+		if firstErr != nil {
+			return
+		}
+		if !reflect.DeepEqual(first, second) {
+			t.Fatal("showBackupAttributes() result is not deterministic")
+		}
+		if first["backup_id"] == "" || first["server"] == "" || first["status"] == "" {
+			t.Fatalf("showBackupAttributes() returned incomplete identity %#v", first)
+		}
+	})
+}
+
 type fakeRunner struct {
 	invocation  command.Invocation
 	invocations []command.Invocation
@@ -738,9 +1117,9 @@ func (r *fakeRunner) Run(_ context.Context, inv command.Invocation) (command.Res
 			err = r.errs[0]
 			r.errs = r.errs[1:]
 		}
-		return result, err
+		return result.WithRedactValues(inv.RedactValues...), err
 	}
-	return r.result, r.err
+	return r.result.WithRedactValues(inv.RedactValues...), r.err
 }
 
 func successResult(stdout []byte) command.Result {

@@ -2,6 +2,7 @@ package cnpg
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"sort"
@@ -53,8 +54,9 @@ func TestKubectlClientCreateUsesManifestStdin(t *testing.T) {
 
 func TestKubectlClientFindOwnedClusterUsesAttemptOwnershipSelector(t *testing.T) {
 	spec := testVerifyClusterSpec(t)
+	want := testOwnedCluster(t, spec)
 	runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
-		"get cluster.postgresql.cnpg.io": `{"items":[{"metadata":{"name":"` + spec.Name + `"}}]}`,
+		"get cluster.postgresql.cnpg.io": `{"items":[{"metadata":{"name":"` + spec.Name + `","uid":"cluster-uid","annotations":{"` + annotationRecoveryContract + `":"` + want.ContractDigest + `"}}}]}`,
 	}}
 	client := NewKubectlClient(KubectlConfig{}, runner)
 
@@ -62,8 +64,8 @@ func TestKubectlClientFindOwnedClusterUsesAttemptOwnershipSelector(t *testing.T)
 	if err != nil {
 		t.Fatalf("FindOwnedCluster() error = %v", err)
 	}
-	if !owned.Found || owned.Name != spec.Name {
-		t.Fatalf("FindOwnedCluster() = %#v", owned)
+	if !reflect.DeepEqual(owned, want) {
+		t.Fatalf("FindOwnedCluster() = %#v, want %#v", owned, want)
 	}
 	wantArgs := []string{"-n", "d003-db", "get", "cluster.postgresql.cnpg.io", "-l", labelOwnershipID + "=" + spec.OwnershipID, "-o", "json"}
 	if len(runner.invocations) != 1 || !reflect.DeepEqual(runner.invocations[0].Args, wantArgs) {
@@ -74,17 +76,136 @@ func TestKubectlClientFindOwnedClusterUsesAttemptOwnershipSelector(t *testing.T)
 	}
 }
 
+func TestKubectlClientFindOwnedClusterRejectsRecoveryContractMismatch(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get cluster.postgresql.cnpg.io": `{"items":[{"metadata":{"name":"` +
+			spec.Name +
+			`","uid":"cluster-uid","annotations":{"` +
+			annotationRecoveryContract +
+			`":"sha256:` +
+			strings.Repeat("0", 64) +
+			`"}}}]}`,
+	}}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+
+	if _, _, err := client.FindOwnedCluster(context.Background(), spec); err == nil ||
+		!strings.Contains(err.Error(), "recovery contract digest does not match") {
+		t.Fatalf("FindOwnedCluster() error = %v, want contract mismatch", err)
+	}
+}
+
+func TestKubectlClientFindOwnedPVCsUsesAttemptOwnershipSelector(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	cluster := testOwnedCluster(t, spec)
+	runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get pvc": `{"items":[{"metadata":{
+			"name":"` + spec.Name + `-1",
+			"uid":"pvc-uid",
+			"annotations":{"` + annotationRecoveryContract + `":"` + cluster.ContractDigest + `"},
+			"ownerReferences":[{
+				"apiVersion":"postgresql.cnpg.io/v1",
+				"kind":"Cluster",
+				"name":"` + spec.Name + `",
+				"uid":"cluster-uid"
+			}]
+		}}]}`,
+	}}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+
+	owned, evidence, err := client.FindOwnedPVCs(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("FindOwnedPVCs() error = %v", err)
+	}
+	want := OwnedPVCs{Items: []OwnedPVC{{
+		Name:             spec.Name + "-1",
+		UID:              "pvc-uid",
+		OwnerClusterName: spec.Name,
+		OwnerClusterUID:  "cluster-uid",
+		ContractDigest:   cluster.ContractDigest,
+	}}}
+	if !reflect.DeepEqual(owned, want) {
+		t.Fatalf("FindOwnedPVCs() = %#v, want %#v", owned, want)
+	}
+	wantArgs := []string{"-n", "d003-db", "get", "pvc", "-l", "cnpg.io/cluster=" + spec.Name + "," + labelOwnershipID + "=" + spec.OwnershipID, "-o", "json"}
+	if len(runner.invocations) != 1 || !reflect.DeepEqual(runner.invocations[0].Args, wantArgs) {
+		t.Fatalf("FindOwnedPVCs() args = %#v, want %#v", runner.invocations, wantArgs)
+	}
+	if !hasOperation(evidence, "kubectl-find-owned-pvcs") {
+		t.Fatalf("missing PVC observation evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientOwnedResourceObservationFailsClosedOnUnknownList(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+
+	clusterClient := NewKubectlClient(KubectlConfig{}, &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get cluster.postgresql.cnpg.io": `{}`,
+	}})
+	if _, _, err := clusterClient.FindOwnedCluster(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "items array is missing or null") {
+		t.Fatalf("FindOwnedCluster() error = %v, want unknown list error", err)
+	}
+
+	pvcClient := NewKubectlClient(KubectlConfig{}, &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get pvc": `{"items":null}`,
+	}})
+	if _, _, err := pvcClient.FindOwnedPVCs(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "items array is missing or null") {
+		t.Fatalf("FindOwnedPVCs() error = %v, want unknown list error", err)
+	}
+}
+
+func TestKubectlClientOwnedResourceObservationRequiresUIDAndExactPVCOwner(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+
+	clusterClient := NewKubectlClient(KubectlConfig{}, &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get cluster.postgresql.cnpg.io": `{"items":[{"metadata":{"name":"` + spec.Name + `"}}]}`,
+	}})
+	if _, _, err := clusterClient.FindOwnedCluster(context.Background(), spec); err == nil ||
+		!strings.Contains(err.Error(), "invalid metadata.uid") {
+		t.Fatalf("FindOwnedCluster() error = %v, want missing uid refusal", err)
+	}
+
+	pvcClient := NewKubectlClient(KubectlConfig{}, &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get pvc": `{"items":[{"metadata":{"name":"` + spec.Name + `-1","uid":"pvc-uid"}}]}`,
+	}})
+	if _, _, err := pvcClient.FindOwnedPVCs(context.Background(), spec); err == nil ||
+		!strings.Contains(err.Error(), "has no postgresql.cnpg.io/v1 Cluster ownerReference") {
+		t.Fatalf("FindOwnedPVCs() error = %v, want missing owner refusal", err)
+	}
+}
+
+func TestKubectlClientFindOwnedPVCsRejectsAmbiguousResourceSet(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get pvc": `{"items":[
+			{"metadata":{"name":"` + spec.Name + `-1","uid":"pvc-uid-1"}},
+			{"metadata":{"name":"` + spec.Name + `-2","uid":"pvc-uid-2"}}
+		]}`,
+	}}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+
+	if _, _, err := client.FindOwnedPVCs(context.Background(), spec); err == nil ||
+		!strings.Contains(err.Error(), "maximum is 1") {
+		t.Fatalf("FindOwnedPVCs() error = %v, want bounded ambiguity refusal", err)
+	}
+}
+
 func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	cluster := testOwnedCluster(t, spec)
 	runner := &fakeCommandRunner{
 		stdoutByArgContains: map[string]string{
 			"cnpg.io/jobRole=full-recovery": `{"items":[]}`,
-			"get pod":                       `{"metadata":{"annotations":{"cnpg.io/operatorVersion":"1.26.3"}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}`,
+			"get pod":                       testReadyPodJSON(t, spec, cluster),
 		},
 	}
 	client := NewKubectlClient(KubectlConfig{}, runner)
-	spec := testVerifyClusterSpec(t)
 
-	instance, evidence, err := client.WaitForInstanceReady(context.Background(), spec, WaitOptions{Timeout: 90 * time.Second})
+	instance, evidence, err := client.WaitForInstanceReady(
+		context.Background(),
+		spec,
+		WaitOptions{Timeout: 90 * time.Second, Cluster: cluster},
+	)
 	if err != nil {
 		t.Fatalf("wait for instance: %v", err)
 	}
@@ -92,7 +213,7 @@ func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 	if len(runner.invocations) != 2 {
 		t.Fatalf("expected two invocations, got %d", len(runner.invocations))
 	}
-	if got, want := runner.invocations[0].Args, []string{"-n", "d003-db", "get", "pods", "-l", "cnpg.io/cluster=" + spec.Name + ",cnpg.io/jobRole=full-recovery", "-o", "json"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.invocations[0].Args, []string{"-n", "d003-db", "get", "pods", "-l", "cnpg.io/cluster=" + spec.Name + ",cnpg.io/jobRole=full-recovery," + labelOwnershipID + "=" + spec.OwnershipID, "-o", "json"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected full-recovery args: got %#v want %#v", got, want)
 	}
 	if got, want := runner.invocations[1].Args, []string{"-n", "d003-db", "get", "pod", spec.InstancePodName, "-o", "json"}; !reflect.DeepEqual(got, want) {
@@ -110,8 +231,37 @@ func TestKubectlClientWaitReturnsRunningInstance(t *testing.T) {
 	if instance.OperatorVersion != "1.26.3" {
 		t.Fatalf("unexpected operator version %q", instance.OperatorVersion)
 	}
+	if instance.UID != "pod-uid" ||
+		instance.ClusterUID != cluster.UID ||
+		instance.ContractDigest != cluster.ContractDigest {
+		t.Fatalf("unexpected instance identity %#v", instance)
+	}
 	if !hasOperation(evidence, "kubectl-check-full-recovery") || !hasOperation(evidence, "kubectl-check-instance-ready") {
 		t.Fatalf("missing wait evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientWaitRejectsPodOwnedByReplacedCluster(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	cluster := testOwnedCluster(t, spec)
+	pod := strings.Replace(
+		testReadyPodJSON(t, spec, cluster),
+		`"uid":"`+cluster.UID+`"}]`,
+		`"uid":"replaced-cluster-uid"}]`,
+		1,
+	)
+	runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"cnpg.io/jobRole=full-recovery": `{"items":[]}`,
+		"get pod":                       pod,
+	}}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+
+	if _, _, err := client.WaitForInstanceReady(
+		context.Background(),
+		spec,
+		WaitOptions{Timeout: time.Second, Cluster: cluster},
+	); err == nil || !strings.Contains(err.Error(), "exactly one ownerReference") {
+		t.Fatalf("WaitForInstanceReady() error = %v, want stale owner refusal", err)
 	}
 }
 
@@ -124,8 +274,13 @@ func TestKubectlClientWaitFailsFastWhenFullRecoveryFailed(t *testing.T) {
 	}
 	client := NewKubectlClient(KubectlConfig{}, runner)
 	spec := testVerifyClusterSpec(t)
+	cluster := testOwnedCluster(t, spec)
 
-	_, evidence, err := client.WaitForInstanceReady(context.Background(), spec, WaitOptions{Timeout: 90 * time.Second})
+	_, evidence, err := client.WaitForInstanceReady(
+		context.Background(),
+		spec,
+		WaitOptions{Timeout: 90 * time.Second, Cluster: cluster},
+	)
 	if err == nil || !strings.Contains(err.Error(), "full-recovery failed") {
 		t.Fatalf("expected full-recovery failure, got %v", err)
 	}
@@ -134,6 +289,136 @@ func TestKubectlClientWaitFailsFastWhenFullRecoveryFailed(t *testing.T) {
 	}
 	if !hasOperation(evidence, "kubectl-check-full-recovery") {
 		t.Fatalf("missing full-recovery evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientWaitTimeoutBoundsEveryPollAndSleep(t *testing.T) {
+	t.Run("in-flight kubectl poll", func(t *testing.T) {
+		runner := &blockingCommandRunner{}
+		client := NewKubectlClient(KubectlConfig{Timeout: 500 * time.Millisecond}, runner)
+		spec := testVerifyClusterSpec(t)
+		cluster := testOwnedCluster(t, spec)
+
+		started := time.Now()
+		_, evidence, err := client.WaitForInstanceReady(
+			context.Background(),
+			spec,
+			WaitOptions{Timeout: 20 * time.Millisecond, PollInterval: time.Second, Cluster: cluster},
+		)
+		elapsed := time.Since(started)
+
+		if err == nil || !strings.Contains(err.Error(), "timeout waiting for CNPG instance") {
+			t.Fatalf("WaitForInstanceReady() error = %v", err)
+		}
+		if elapsed >= 250*time.Millisecond {
+			t.Fatalf("hard wait deadline took %s", elapsed)
+		}
+		if len(runner.invocations) != 1 {
+			t.Fatalf("poll invocations = %d, want 1", len(runner.invocations))
+		}
+		if timeout := runner.invocations[0].Timeout; timeout <= 0 || timeout > 50*time.Millisecond {
+			t.Fatalf("bounded command timeout = %s", timeout)
+		}
+		if !hasOperation(evidence, "kubectl-check-full-recovery") {
+			t.Fatalf("missing timed-out poll evidence %#v", evidence)
+		}
+	})
+
+	t.Run("poll interval sleep", func(t *testing.T) {
+		spec := testVerifyClusterSpec(t)
+		cluster := testOwnedCluster(t, spec)
+		runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
+			"cnpg.io/jobRole=full-recovery": `{"items":[]}`,
+			"get pod":                       strings.Replace(testReadyPodJSON(t, spec, cluster), `"status":"True"`, `"status":"False"`, 1),
+		}}
+		client := NewKubectlClient(KubectlConfig{Timeout: 500 * time.Millisecond}, runner)
+
+		started := time.Now()
+		_, _, err := client.WaitForInstanceReady(
+			context.Background(),
+			spec,
+			WaitOptions{Timeout: 20 * time.Millisecond, PollInterval: time.Second, Cluster: cluster},
+		)
+		elapsed := time.Since(started)
+
+		if err == nil || !strings.Contains(err.Error(), "timeout waiting for CNPG instance") {
+			t.Fatalf("WaitForInstanceReady() error = %v", err)
+		}
+		if elapsed >= 250*time.Millisecond {
+			t.Fatalf("bounded poll sleep took %s", elapsed)
+		}
+		if len(runner.invocations) != 2 {
+			t.Fatalf("poll invocations = %d, want 2", len(runner.invocations))
+		}
+	})
+}
+
+func TestKubectlClientFullRecoveryObservationFailsClosed(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	cluster := testOwnedCluster(t, spec)
+	tests := []struct {
+		name       string
+		stdout     string
+		nonzero    bool
+		runnerErr  bool
+		wantDetail string
+	}{
+		{
+			name:       "runner error",
+			runnerErr:  true,
+			wantDetail: "simulated kubectl error",
+		},
+		{
+			name:       "nonzero exit",
+			stdout:     `{"items":[]}`,
+			nonzero:    true,
+			wantDetail: "kubectl-check-full-recovery failed",
+		},
+		{
+			name:       "missing items",
+			stdout:     `{}`,
+			wantDetail: "items array is missing or null",
+		},
+		{
+			name:       "null items",
+			stdout:     `{"items":null}`,
+			wantDetail: "items array is missing or null",
+		},
+		{
+			name:       "malformed item",
+			stdout:     `{"items":[{"metadata":{"name":"recovery"}}]}`,
+			wantDetail: "has no status.phase",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeCommandRunner{
+				stdoutByArgContains: map[string]string{
+					"cnpg.io/jobRole=full-recovery": tt.stdout,
+					"get pod":                       testReadyPodJSON(t, spec, cluster),
+				},
+			}
+			if tt.nonzero {
+				runner.failWhenArgsContain = "cnpg.io/jobRole=full-recovery"
+			}
+			if tt.runnerErr {
+				runner.errorWhenArgsContain = "cnpg.io/jobRole=full-recovery"
+			}
+			client := NewKubectlClient(KubectlConfig{}, runner)
+
+			_, _, err := client.WaitForInstanceReady(
+				context.Background(),
+				spec,
+				WaitOptions{Timeout: time.Second, Cluster: cluster},
+			)
+			if err == nil || !strings.Contains(err.Error(), tt.wantDetail) {
+				t.Fatalf("WaitForInstanceReady() error = %v, want %q", err, tt.wantDetail)
+			}
+			if len(runner.invocations) != 1 {
+				t.Fatalf("full-recovery uncertainty must fail before Ready check: %#v", runner.invocations)
+			}
+		})
 	}
 }
 
@@ -187,44 +472,146 @@ func TestKubectlClientCaptureEvidenceIsBestEffort(t *testing.T) {
 	}
 }
 
-func TestKubectlClientDeletePVCsUsesClusterAndOwnershipLabels(t *testing.T) {
+func TestKubectlClientDeletePVCUsesObservedUIDPrecondition(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	client := NewKubectlClient(KubectlConfig{Timeout: 10 * time.Minute}, runner)
 	spec := testVerifyClusterSpec(t)
+	cluster := testOwnedCluster(t, spec)
+	owned := OwnedPVCs{Items: []OwnedPVC{{
+		Name:             spec.Name + "-1",
+		UID:              "pvc-uid",
+		OwnerClusterName: spec.Name,
+		OwnerClusterUID:  cluster.UID,
+		ContractDigest:   cluster.ContractDigest,
+	}}}
 
-	evidence, err := client.DeletePVCs(context.Background(), spec)
+	evidence, err := client.DeletePVCs(context.Background(), spec, cluster, owned)
 	if err != nil {
 		t.Fatalf("delete pvcs: %v", err)
 	}
 
-	if len(runner.invocations) != 1 {
-		t.Fatalf("expected one invocation, got %d", len(runner.invocations))
+	if len(runner.invocations) != 2 {
+		t.Fatalf("expected delete and wait invocations, got %d", len(runner.invocations))
 	}
-	args := runner.invocations[0].Args
-	wantArgs := []string{"-n", "d003-db", "delete", "pvc", "-l", "cnpg.io/cluster=" + spec.Name + "," + labelOwnershipID + "=" + spec.OwnershipID, "--ignore-not-found=true", "--wait=true", "--timeout=600s"}
-	if !reflect.DeepEqual(args, wantArgs) {
-		t.Fatalf("unexpected args: got %#v want %#v", args, wantArgs)
+	wantDeleteArgs := []string{
+		"-n", "d003-db", "delete",
+		"--raw=/api/v1/namespaces/d003-db/persistentvolumeclaims/" + spec.Name + "-1",
+		"-f", "-",
 	}
-	if !hasOperation(evidence, "kubectl-delete-pvcs") {
+	wantWaitArgs := []string{
+		"-n", "d003-db", "wait", "--for=delete",
+		"persistentvolumeclaim/" + spec.Name + "-1",
+		"--timeout=600s",
+	}
+	if !reflect.DeepEqual(runner.invocations[0].Args, wantDeleteArgs) ||
+		!reflect.DeepEqual(runner.invocations[1].Args, wantWaitArgs) {
+		t.Fatalf("unexpected delete invocations %#v", runner.invocations)
+	}
+	wantPayload := `{"apiVersion":"v1","kind":"DeleteOptions","propagationPolicy":"Foreground","preconditions":{"uid":"pvc-uid"}}`
+	if string(runner.invocations[0].Stdin) != wantPayload {
+		t.Fatalf("delete payload = %q, want %q", runner.invocations[0].Stdin, wantPayload)
+	}
+	if !hasOperation(evidence, "kubectl-delete-pvc") ||
+		!hasOperation(evidence, "kubectl-wait-pvc-delete") {
 		t.Fatalf("missing delete pvcs evidence %#v", evidence)
 	}
 }
 
-func TestKubectlClientDeleteClusterUsesOwnershipLabelAndIsIdempotent(t *testing.T) {
+func TestKubectlClientDeletePVCRejectsOwnerUIDMismatchBeforeMutation(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+	spec := testVerifyClusterSpec(t)
+	cluster := ownedClusterForSpec(spec, "current-cluster-uid")
+	owned := OwnedPVCs{Items: []OwnedPVC{{
+		Name:             spec.Name + "-1",
+		UID:              "pvc-uid",
+		OwnerClusterName: spec.Name,
+		OwnerClusterUID:  "replaced-cluster-uid",
+		ContractDigest:   cluster.ContractDigest,
+	}}}
+
+	if _, err := client.DeletePVCs(context.Background(), spec, cluster, owned); err == nil ||
+		!strings.Contains(err.Error(), "owner uid does not match") {
+		t.Fatalf("DeletePVCs() error = %v, want owner uid mismatch", err)
+	}
+	if len(runner.invocations) != 0 {
+		t.Fatalf("owner uid mismatch invoked kubectl: %#v", runner.invocations)
+	}
+}
+
+func TestKubectlClientDeleteClusterUsesObservedUIDPrecondition(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
 	runner := &fakeCommandRunner{}
 	client := NewKubectlClient(KubectlConfig{Timeout: 10 * time.Minute}, runner)
-	spec := testVerifyClusterSpec(t)
+	owned := testOwnedCluster(t, spec)
 
-	evidence, err := client.DeleteCluster(context.Background(), spec)
+	evidence, err := client.DeleteCluster(context.Background(), spec, owned)
 	if err != nil {
 		t.Fatalf("delete cluster: %v", err)
 	}
-	wantArgs := []string{"-n", "d003-db", "delete", "cluster.postgresql.cnpg.io", "-l", labelOwnershipID + "=" + spec.OwnershipID, "--ignore-not-found=true", "--wait=true", "--timeout=600s"}
-	if len(runner.invocations) != 1 || !reflect.DeepEqual(runner.invocations[0].Args, wantArgs) {
+	wantDeleteArgs := []string{
+		"-n", "d003-db", "delete",
+		"--raw=/apis/postgresql.cnpg.io/v1/namespaces/d003-db/clusters/" + spec.Name,
+		"-f", "-",
+	}
+	wantWaitArgs := []string{
+		"-n", "d003-db", "wait", "--for=delete",
+		"cluster.postgresql.cnpg.io/" + spec.Name,
+		"--timeout=600s",
+	}
+	if len(runner.invocations) != 2 ||
+		!reflect.DeepEqual(runner.invocations[0].Args, wantDeleteArgs) ||
+		!reflect.DeepEqual(runner.invocations[1].Args, wantWaitArgs) {
 		t.Fatalf("unexpected delete invocation %#v", runner.invocations)
 	}
-	if !hasOperation(evidence, "kubectl-delete-cluster") {
+	wantPayload := `{"apiVersion":"v1","kind":"DeleteOptions","propagationPolicy":"Foreground","preconditions":{"uid":"cluster-uid"}}`
+	if string(runner.invocations[0].Stdin) != wantPayload {
+		t.Fatalf("delete payload = %q, want %q", runner.invocations[0].Stdin, wantPayload)
+	}
+	if !hasOperation(evidence, "kubectl-delete-cluster") ||
+		!hasOperation(evidence, "kubectl-wait-cluster-delete") {
 		t.Fatalf("missing delete cluster evidence %#v", evidence)
+	}
+}
+
+func TestKubectlClientDeleteClusterIsIdempotentWhenOwnershipIsAbsent(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+
+	evidence, err := client.DeleteCluster(
+		context.Background(),
+		testVerifyClusterSpec(t),
+		OwnedCluster{},
+	)
+
+	if err != nil {
+		t.Fatalf("delete absent cluster: %v", err)
+	}
+	if len(runner.invocations) != 0 || len(evidence) != 0 {
+		t.Fatalf("absent cluster must not invoke kubectl, got %#v", runner.invocations)
+	}
+}
+
+func TestKubectlClientFindOwnedClusterFailsClosedOnAmbiguousOwnership(t *testing.T) {
+	spec := testVerifyClusterSpec(t)
+	runner := &fakeCommandRunner{stdoutByArgContains: map[string]string{
+		"get cluster.postgresql.cnpg.io": `{"items":[
+			{"metadata":{"name":"` + spec.Name + `","uid":"cluster-uid"}},
+			{"metadata":{"name":"unexpected-cluster","uid":"other-uid"}}
+		]}`,
+	}}
+	client := NewKubectlClient(KubectlConfig{}, runner)
+
+	_, evidence, err := client.FindOwnedCluster(context.Background(), spec)
+
+	if err == nil || !strings.Contains(err.Error(), "maximum is 1") {
+		t.Fatalf("FindOwnedCluster() error = %v", err)
+	}
+	if len(runner.invocations) != 1 {
+		t.Fatalf("ambiguous ownership observation invocations = %#v", runner.invocations)
+	}
+	if !hasOperation(evidence, "kubectl-find-owned-cluster") {
+		t.Fatalf("missing ownership observation evidence %#v", evidence)
 	}
 }
 
@@ -232,20 +619,24 @@ func TestKubectlClientCleanupRequiresOwnershipID(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	client := NewKubectlClient(KubectlConfig{}, runner)
 	spec := testVerifyClusterSpec(t)
+	cluster := testOwnedCluster(t, spec)
 	spec.OwnershipID = ""
 
-	if _, err := client.DeleteCluster(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "ownership id is required") {
+	if _, err := client.DeleteCluster(context.Background(), spec, cluster); err == nil || !strings.Contains(err.Error(), "ownership id is required") {
 		t.Fatalf("expected cluster ownership guard, got %v", err)
 	}
-	if _, err := client.DeletePVCs(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "ownership id is required") {
+	if _, err := client.DeletePVCs(context.Background(), spec, cluster, OwnedPVCs{}); err == nil || !strings.Contains(err.Error(), "ownership id is required") {
 		t.Fatalf("expected PVC ownership guard, got %v", err)
+	}
+	if _, _, err := client.FindOwnedPVCs(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "ownership id is required") {
+		t.Fatalf("expected PVC observation ownership guard, got %v", err)
 	}
 	if len(runner.invocations) != 0 {
 		t.Fatalf("ownership guard must fail before kubectl, got %#v", runner.invocations)
 	}
 
 	spec.OwnershipID = "owner,team=other"
-	if _, err := client.DeleteCluster(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "safe label value") {
+	if _, err := client.DeleteCluster(context.Background(), spec, cluster); err == nil || !strings.Contains(err.Error(), "safe label value") {
 		t.Fatalf("expected selector injection guard, got %v", err)
 	}
 	if len(runner.invocations) != 0 {
@@ -360,6 +751,133 @@ func TestKubectlClientCompletedBackupRejectsInvalidExactSelection(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestKubectlClientRedactsRawDiscoveryParseError(t *testing.T) {
+	const secret = "cnpg-discovery-secret"
+	runner := &fakeCommandRunner{
+		stdoutByArgContains: map[string]string{
+			"backups.postgresql.cnpg.io": `{
+  "items": [{
+    "metadata": {
+      "name": "backup",
+      "creationTimestamp": "` + secret + `"
+    },
+    "spec": {"cluster": {"name": "altbox"}},
+    "status": {"phase": "completed"}
+  }]
+}`,
+		},
+	}
+	client := NewKubectlClient(KubectlConfig{RedactValues: []string{secret}}, runner)
+
+	_, evidence, err := client.CompletedBackup(
+		context.Background(),
+		testVerifyClusterSpec(t),
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("CompletedBackup() error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("CompletedBackup() error leaked configured value: %v", err)
+	}
+	if len(evidence) != 1 ||
+		evidence[0].Command == nil ||
+		strings.Contains(evidence[0].Command.Stdout, secret) {
+		t.Fatalf("CompletedBackup() evidence leaked configured value: %#v", evidence)
+	}
+}
+
+func TestKubectlClientRejectsRedactedCanonicalDiscoveryFields(t *testing.T) {
+	const secret = "canonical-secret"
+	spec := testVerifyClusterSpec(t)
+
+	t.Run("backup name", func(t *testing.T) {
+		runner := &fakeCommandRunner{
+			stdoutByArgContains: map[string]string{
+				"backups.postgresql.cnpg.io": `{
+  "items": [{
+    "metadata": {
+      "name": "backup-` + secret + `",
+      "creationTimestamp": "2026-07-07T02:00:00Z"
+    },
+    "spec": {"cluster": {"name": "altbox"}},
+    "status": {"phase": "completed"}
+  }]
+}`,
+			},
+		}
+		client := NewKubectlClient(
+			KubectlConfig{RedactValues: []string{secret}},
+			runner,
+		)
+
+		_, _, err := client.CompletedBackup(context.Background(), spec, "")
+		if err == nil || !strings.Contains(err.Error(), `canonical field "backup_name"`) {
+			t.Fatalf("CompletedBackup() error = %v", err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("CompletedBackup() error leaked configured value: %v", err)
+		}
+	})
+
+	t.Run("postgres image", func(t *testing.T) {
+		runner := &fakeCommandRunner{
+			stdoutByArgContains: map[string]string{
+				"cluster.postgresql.cnpg.io": `{
+  "spec": {"imageName": "registry.example/postgres:` + secret + `"}
+}`,
+			},
+		}
+		client := NewKubectlClient(
+			KubectlConfig{RedactValues: []string{secret}},
+			runner,
+		)
+
+		_, _, err := client.SourceClusterImage(context.Background(), spec)
+		if err == nil || !strings.Contains(err.Error(), `canonical field "postgres_image"`) {
+			t.Fatalf("SourceClusterImage() error = %v", err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("SourceClusterImage() error leaked configured value: %v", err)
+		}
+	})
+
+	t.Run("plugin object store", func(t *testing.T) {
+		runner := &fakeCommandRunner{
+			stdoutByArgContains: map[string]string{
+				"cluster.postgresql.cnpg.io": `{
+  "spec": {
+    "plugins": [{
+      "name": "` + DefaultPluginName + `",
+      "isWALArchiver": true,
+      "parameters": {
+        "barmanObjectName": "store-` + secret + `",
+        "serverName": "altbox"
+      }
+    }]
+  }
+}`,
+			},
+		}
+		client := NewKubectlClient(
+			KubectlConfig{RedactValues: []string{secret}},
+			runner,
+		)
+
+		_, _, err := client.SourceClusterPlugin(
+			context.Background(),
+			spec,
+			DefaultPluginName,
+		)
+		if err == nil || !strings.Contains(err.Error(), `canonical field "object_store"`) {
+			t.Fatalf("SourceClusterPlugin() error = %v", err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("SourceClusterPlugin() error leaked configured value: %v", err)
+		}
+	})
 }
 
 func TestKubectlClientSourceClusterImage(t *testing.T) {
@@ -492,13 +1010,18 @@ func TestKubectlClientSourceClusterImageFallsBackToPostgresPod(t *testing.T) {
 }
 
 type fakeCommandRunner struct {
-	invocations         []command.Invocation
-	failWhenArgsContain string
-	stdoutByArgContains map[string]string
+	invocations          []command.Invocation
+	failWhenArgsContain  string
+	errorWhenArgsContain string
+	stdoutByArgContains  map[string]string
 }
 
 func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (command.Result, error) {
 	r.invocations = append(r.invocations, inv)
+	if r.errorWhenArgsContain != "" &&
+		strings.Contains(strings.Join(inv.Args, " "), r.errorWhenArgsContain) {
+		return command.Result{}, errors.New("simulated kubectl error")
+	}
 
 	success := true
 	exitCode := 0
@@ -517,6 +1040,11 @@ func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (comm
 	}
 
 	now := time.Date(2026, 7, 7, 8, 40, 0, 0, time.UTC).Add(time.Duration(len(r.invocations)) * time.Second)
+	redactor := command.NewRedactor(inv.RedactValues...)
+	evidenceArgs := make([]string, len(inv.Args))
+	for index, argument := range inv.Args {
+		evidenceArgs[index] = redactor.RedactString(argument)
+	}
 	return command.Result{
 		Raw: command.RawEvidence{
 			Path:   inv.Path,
@@ -524,8 +1052,8 @@ func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (comm
 			Stdout: []byte(stdout),
 		},
 		Evidence: model.CommandEvidence{
-			Path:       inv.Path,
-			Args:       append([]string{}, inv.Args...),
+			Path:       redactor.RedactString(inv.Path),
+			Args:       evidenceArgs,
 			StartedAt:  now.Add(-1 * time.Second),
 			FinishedAt: now,
 			ExitStatus: model.ExitStatus{
@@ -534,9 +1062,33 @@ func (r *fakeCommandRunner) Run(_ context.Context, inv command.Invocation) (comm
 				Success:  success,
 				ExitCode: exitCode,
 			},
-			Stdout: stdout,
+			Stdout: redactor.RedactString(stdout),
 		},
 	}, nil
+}
+
+type blockingCommandRunner struct {
+	invocations []command.Invocation
+}
+
+func (r *blockingCommandRunner) Run(ctx context.Context, inv command.Invocation) (command.Result, error) {
+	r.invocations = append(r.invocations, inv)
+	<-ctx.Done()
+	now := time.Now().UTC()
+	return command.Result{
+		Evidence: model.CommandEvidence{
+			Path:       inv.Path,
+			Args:       append([]string{}, inv.Args...),
+			StartedAt:  now,
+			FinishedAt: now,
+			ExitStatus: model.ExitStatus{
+				ExitCode: -1,
+				TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded),
+				Canceled: errors.Is(ctx.Err(), context.Canceled),
+				Error:    ctx.Err().Error(),
+			},
+		},
+	}, ctx.Err()
 }
 
 func sortedKeys(values map[string]string) []string {

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type ProviderType string
@@ -243,6 +244,95 @@ type WALRange struct {
 	Timeline     string `json:"timeline,omitempty"`
 }
 
+func (r WALRange) Validate() error {
+	lsnValues := make(map[string]uint64, 2)
+	for _, item := range []struct {
+		field string
+		value string
+	}{
+		{field: "wal_range.start_lsn", value: r.StartLSN},
+		{field: "wal_range.end_lsn", value: r.EndLSN},
+	} {
+		if item.value == "" {
+			continue
+		}
+		if err := (RecoveryTarget{Type: RecoveryTargetLSN, Value: item.value}).Validate(); err != nil {
+			return fmt.Errorf("invalid %s: %w", item.field, err)
+		}
+		value, _ := parseLSN(item.value)
+		lsnValues[item.field] = value
+	}
+	if start, startOK := lsnValues["wal_range.start_lsn"]; startOK {
+		if end, endOK := lsnValues["wal_range.end_lsn"]; endOK && end < start {
+			return fmt.Errorf("wal_range.end_lsn must not be earlier than wal_range.start_lsn")
+		}
+	}
+
+	segments := make(map[string]uint32, 2)
+	for _, item := range []struct {
+		field string
+		value string
+	}{
+		{field: "wal_range.start_segment", value: r.StartSegment},
+		{field: "wal_range.end_segment", value: r.EndSegment},
+	} {
+		if item.value == "" {
+			continue
+		}
+		timeline, err := parseWALSegment(item.value)
+		if err != nil {
+			return fmt.Errorf("invalid %s: %w", item.field, err)
+		}
+		segments[item.field] = timeline
+	}
+	if startTimeline, startOK := segments["wal_range.start_segment"]; startOK {
+		if endTimeline, endOK := segments["wal_range.end_segment"]; endOK {
+			if endTimeline != startTimeline {
+				return fmt.Errorf("wal_range start and end segments must use the same timeline")
+			}
+			if strings.ToUpper(r.EndSegment) < strings.ToUpper(r.StartSegment) {
+				return fmt.Errorf("wal_range.end_segment must not be earlier than wal_range.start_segment")
+			}
+		}
+	}
+
+	if r.Timeline != "" {
+		if err := (RecoveryTarget{Type: RecoveryTargetLatest, Timeline: r.Timeline}).Validate(); err != nil {
+			return fmt.Errorf("invalid wal_range.timeline: %w", err)
+		}
+		if r.Timeline != "latest" && r.Timeline != "current" {
+			timeline, _ := strconv.ParseUint(r.Timeline, 10, 32)
+			for field, segmentTimeline := range segments {
+				if uint32(timeline) != segmentTimeline {
+					return fmt.Errorf(
+						"%s timeline %d does not match wal_range.timeline %s",
+						field,
+						segmentTimeline,
+						r.Timeline,
+					)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func parseWALSegment(value string) (uint32, error) {
+	if len(value) != 24 {
+		return 0, fmt.Errorf("WAL segment must contain exactly 24 hexadecimal characters")
+	}
+	for offset := 0; offset < len(value); offset += 8 {
+		if _, err := strconv.ParseUint(value[offset:offset+8], 16, 32); err != nil {
+			return 0, fmt.Errorf("WAL segment must contain exactly 24 hexadecimal characters: %w", err)
+		}
+	}
+	timeline, _ := strconv.ParseUint(value[:8], 16, 32)
+	if timeline == 0 {
+		return 0, fmt.Errorf("WAL segment timeline must be positive")
+	}
+	return uint32(timeline), nil
+}
+
 type Backup struct {
 	ID                string            `json:"id"`
 	Provider          ProviderType      `json:"provider"`
@@ -260,6 +350,48 @@ type Backup struct {
 	Hostname          string            `json:"hostname,omitempty"`
 	Permanent         bool              `json:"permanent,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
+}
+
+func (b Backup) ValidateRecoveryMetadata() error {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "backup id", value: b.ID},
+		{name: "backup provider_id", value: b.ProviderID},
+		{name: "backup cluster_name", value: b.ClusterName},
+		{name: "backup parent_id", value: b.ParentID},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if err := ValidateIdentity(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	for _, field := range []struct {
+		name     string
+		value    string
+		maxBytes int
+	}{
+		{name: "backup postgresql_version", value: b.PostgreSQLVersion, maxBytes: 256},
+		{name: "backup data_directory", value: b.DataDirectory, maxBytes: MaxCommandPathBytes},
+		{name: "backup hostname", value: b.Hostname, maxBytes: 1024},
+	} {
+		if strings.IndexByte(field.value, 0) >= 0 {
+			return fmt.Errorf("%s must not contain NUL", field.name)
+		}
+		if err := validateBoundedUTF8(field.name, field.value, field.maxBytes); err != nil {
+			return err
+		}
+	}
+	if err := validateStringAttributes("backup metadata", b.Metadata); err != nil {
+		return err
+	}
+	if b.StartedAt != nil && b.FinishedAt != nil && b.FinishedAt.Before(*b.StartedAt) {
+		return fmt.Errorf("finished_at must not be earlier than started_at")
+	}
+	return b.WALRange.Validate()
 }
 
 func ProviderScopedID(provider ProviderType, providerID string) string {
@@ -356,16 +488,24 @@ func (t RecoveryTarget) Timestamp() (time.Time, error) {
 }
 
 func validateLSN(value string) error {
+	_, err := parseLSN(value)
+	return err
+}
+
+func parseLSN(value string) (uint64, error) {
 	parts := strings.Split(value, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return fmt.Errorf("lsn recovery target value must use PostgreSQL X/Y hexadecimal format")
+		return 0, fmt.Errorf("lsn recovery target value must use PostgreSQL X/Y hexadecimal format")
 	}
-	for _, part := range parts {
-		if _, err := strconv.ParseUint(part, 16, 32); err != nil {
-			return fmt.Errorf("lsn recovery target value must use PostgreSQL X/Y hexadecimal format: %w", err)
+	values := [2]uint64{}
+	for index, part := range parts {
+		parsed, err := strconv.ParseUint(part, 16, 32)
+		if err != nil {
+			return 0, fmt.Errorf("lsn recovery target value must use PostgreSQL X/Y hexadecimal format: %w", err)
 		}
+		values[index] = parsed
 	}
-	return nil
+	return values[0]<<32 | values[1], nil
 }
 
 type TargetSpec struct {
@@ -425,6 +565,21 @@ type RestorePlan struct {
 	Evidence       []EvidenceRecord `json:"evidence,omitempty"`
 }
 
+const (
+	MaxChecksPerReport              = 4096
+	MaxEvidenceRecordsPerReport     = 4096
+	MaxOperationsPerReport          = 1024
+	MaxBackupsPerCatalog            = 10_000
+	MaxCommandArguments             = 4096
+	MaxCommandArgumentBytes         = 64 << 10
+	MaxCommandEnvironmentEntries    = 4096
+	MaxCommandEnvironmentNameBytes  = 1024
+	MaxCommandEnvironmentValueBytes = 64 << 10
+	MaxCommandPathBytes             = 4096
+	MaxCommandErrorBytes            = 16 << 10
+	MaxCommandEvidenceBytes         = 1 << 20
+)
+
 type CheckStatus string
 
 const (
@@ -478,8 +633,9 @@ func (s DrillStatus) IsTerminal() bool {
 }
 
 const (
-	CurrentReportSchemaVersion = "pgdrill.report/v1"
-	LegacyReportSchemaVersion  = "pgdrill.report/v1alpha1"
+	CurrentReportSchemaVersion  = "pgdrill.report/v2"
+	PreviousReportSchemaVersion = "pgdrill.report/v1"
+	LegacyReportSchemaVersion   = "pgdrill.report/v1alpha1"
 )
 
 type DrillStage string
@@ -534,7 +690,7 @@ type DrillFailure struct {
 func NewDrillFailure(stage DrillStage, err error, evidence []EvidenceRecord) *DrillFailure {
 	failure := &DrillFailure{Stage: stage}
 	if err != nil {
-		failure.Message = err.Error()
+		failure.Message = boundedUTF8Text(err.Error(), MaxFailureMessageBytes)
 	}
 	seen := map[string]struct{}{}
 	for _, record := range evidence {
@@ -548,6 +704,18 @@ func NewDrillFailure(stage DrillStage, err error, evidence []EvidenceRecord) *Dr
 		failure.EvidenceIDs = append(failure.EvidenceIDs, record.ID)
 	}
 	return failure
+}
+
+func boundedUTF8Text(value string, maxBytes int) string {
+	value = strings.ToValidUTF8(strings.TrimSpace(value), "\uFFFD")
+	if len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 type DrillResult struct {

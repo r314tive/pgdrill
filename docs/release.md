@@ -44,9 +44,10 @@ change in `CHANGELOG.md`.
 - Bash syntax for disposable integration scripts
 
 Use `make format` to apply Go formatting. `make release-check` is the release
-gate; it additionally runs pinned `actionlint`, the race detector, CLI smoke
-tests, and release artifact generation. It fails immediately when the active
-compiler does not exactly match `.go-version`.
+gate; it additionally runs pinned `actionlint`, ShellCheck across every
+versioned demo and integration script, the race detector, CLI smoke tests, and
+release artifact generation. It fails immediately when the active compiler
+does not exactly match `.go-version`.
 
 The Yandex Cloud demo has an additional opt-in infrastructure gate because it
 requires external Terraform and ShellCheck binaries:

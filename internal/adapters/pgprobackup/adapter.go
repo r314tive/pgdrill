@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/adapterutil"
 	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
@@ -81,7 +83,11 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 
 	backups, err := ParseShow(result.Raw.Stdout, a.cfg.Instance)
 	if err != nil {
-		return catalog, err
+		return catalog, result.RedactError(err)
+	}
+	backups, err = adapterutil.RedactBackups(backups, result)
+	if err != nil {
+		return catalog, fmt.Errorf("redact pg_probackup catalog: %w", err)
 	}
 	catalog.Backups = backups
 	return catalog, nil
@@ -122,10 +128,16 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 	}
 	if runErr != nil {
 		check.Status = model.CheckStatusFailed
-		check.Message = "run pg_probackup validate: " + runErr.Error()
+		check.Message = "run pg_probackup validate: " + result.RedactError(runErr).Error()
 	} else if !result.Evidence.ExitStatus.Success {
 		check.Status = model.CheckStatusFailed
 		check.Message = "pg_probackup validate failed: " + result.Evidence.ExitStatus.Summary()
+	}
+	check, err = adapterutil.RedactCheck(check, result)
+	if err != nil {
+		return model.CheckReport{
+			Evidence: []model.EvidenceRecord{evidence},
+		}, fmt.Errorf("redact pg_probackup validate result: %w", result.RedactError(err))
 	}
 	return model.CheckReport{
 		Checks:   []model.Check{check},
@@ -312,7 +324,7 @@ func recoveryArgs(target model.RecoveryTarget, includeAction bool) ([]string, er
 		return nil, err
 	}
 	args := []string{}
-	targeted := target.Type != ""
+	targeted := target.Type != model.RecoveryTargetLatest
 	switch target.Type {
 	case "":
 	case model.RecoveryTargetLatest:
@@ -352,7 +364,6 @@ func recoveryArgs(target model.RecoveryTarget, includeAction bool) ([]string, er
 	}
 	if target.Timeline != "" {
 		args = append(args, "--recovery-target-timeline="+target.Timeline)
-		targeted = true
 	}
 	if target.Inclusive != nil {
 		switch target.Type {
@@ -363,7 +374,7 @@ func recoveryArgs(target model.RecoveryTarget, includeAction bool) ([]string, er
 		}
 	}
 	if includeAction && targeted {
-		args = append(args, "--recovery-target-action=promote")
+		args = append(args, "--recovery-target-action=pause")
 	}
 	return args, nil
 }
@@ -373,9 +384,7 @@ func ParseShow(data []byte, defaultInstance string) ([]model.Backup, error) {
 		return nil, fmt.Errorf("pg_probackup show produced no JSON output")
 	}
 	var root any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&root); err != nil {
+	if err := jsonutil.DecodeOne(data, &root); err != nil {
 		return nil, fmt.Errorf("parse pg_probackup show json: %w", err)
 	}
 	instances, err := instanceObjects(root)
@@ -385,7 +394,11 @@ func ParseShow(data []byte, defaultInstance string) ([]model.Backup, error) {
 
 	backups := []model.Backup{}
 	for i, object := range instances {
-		instance := firstNonEmpty(getString(object, "instance"), defaultInstance)
+		instanceValue, _, err := optionalStringField(object, "instance name", "instance")
+		if err != nil {
+			return nil, fmt.Errorf("parse pg_probackup instance %d: %w", i, err)
+		}
+		instance := firstNonEmpty(instanceValue, defaultInstance)
 		if instance == "" {
 			return nil, fmt.Errorf("parse pg_probackup instance %d: missing instance name", i)
 		}
@@ -396,6 +409,12 @@ func ParseShow(data []byte, defaultInstance string) ([]model.Backup, error) {
 		entries, ok := value.([]any)
 		if !ok {
 			return nil, fmt.Errorf("parse pg_probackup instance %q: backups must be an array", instance)
+		}
+		if len(entries) > model.MaxBackupsPerCatalog-len(backups) {
+			return nil, fmt.Errorf(
+				"parse pg_probackup show: backups exceed maximum count %d",
+				model.MaxBackupsPerCatalog,
+			)
 		}
 		for j, value := range entries {
 			entry, ok := value.(map[string]any)
@@ -415,6 +434,12 @@ func ParseShow(data []byte, defaultInstance string) ([]model.Backup, error) {
 func instanceObjects(root any) ([]map[string]any, error) {
 	switch typed := root.(type) {
 	case []any:
+		if len(typed) > model.MaxBackupsPerCatalog {
+			return nil, fmt.Errorf(
+				"parse pg_probackup show: instances exceed maximum count %d",
+				model.MaxBackupsPerCatalog,
+			)
+		}
 		objects := make([]map[string]any, 0, len(typed))
 		for i, value := range typed {
 			object, ok := value.(map[string]any)
@@ -432,9 +457,26 @@ func instanceObjects(root any) ([]map[string]any, error) {
 }
 
 func mapBackup(object map[string]any, instance string) (model.Backup, error) {
-	backupID := getString(object, "id", "backup-id", "backup_id")
-	if backupID == "" {
-		return model.Backup{}, fmt.Errorf("missing backup id")
+	backupID, err := requiredStringField(object, "backup id", "id", "backup-id", "backup_id")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	parentID, _, err := optionalStringField(
+		object,
+		"parent backup id",
+		"parent-backup-id",
+		"parent_backup_id",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	status, _, err := optionalStringField(object, "backup status", "status")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	backupMode, _, err := optionalStringField(object, "backup mode", "backup-mode", "backup_mode")
+	if err != nil {
+		return model.Backup{}, err
 	}
 	startedAt, err := optionalTime(object, "start-time", "start_time")
 	if err != nil {
@@ -445,6 +487,40 @@ func mapBackup(object map[string]any, instance string) (model.Backup, error) {
 		return model.Backup{}, err
 	}
 	validatedAt, err := optionalTime(object, "end-validation-time", "end_validation_time")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	startLSN, err := consistentString(object, "start LSN", "start-lsn", "start_lsn")
+	if err != nil {
+		return model.Backup{}, err
+	}
+	endLSN, err := consistentString(
+		object,
+		"end LSN",
+		"stop-lsn",
+		"stop_lsn",
+		"end-lsn",
+		"end_lsn",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	timeline, err := consistentString(
+		object,
+		"timeline",
+		"current-tli",
+		"current_tli",
+		"timelineid",
+	)
+	if err != nil {
+		return model.Backup{}, err
+	}
+	postgresVersion, err := consistentString(
+		object,
+		"server version",
+		"server-version",
+		"server_version",
+	)
 	if err != nil {
 		return model.Backup{}, err
 	}
@@ -459,23 +535,23 @@ func mapBackup(object map[string]any, instance string) (model.Backup, error) {
 		Provider:       model.ProviderPGProbackup,
 		ProviderID:     providerID,
 		ClusterName:    instance,
-		ParentID:       getString(object, "parent-backup-id", "parent_backup_id"),
-		Kind:           mapBackupKind(getString(object, "backup-mode", "backup_mode")),
-		Status:         mapBackupStatus(getString(object, "status")),
+		ParentID:       parentID,
+		Kind:           mapBackupKind(backupMode),
+		Status:         mapBackupStatus(status),
 		StartedAt:      startedAt,
 		FinishedAt:     finishedAt,
 		LastModifiedAt: lastModifiedAt,
 		WALRange: model.WALRange{
-			StartLSN: getString(object, "start-lsn", "start_lsn"),
-			EndLSN:   getString(object, "stop-lsn", "stop_lsn", "end-lsn", "end_lsn"),
-			Timeline: getString(object, "current-tli", "current_tli", "timelineid"),
+			StartLSN: startLSN,
+			EndLSN:   endLSN,
+			Timeline: timeline,
 		},
-		PostgreSQLVersion: getString(object, "server-version", "server_version"),
+		PostgreSQLVersion: postgresVersion,
 		Metadata: metadata(object,
 			"status", "backup-mode", "wal", "program-version", "parent-tli",
 			"compress-alg", "compress-level", "from-replica", "checksum-version",
 			"recovery-xid", "recovery-time", "data-bytes", "wal-bytes",
-			"uncompressed-bytes", "pgdata-bytes", "content-crc", "expire-time", "note",
+			"uncompressed-bytes", "pgdata-bytes", "content-crc", "expire-time",
 		),
 	}, nil
 }
@@ -509,15 +585,68 @@ func mapBackupStatus(value string) model.BackupStatus {
 }
 
 func optionalTime(object map[string]any, keys ...string) (*time.Time, error) {
-	value := getString(object, keys...)
-	if value == "" {
-		return nil, nil
+	var (
+		selectedKey  string
+		selectedTime *time.Time
+	)
+	for _, key := range keys {
+		if _, present := object[key]; !present || object[key] == nil {
+			continue
+		}
+		value := getString(object, key)
+		if value == "" {
+			continue
+		}
+		parsed, err := parseTime(value)
+		if err != nil {
+			return nil, fmt.Errorf("field %q: %w", key, err)
+		}
+		if selectedTime != nil && !selectedTime.Equal(parsed) {
+			return nil, fmt.Errorf(
+				"time aliases %q and %q conflict",
+				selectedKey,
+				key,
+			)
+		}
+		if selectedTime == nil {
+			selectedKey = key
+			selectedTime = &parsed
+		}
 	}
-	parsed, err := parseTime(value)
-	if err != nil {
-		return nil, err
+	return selectedTime, nil
+}
+
+func consistentString(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, error) {
+	var (
+		selectedKey   string
+		selectedValue string
+	)
+	for _, key := range keys {
+		if _, present := object[key]; !present || object[key] == nil {
+			continue
+		}
+		value := getString(object, key)
+		if value == "" {
+			continue
+		}
+		if selectedValue != "" && value != selectedValue {
+			return "", fmt.Errorf(
+				"%s aliases %q and %q conflict",
+				name,
+				selectedKey,
+				key,
+			)
+		}
+		if selectedValue == "" {
+			selectedKey = key
+			selectedValue = value
+		}
 	}
-	return &parsed, nil
+	return selectedValue, nil
 }
 
 func parseTime(value string) (time.Time, error) {
@@ -536,6 +665,29 @@ func parseTime(value string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unsupported time format %q", value)
+}
+
+func requiredStringField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, error) {
+	value, found, err := optionalStringField(object, name, keys...)
+	if err != nil {
+		return "", err
+	}
+	if !found || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("missing %s", name)
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func optionalStringField(
+	object map[string]any,
+	name string,
+	keys ...string,
+) (string, bool, error) {
+	return adapterutil.OptionalTrimmedStringAlias(object, name, keys...)
 }
 
 func getString(object map[string]any, keys ...string) string {

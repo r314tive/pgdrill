@@ -95,6 +95,28 @@ func TestArtifactVerifyAndConfirmedGCCommands(t *testing.T) {
 		verification.UnreferencedBlobs != 1 {
 		t.Fatalf("verification = %#v", verification)
 	}
+	formattedVerification := verification
+	formattedVerification.PendingGCOperations = []string{"sha256:pending-operation"}
+	formattedVerification.PendingGCCleanup = []string{"sha256:pending-cleanup"}
+	var text bytes.Buffer
+	if err := writeArtifactVerificationText(
+		&text,
+		storePath,
+		historyPath,
+		formattedVerification,
+	); err != nil {
+		t.Fatalf("format artifact verification: %v", err)
+	}
+	for _, want := range []string{
+		"Referenced blobs:",
+		"Pending GC:",
+		"sha256:pending-operation",
+		"Pending cleanup:",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("artifact verification text missing %q:\n%s", want, text.String())
+		}
+	}
 
 	stdout.Reset()
 	stderr.Reset()
@@ -118,6 +140,15 @@ func TestArtifactVerifyAndConfirmedGCCommands(t *testing.T) {
 	if len(plan.Blobs) != 1 || plan.Blobs[0].ID != orphan.ID {
 		t.Fatalf("plan = %#v", plan)
 	}
+	text.Reset()
+	if err := writeArtifactGCPlanText(&text, storePath, historyPath, plan); err != nil {
+		t.Fatalf("format artifact GC plan: %v", err)
+	}
+	for _, want := range []string{"plan only", "Candidate blobs:", orphan.ID} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("artifact GC plan text missing %q:\n%s", want, text.String())
+		}
+	}
 	if _, err := store.Read(context.Background(), orphan); err != nil {
 		t.Fatalf("dry-run removed orphan: %v", err)
 	}
@@ -134,6 +165,15 @@ func TestArtifactVerifyAndConfirmedGCCommands(t *testing.T) {
 	}
 	if result.DeletedBlobs != 1 || result.PlanDigest != plan.Digest {
 		t.Fatalf("result = %#v", result)
+	}
+	text.Reset()
+	if err := writeArtifactGCResultText(&text, storePath, historyPath, result); err != nil {
+		t.Fatalf("format artifact GC result: %v", err)
+	}
+	for _, want := range []string{"Deleted blobs:", plan.Digest} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("artifact GC result text missing %q:\n%s", want, text.String())
+		}
 	}
 	if _, err := store.Read(context.Background(), live); err != nil {
 		t.Fatalf("live artifact missing: %v", err)

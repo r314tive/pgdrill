@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/r314tive/pgdrill/internal/checkpoint"
 	"github.com/r314tive/pgdrill/internal/model"
@@ -28,8 +29,30 @@ func TestOperationExecutorFailsClosedBeforeMutation(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Execute() error = %v, want checkpoint error", err)
 	}
+	if !strings.Contains(err.Error(), "persist operation intent") ||
+		strings.Contains(err.Error(), "cleanup operation intent") {
+		t.Fatalf("Execute() intent error is not operation-generic: %v", err)
+	}
 	if called {
 		t.Fatal("mutation ran before its intent was durably accepted")
+	}
+}
+
+func TestBoundedCheckpointMessageProducesValidUTF8(t *testing.T) {
+	if got, want := boundedCheckpointMessage("  invalid "+string([]byte{0xff})+"  "), "invalid ?"; got != want {
+		t.Fatalf("boundedCheckpointMessage(invalid UTF-8) = %q, want %q", got, want)
+	}
+
+	message := strings.Repeat("\u00e9", maxCheckpointMessageBytes)
+	got := boundedCheckpointMessage(message)
+	if len(got) > maxCheckpointMessageBytes {
+		t.Fatalf("boundedCheckpointMessage() bytes = %d", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("boundedCheckpointMessage() returned invalid UTF-8: %q", got)
+	}
+	if len(got) == 0 || !strings.HasPrefix(message, got) {
+		t.Fatalf("boundedCheckpointMessage() did not retain a valid prefix")
 	}
 }
 
@@ -43,9 +66,14 @@ func TestOperationExecutorAcceptsProvenUncertainSuccess(t *testing.T) {
 	target := &operationTargetStub{reconciliation: model.OperationReconciliation{
 		Disposition: model.ReconciliationCompleted,
 		Message:     "owned resource exists",
+		Evidence:    []model.EvidenceRecord{testEvidence("reconcile-observation")},
+		Report: model.CheckReport{
+			Checks:   []model.Check{{Name: "reconciled", Status: model.CheckStatusPassed}},
+			Evidence: []model.EvidenceRecord{testEvidence("reconcile-report")},
+		},
 	}}
 	operation := operationForResult(t, result)
-	_, err = executor.Execute(context.Background(), target, operation, false, func() (operationOutput, error) {
+	output, err := executor.Execute(context.Background(), target, operation, false, func() (operationOutput, error) {
 		target.mutated = true
 		return operationOutput{}, errors.New("transport closed after request")
 	})
@@ -61,6 +89,12 @@ func TestOperationExecutorAcceptsProvenUncertainSuccess(t *testing.T) {
 	}
 	if len(result.Operations) != 1 || result.Operations[0].State != model.OperationStateSucceeded {
 		t.Fatalf("unexpected result operation records %#v", result.Operations)
+	}
+	if len(output.evidence) != 1 || output.evidence[0].ID != "reconcile-observation" {
+		t.Fatalf("reconciliation evidence was lost: %#v", output.evidence)
+	}
+	if len(output.report.Checks) != 1 || len(output.report.Evidence) != 1 {
+		t.Fatalf("reconciliation report was lost: %#v", output.report)
 	}
 }
 
@@ -161,10 +195,27 @@ func TestReconcileAttemptDoesNotMarkFailedObservationAsReconciled(t *testing.T) 
 	}
 
 	wantErr := errors.New("target observation unavailable")
-	checkpoints, _, _, err := ReconcileAttempt(
+	artifact := managedArtifactRef(t)
+	target := &operationTargetStub{
+		reconcileErr: wantErr,
+		reconciliation: model.OperationReconciliation{
+			Evidence: []model.EvidenceRecord{testEvidence("partial-observation")},
+			Report: model.CheckReport{
+				Evidence: []model.EvidenceRecord{{
+					ID:          "partial-report",
+					Kind:        model.EvidenceRuntime,
+					Source:      "target",
+					CollectedAt: now,
+					ArtifactIDs: []string{artifact.ID},
+				}},
+				Artifacts: []model.ArtifactRef{artifact},
+			},
+		},
+	}
+	checkpoints, evidence, artifacts, err := ReconcileAttempt(
 		context.Background(),
 		store,
-		&operationTargetStub{reconcileErr: wantErr},
+		target,
 		model.AttemptContext{Identity: operation.Identity, Target: result.Target},
 		advancingClock(now.Add(time.Minute)),
 	)
@@ -173,6 +224,13 @@ func TestReconcileAttemptDoesNotMarkFailedObservationAsReconciled(t *testing.T) 
 	}
 	if len(checkpoints) != 1 || checkpoints[0].State != model.OperationStateUnknown || checkpoints[0].Reconciled {
 		t.Fatalf("unexpected failed-observation checkpoint %#v", checkpoints)
+	}
+	if len(evidence) != 2 ||
+		evidence[0].ID != "partial-observation" ||
+		evidence[1].ID != "partial-report" ||
+		len(artifacts) != 1 ||
+		artifacts[0] != artifact {
+		t.Fatalf("partial reconciliation output was lost: evidence=%#v artifacts=%#v", evidence, artifacts)
 	}
 }
 

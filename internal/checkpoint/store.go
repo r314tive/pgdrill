@@ -15,11 +15,17 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/filelock"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
-const maxCheckpointFileBytes = 64 << 10
+const (
+	maxCheckpointFileBytes      = 64 << 10
+	maxCheckpointTemporaryFiles = 128
+	maxAttemptDirectoryEntries  = model.MaxOperationsPerReport + maxCheckpointTemporaryFiles + 1
+)
 
 type Store interface {
 	Save(ctx context.Context, checkpoint model.OperationCheckpoint) error
@@ -61,8 +67,22 @@ func (s *MemoryStore) Save(ctx context.Context, checkpoint model.OperationCheckp
 		if err := validateTransition(previous, checkpoint); err != nil {
 			return err
 		}
-	} else if checkpoint.State != model.OperationStateIntent {
-		return fmt.Errorf("first checkpoint state must be %q", model.OperationStateIntent)
+	} else {
+		if checkpoint.State != model.OperationStateIntent {
+			return fmt.Errorf("first checkpoint state must be %q", model.OperationStateIntent)
+		}
+		count := 0
+		for _, existing := range s.checkpoints {
+			if existing.Operation.Identity == checkpoint.Operation.Identity {
+				count++
+			}
+		}
+		if count >= model.MaxOperationsPerReport {
+			return fmt.Errorf(
+				"attempt checkpoints exceed maximum count %d",
+				model.MaxOperationsPerReport,
+			)
+		}
 	}
 	s.checkpoints[checkpoint.Operation.Key] = checkpoint
 	return nil
@@ -122,18 +142,35 @@ func (s DirectoryStore) Save(ctx context.Context, checkpoint model.OperationChec
 		return fmt.Errorf("validate operation checkpoint: %w", err)
 	}
 	return s.withAttemptLock(ctx, checkpoint.Operation.Identity, filelock.Exclusive, func(dir string) error {
-		path := filepath.Join(dir, operationFileName(checkpoint.Operation))
-		previous, found, err := readCheckpoint(path)
+		checkpoints, err := readAttemptCheckpoints(dir, checkpoint.Operation.Identity)
 		if err != nil {
 			return err
+		}
+		var previous model.OperationCheckpoint
+		found := false
+		for _, existing := range checkpoints {
+			if existing.Operation.Key == checkpoint.Operation.Key {
+				previous = existing
+				found = true
+				break
+			}
 		}
 		if found {
 			if err := validateTransition(previous, checkpoint); err != nil {
 				return err
 			}
-		} else if checkpoint.State != model.OperationStateIntent {
-			return fmt.Errorf("first checkpoint state must be %q", model.OperationStateIntent)
+		} else {
+			if checkpoint.State != model.OperationStateIntent {
+				return fmt.Errorf("first checkpoint state must be %q", model.OperationStateIntent)
+			}
+			if len(checkpoints) >= model.MaxOperationsPerReport {
+				return fmt.Errorf(
+					"attempt checkpoints exceed maximum count %d",
+					model.MaxOperationsPerReport,
+				)
+			}
 		}
+		path := filepath.Join(dir, operationFileName(checkpoint.Operation))
 		payload, err := json.MarshalIndent(checkpoint, "", "  ")
 		if err != nil {
 			return fmt.Errorf("encode operation checkpoint: %w", err)
@@ -172,29 +209,13 @@ func (s DirectoryStore) List(ctx context.Context, identity model.AttemptIdentity
 	}
 	result := []model.OperationCheckpoint{}
 	err := s.withExistingAttemptLock(ctx, identity, func(dir string) error {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return fmt.Errorf("read attempt checkpoint directory %s: %w", dir, err)
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-			checkpoint, found, err := readCheckpoint(filepath.Join(dir, entry.Name()))
-			if err != nil {
-				return err
-			}
-			if !found || checkpoint.Operation.Identity != identity {
-				return fmt.Errorf("checkpoint file %s has mismatched attempt identity", entry.Name())
-			}
-			result = append(result, checkpoint)
-		}
-		return nil
+		var err error
+		result, err = readAttemptCheckpoints(dir, identity)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	sortCheckpoints(result)
 	return result, nil
 }
 
@@ -217,8 +238,8 @@ func (s DirectoryStore) withExistingAttemptLock(
 	if err != nil {
 		return fmt.Errorf("inspect checkpoint store directory %s: %w", root, err)
 	}
-	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
-		return fmt.Errorf("checkpoint store path is not a real directory: %s", root)
+	if err := validateCheckpointDirectoryInfo(root, rootInfo); err != nil {
+		return err
 	}
 	dir := filepath.Join(root, attemptDirectoryName(identity))
 	info, err := os.Lstat(dir)
@@ -228,8 +249,8 @@ func (s DirectoryStore) withExistingAttemptLock(
 	if err != nil {
 		return fmt.Errorf("inspect attempt checkpoint directory %s: %w", dir, err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("attempt checkpoint path is not a real directory: %s", dir)
+	if err := validateCheckpointDirectoryInfo(dir, info); err != nil {
+		return err
 	}
 	lockPath := filepath.Join(dir, ".lock")
 	lock, err := openAttemptLock(lockPath, false)
@@ -255,14 +276,14 @@ func (s DirectoryStore) withAttemptLock(ctx context.Context, identity model.Atte
 		return err
 	}
 	root := filepath.Clean(s.Path)
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	if err := durablefs.MkdirAll(root, 0o700); err != nil {
 		return fmt.Errorf("create checkpoint store directory %s: %w", root, err)
 	}
 	if err := ensureRealCheckpointDirectory(root); err != nil {
 		return err
 	}
 	dir := filepath.Join(root, attemptDirectoryName(identity))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := durablefs.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create attempt checkpoint directory %s: %w", dir, err)
 	}
 	if err := ensureRealCheckpointDirectory(dir); err != nil {
@@ -280,6 +301,11 @@ func (s DirectoryStore) withAttemptLock(ctx context.Context, identity model.Atte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if mode == filelock.Exclusive {
+		if err := cleanupCheckpointTemporaryFiles(dir); err != nil {
+			return err
+		}
+	}
 	return operation(dir)
 }
 
@@ -288,80 +314,32 @@ func ensureRealCheckpointDirectory(path string) error {
 	if err != nil {
 		return fmt.Errorf("inspect checkpoint directory %s: %w", path, err)
 	}
+	return validateCheckpointDirectoryInfo(path, info)
+}
+
+func validateCheckpointDirectoryInfo(path string, info os.FileInfo) error {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return fmt.Errorf("checkpoint path is not a real directory: %s", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("checkpoint directory permissions %o are not private: %s", info.Mode().Perm(), path)
 	}
 	return nil
 }
 
 func openAttemptLock(path string, create bool) (*os.File, error) {
-	const createAttempts = 4
-	for attempt := 0; attempt < createAttempts; attempt++ {
-		info, err := os.Lstat(path)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			if !create {
-				return nil, fmt.Errorf("attempt checkpoint lock is missing: %s", path)
-			}
-			file, openErr := os.OpenFile(
-				path,
-				os.O_CREATE|os.O_EXCL|os.O_RDWR,
-				0o600,
-			)
-			if errors.Is(openErr, os.ErrExist) {
-				continue
-			}
-			if openErr != nil {
-				return nil, fmt.Errorf("create attempt checkpoint lock: %w", openErr)
-			}
-			if validateErr := validateOpenedAttemptLock(path, file); validateErr != nil {
-				_ = file.Close()
-				return nil, validateErr
-			}
-			return file, nil
-		case err != nil:
-			return nil, fmt.Errorf("inspect attempt checkpoint lock: %w", err)
-		case info.Mode()&os.ModeSymlink != 0:
-			return nil, fmt.Errorf(
-				"attempt checkpoint lock must not be a symbolic link: %s",
-				path,
-			)
-		case !info.Mode().IsRegular():
-			return nil, fmt.Errorf(
-				"attempt checkpoint lock is not a regular file: %s",
-				path,
-			)
-		}
-
-		file, openErr := os.OpenFile(path, os.O_RDWR, 0)
-		if openErr != nil {
-			return nil, fmt.Errorf("open attempt checkpoint lock: %w", openErr)
-		}
-		if validateErr := validateOpenedAttemptLock(path, file); validateErr != nil {
-			_ = file.Close()
-			return nil, validateErr
-		}
-		return file, nil
+	flags := os.O_RDWR
+	if create {
+		flags |= os.O_CREATE
 	}
-	return nil, fmt.Errorf("attempt checkpoint lock creation did not stabilize: %s", path)
-}
-
-func validateOpenedAttemptLock(path string, file *os.File) error {
-	pathInfo, err := os.Lstat(path)
+	file, err := filelock.OpenPrivate(path, flags)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("attempt checkpoint lock is missing: %s", path)
+	}
 	if err != nil {
-		return fmt.Errorf("inspect opened attempt checkpoint lock: %w", err)
+		return nil, fmt.Errorf("open attempt checkpoint lock: %w", err)
 	}
-	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
-		return fmt.Errorf("attempt checkpoint lock is not a real file: %s", path)
-	}
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("stat opened attempt checkpoint lock: %w", err)
-	}
-	if !fileInfo.Mode().IsRegular() || !os.SameFile(pathInfo, fileInfo) {
-		return fmt.Errorf("attempt checkpoint lock changed while opening: %s", path)
-	}
-	return nil
+	return file, nil
 }
 
 func validateTransition(previous, next model.OperationCheckpoint) error {
@@ -401,6 +379,16 @@ func readCheckpoint(path string) (model.OperationCheckpoint, bool, error) {
 	if linkInfo.Mode()&os.ModeSymlink != 0 {
 		return model.OperationCheckpoint{}, false, fmt.Errorf("operation checkpoint must not be a symbolic link: %s", path)
 	}
+	if !linkInfo.Mode().IsRegular() {
+		return model.OperationCheckpoint{}, false, fmt.Errorf("operation checkpoint is not a regular file: %s", path)
+	}
+	if linkInfo.Mode().Perm()&0o077 != 0 {
+		return model.OperationCheckpoint{}, false, fmt.Errorf(
+			"operation checkpoint permissions %o are not private: %s",
+			linkInfo.Mode().Perm(),
+			path,
+		)
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return model.OperationCheckpoint{}, false, fmt.Errorf("open operation checkpoint %s: %w", path, err)
@@ -410,24 +398,22 @@ func readCheckpoint(path string) (model.OperationCheckpoint, bool, error) {
 	if err != nil {
 		return model.OperationCheckpoint{}, false, fmt.Errorf("stat operation checkpoint %s: %w", path, err)
 	}
-	if !info.Mode().IsRegular() {
-		return model.OperationCheckpoint{}, false, fmt.Errorf("operation checkpoint is not a regular file: %s", path)
+	if !info.Mode().IsRegular() || !os.SameFile(linkInfo, info) {
+		return model.OperationCheckpoint{}, false, fmt.Errorf("operation checkpoint changed while opening: %s", path)
 	}
 	if info.Size() > maxCheckpointFileBytes {
 		return model.OperationCheckpoint{}, false, fmt.Errorf("operation checkpoint %s exceeds %d bytes", path, maxCheckpointFileBytes)
 	}
-	decoder := json.NewDecoder(io.LimitReader(file, maxCheckpointFileBytes+1))
-	decoder.DisallowUnknownFields()
-	var checkpoint model.OperationCheckpoint
-	if err := decoder.Decode(&checkpoint); err != nil {
-		return model.OperationCheckpoint{}, false, fmt.Errorf("decode operation checkpoint %s: %w", path, err)
+	payload, err := io.ReadAll(io.LimitReader(file, maxCheckpointFileBytes+1))
+	if err != nil {
+		return model.OperationCheckpoint{}, false, fmt.Errorf("read operation checkpoint %s: %w", path, err)
 	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return model.OperationCheckpoint{}, false, fmt.Errorf("operation checkpoint %s contains multiple JSON values", path)
-		}
-		return model.OperationCheckpoint{}, false, fmt.Errorf("decode operation checkpoint trailing data %s: %w", path, err)
+	if len(payload) > maxCheckpointFileBytes {
+		return model.OperationCheckpoint{}, false, fmt.Errorf("operation checkpoint %s exceeds %d bytes", path, maxCheckpointFileBytes)
+	}
+	var checkpoint model.OperationCheckpoint
+	if err := jsonutil.DecodeOneStrict(payload, &checkpoint); err != nil {
+		return model.OperationCheckpoint{}, false, fmt.Errorf("decode operation checkpoint %s: %w", path, err)
 	}
 	if err := checkpoint.Validate(); err != nil {
 		return model.OperationCheckpoint{}, false, fmt.Errorf("validate operation checkpoint %s: %w", path, err)
@@ -466,13 +452,92 @@ func replaceFile(ctx context.Context, dir, path string, payload []byte) error {
 	return syncDirectory(dir)
 }
 
-func syncDirectory(path string) error {
-	dir, err := os.Open(path)
+func cleanupCheckpointTemporaryFiles(dir string) error {
+	entries, err := durablefs.ReadDirBounded(dir, maxAttemptDirectoryEntries)
 	if err != nil {
-		return err
+		return fmt.Errorf("read attempt checkpoint directory for temporary recovery: %w", err)
 	}
-	defer dir.Close()
-	return dir.Sync()
+	paths := make([]string, 0)
+	for _, entry := range entries {
+		if !isCheckpointTemporaryFileName(entry.Name()) {
+			continue
+		}
+		if len(paths) >= maxCheckpointTemporaryFiles {
+			return fmt.Errorf(
+				"attempt checkpoints exceed maximum temporary file count %d",
+				maxCheckpointTemporaryFiles,
+			)
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := validateCheckpointTemporaryFile(path); err != nil {
+			return err
+		}
+		paths = append(paths, path)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	var removeErr error
+	removed := false
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			removeErr = fmt.Errorf("remove temporary checkpoint %s: %w", path, err)
+			break
+		}
+		removed = true
+	}
+	var syncErr error
+	if removed {
+		if err := syncDirectory(dir); err != nil {
+			syncErr = fmt.Errorf("sync checkpoint directory after temporary recovery: %w", err)
+		}
+	}
+	return errors.Join(removeErr, syncErr)
+}
+
+func validateCheckpointTemporaryFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect temporary checkpoint %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("temporary checkpoint is not a regular non-symbolic-link file: %s", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf(
+			"temporary checkpoint permissions %o are not private: %s",
+			info.Mode().Perm(),
+			path,
+		)
+	}
+	if info.Size() > maxCheckpointFileBytes {
+		return fmt.Errorf("temporary checkpoint %s exceeds %d bytes", path, maxCheckpointFileBytes)
+	}
+	return nil
+}
+
+func isCheckpointTemporaryFileName(name string) bool {
+	const (
+		prefix = ".checkpoint-"
+		suffix = ".tmp"
+	)
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	random := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if random == "" {
+		return false
+	}
+	for _, character := range random {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func syncDirectory(path string) error {
+	return durablefs.SyncDirectory(path)
 }
 
 func attemptDirectoryName(identity model.AttemptIdentity) string {
@@ -483,6 +548,72 @@ func attemptDirectoryName(identity model.AttemptIdentity) string {
 
 func operationFileName(operation model.Operation) string {
 	return strings.TrimPrefix(operation.Key, "sha256:") + ".json"
+}
+
+func readAttemptCheckpoints(
+	dir string,
+	identity model.AttemptIdentity,
+) ([]model.OperationCheckpoint, error) {
+	entries, err := durablefs.ReadDirBounded(dir, maxAttemptDirectoryEntries)
+	if err != nil {
+		return nil, fmt.Errorf("read attempt checkpoint directory %s: %w", dir, err)
+	}
+	result := make([]model.OperationCheckpoint, 0, min(len(entries), model.MaxOperationsPerReport))
+	seen := make(map[string]struct{}, len(entries))
+	temporaryCount := 0
+	for _, entry := range entries {
+		switch {
+		case entry.Name() == ".lock":
+			if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				return nil, fmt.Errorf("attempt checkpoint lock is not a regular file")
+			}
+			continue
+		case isCheckpointTemporaryFileName(entry.Name()):
+			temporaryCount++
+			if temporaryCount > maxCheckpointTemporaryFiles {
+				return nil, fmt.Errorf(
+					"attempt checkpoints exceed maximum temporary file count %d",
+					maxCheckpointTemporaryFiles,
+				)
+			}
+			if err := validateCheckpointTemporaryFile(filepath.Join(dir, entry.Name())); err != nil {
+				return nil, err
+			}
+			continue
+		case entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json"):
+			return nil, fmt.Errorf(
+				"attempt checkpoint directory contains unexpected entry %q",
+				entry.Name(),
+			)
+		}
+		checkpoint, found, err := readCheckpoint(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		if !found || checkpoint.Operation.Identity != identity {
+			return nil, fmt.Errorf("checkpoint file %s has mismatched attempt identity", entry.Name())
+		}
+		if entry.Name() != operationFileName(checkpoint.Operation) {
+			return nil, fmt.Errorf(
+				"checkpoint file %s does not match embedded operation key %q",
+				entry.Name(),
+				checkpoint.Operation.Key,
+			)
+		}
+		if _, exists := seen[checkpoint.Operation.Key]; exists {
+			return nil, fmt.Errorf("checkpoint operation key %q is duplicated", checkpoint.Operation.Key)
+		}
+		seen[checkpoint.Operation.Key] = struct{}{}
+		if len(result) >= model.MaxOperationsPerReport {
+			return nil, fmt.Errorf(
+				"attempt checkpoints exceed maximum count %d",
+				model.MaxOperationsPerReport,
+			)
+		}
+		result = append(result, checkpoint)
+	}
+	sortCheckpoints(result)
+	return result, nil
 }
 
 func sortCheckpoints(checkpoints []model.OperationCheckpoint) {

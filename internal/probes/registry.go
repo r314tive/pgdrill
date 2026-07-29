@@ -105,6 +105,11 @@ func ValidateConfig(cfg config.ProbeConfig) error {
 	if strings.TrimSpace(cfg.Preset) != "" {
 		return fmt.Errorf("probe preset must be expanded before construction")
 	}
+	name := strings.TrimSpace(cfg.Name)
+	if name != "" &&
+		command.NewRedactor(cfg.RedactValues...).RedactString(name) != name {
+		return fmt.Errorf("probe name contains a configured redaction value")
+	}
 
 	switch cfg.Type {
 	case model.ProbePGIsReady:
@@ -143,15 +148,33 @@ func rejectProbeFields(cfg config.ProbeConfig, allowQuery bool, allowModeAndArgs
 }
 
 func ExpandConfigs(cfgs []config.ProbeConfig) ([]config.ProbeConfig, error) {
+	if len(cfgs) > model.MaxChecksPerReport {
+		return nil, fmt.Errorf(
+			"probe configurations exceed maximum count %d",
+			model.MaxChecksPerReport,
+		)
+	}
 	expanded := make([]config.ProbeConfig, 0, len(cfgs))
 	for i, cfg := range cfgs {
 		if strings.TrimSpace(cfg.Preset) == "" {
+			if len(expanded) == model.MaxChecksPerReport {
+				return nil, fmt.Errorf(
+					"expanded probes exceed maximum count %d",
+					model.MaxChecksPerReport,
+				)
+			}
 			expanded = append(expanded, cfg)
 			continue
 		}
 		preset, err := expandPreset(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("probe %d preset %q: %w", i, cfg.Preset, err)
+		}
+		if len(preset) > model.MaxChecksPerReport-len(expanded) {
+			return nil, fmt.Errorf(
+				"expanded probes exceed maximum count %d",
+				model.MaxChecksPerReport,
+			)
 		}
 		expanded = append(expanded, preset...)
 	}

@@ -118,7 +118,7 @@ Implemented restore planning:
   <target-data-dir>` command step
 - PITR flags mapped from the canonical recovery target:
   `--target-time`, `--target-lsn`, `--target-xid`, `--target-name`,
-  `--target-tli`, `--exclusive`, and `--target-action promote`
+  `--target-tli`, `--exclusive`, and `--target-action pause`
 - optional `pg_verifybackup` restore check against the restored data directory
   before PostgreSQL startup
 
@@ -127,7 +127,8 @@ Implemented provider validation:
 - `barman check <server>`
 - `barman check-backup <server> <backup-id>`
 - `barman --format json show-backup <server> <backup-id>` for selected-backup
-  evidence and normalized attributes
+  evidence and normalized attributes; validation requires the returned server
+  and backup ID to match the request and the status to normalize to available
 - optional `barman verify-backup <server> <backup-id>` for manifest-level
   provider verification when `provider.barman_verify_backup.enabled` is true
 - optional `barman generate-manifest <server> <backup-id>` before
@@ -152,7 +153,9 @@ Initial discovery command:
 Implemented normalization:
 
 - provider ID: `<stanza>/<backup-label>`
-- status: available unless the backup entry reports `error: true`
+- status: available only when stanza `status.code` is explicitly zero and the
+  backup entry explicitly reports `error: false`; missing or contradictory
+  status proof is failed closed
 - kind: `full`, `differential`, `incremental`
 - timestamps from `timestamp.start` and `timestamp.stop`
 - WAL range from `archive.start`, `archive.stop`, `lsn.start`, and `lsn.stop`
@@ -183,7 +186,7 @@ Implemented restore planning:
 - PITR flags mapped from the canonical recovery target: `--type=time`,
   `--type=lsn`, `--type=xid`, `--type=name`, `--type=immediate`,
   `--target=<value>`, `--target-timeline=<timeline>`,
-  `--target-exclusive`, and `--target-action=promote`
+  `--target-exclusive`, and `--target-action=pause`
 - canonical RFC3339 timestamps are converted to PostgreSQL's space-separated
   UTC timestamp form before pgBackRest writes `recovery_target_time`
 - optional `pg_verifybackup` restore check when `restore.verify_backup.enabled`
@@ -237,7 +240,7 @@ Implemented restore planning:
   `--recovery-target=latest|immediate`, `--recovery-target-time`,
   `--recovery-target-lsn`, `--recovery-target-xid`,
   `--recovery-target-name`, `--recovery-target-timeline`,
-  `--recovery-target-inclusive`, and `--recovery-target-action=promote`
+  `--recovery-target-inclusive`, and `--recovery-target-action=pause`
 - canonical RFC3339 timestamps are converted to PostgreSQL's space-separated
   UTC timestamp form before validation or restore; pg_probackup 2.x accepts
   only whole-second targets, so fractional timestamps fail before mutation

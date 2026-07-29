@@ -197,6 +197,14 @@ the lifecycle and evidence permissions shown in the example. Because pod exec is
 a privileged capability, use a dedicated service account and namespace-scoped
 Role. pgdrill does not request Secret access.
 
+Readiness binds the observed Pod UID, Cluster UID, ownership label, owner
+reference, and recovery-contract digest before probes begin. Kubernetes
+`pods/exec` itself is addressed by Pod name and offers no UID precondition, so
+this transport cannot eliminate a replacement race between the readiness
+observation and an exec request. Namespace write access is therefore inside the
+current trust boundary; do not grant unrelated principals permission to replace
+the verification Pod during a drill.
+
 `SIGINT` or `SIGTERM` cancels active `kubectl` and probe commands and produces
 an `aborted` report. If cancellation happens while the cluster is starting,
 automatic cleanup follows `target.kubernetes.cleanup_on_fail`; after a cluster
@@ -314,6 +322,13 @@ process, and cleanup must agree with the exact ownership marker. Apply requires
 the reviewed recovery-plan digest and a separately stopped executor process
 group; conflicts preserve the path and fail. See
 [attempt-recovery.md](attempt-recovery.md).
+
+The process receipt also binds the PID to its operating-system creation
+identity. Linux recovery signals the opened `pidfd`; Windows uses one
+creation-time-validated process handle. macOS and other platforms without an
+equivalent identity-bound signalling primitive fail closed when an interrupted
+PostgreSQL process is still running, rather than signalling a raw PID that
+could have been reused. Normal in-process cleanup is unaffected.
 
 File-writing restore steps are lexically limited to `work_dir` and reject
 existing symlink path components before and after parent-directory creation.

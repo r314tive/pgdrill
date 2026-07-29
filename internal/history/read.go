@@ -3,10 +3,8 @@ package history
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/runspec"
@@ -30,12 +30,9 @@ func (s DirectoryStore) List(ctx context.Context) ([]AttemptSummary, error) {
 			}
 			return err
 		}
-		entries, err := os.ReadDir(runsDir)
+		entries, err := durablefs.ReadDirBounded(runsDir, MaxRuns)
 		if err != nil {
 			return fmt.Errorf("read history runs: %w", err)
-		}
-		if len(entries) > MaxRuns {
-			return fmt.Errorf("history store exceeds maximum run count %d", MaxRuns)
 		}
 		for _, entry := range entries {
 			if !entry.IsDir() || !validHashDirectory(entry.Name()) {
@@ -112,12 +109,9 @@ func readRunSummaries(runDir string) ([]AttemptSummary, error) {
 		}
 		return nil, err
 	}
-	entries, err := os.ReadDir(attemptsDir)
+	entries, err := durablefs.ReadDirBounded(attemptsDir, MaxAttemptsPerRun)
 	if err != nil {
 		return nil, fmt.Errorf("read history attempts: %w", err)
-	}
-	if len(entries) > MaxAttemptsPerRun {
-		return nil, fmt.Errorf("history run %q exceeds maximum attempt count %d", runIdentity.RunID, MaxAttemptsPerRun)
 	}
 	summaries := make([]AttemptSummary, 0, len(entries))
 	totalEvents := 0
@@ -297,12 +291,9 @@ func readRun(runDir string) (RunRecord, error) {
 		}
 		return RunRecord{}, err
 	}
-	entries, err := os.ReadDir(attemptsDir)
+	entries, err := durablefs.ReadDirBounded(attemptsDir, MaxAttemptsPerRun)
 	if err != nil {
 		return RunRecord{}, fmt.Errorf("read history attempts: %w", err)
-	}
-	if len(entries) > MaxAttemptsPerRun {
-		return RunRecord{}, fmt.Errorf("history run %q exceeds maximum attempt count %d", identity.RunID, MaxAttemptsPerRun)
 	}
 	totalEvents := 0
 	for _, entry := range entries {
@@ -451,15 +442,32 @@ func readEvents(attemptDir string, identity AttemptIdentity) ([]model.RunEvent, 
 		}
 		return nil, err
 	}
-	entries, err := os.ReadDir(eventsDir)
+	entries, err := durablefs.ReadDirBounded(
+		eventsDir,
+		MaxEventsPerAttempt+maxHistoryTemporaryFilesPerDirectory,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("read history events: %w", err)
 	}
-	if len(entries) > MaxEventsPerAttempt {
+	if eventCount > MaxEventsPerAttempt {
 		return nil, fmt.Errorf("history attempt %q exceeds maximum event count %d", identity.AttemptID, MaxEventsPerAttempt)
 	}
-	sequences := make([]uint64, 0, len(entries))
+	sequences := make([]uint64, 0, eventCount)
+	temporaryCount := 0
 	for _, entry := range entries {
+		if isHistoryTemporaryFileName(entry.Name()) {
+			temporaryCount++
+			if temporaryCount > maxHistoryTemporaryFilesPerDirectory {
+				return nil, fmt.Errorf(
+					"history events exceeds maximum temporary file count %d",
+					maxHistoryTemporaryFilesPerDirectory,
+				)
+			}
+			if err := validateHistoryTemporaryFile(filepath.Join(eventsDir, entry.Name())); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if entry.IsDir() {
 			return nil, fmt.Errorf("history events contains unexpected directory %q", entry.Name())
 		}
@@ -512,20 +520,11 @@ func readReport(path string) (model.DrillResult, error) {
 	if err != nil {
 		return model.DrillResult{}, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	var result model.DrillResult
-	if err := decoder.Decode(&result); err != nil {
+	if err := jsonutil.DecodeOneStrict(payload, &result); err != nil {
 		return model.DrillResult{}, err
 	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return model.DrillResult{}, fmt.Errorf("multiple JSON values")
-		}
-		return model.DrillResult{}, fmt.Errorf("decode trailing data: %w", err)
-	}
-	if err := report.Validate(result); err != nil {
+	if err := report.ValidateReaderContract(result); err != nil {
 		return model.DrillResult{}, err
 	}
 	return result, nil

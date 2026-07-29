@@ -94,6 +94,29 @@ func TestDirectoryStoreCancellationDoesNotCreateStore(t *testing.T) {
 	}
 }
 
+func TestDirectoryStoreReadDoesNotRecreateMissingLock(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	store := DirectoryStore{Path: root}
+	ref, err := store.Put(
+		context.Background(),
+		testMetadata(t),
+		strings.NewReader("payload"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, storeLockFileName)
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Read(context.Background(), ref); err == nil {
+		t.Fatal("Read() accepted store with missing lock")
+	}
+	if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Read() recreated missing lock: %v", err)
+	}
+}
+
 func TestDirectoryStoreDetectsCorruptedAndSymbolicLinkArtifacts(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "artifacts")
 	store := DirectoryStore{Path: root}
@@ -122,6 +145,25 @@ func TestDirectoryStoreDetectsCorruptedAndSymbolicLinkArtifacts(t *testing.T) {
 	}
 	if _, err := store.Read(context.Background(), ref); err == nil || !strings.Contains(err.Error(), "non-symbolic-link") {
 		t.Fatalf("Read(symlink) error = %v", err)
+	}
+}
+
+func TestDirectoryStoreReadRejectsPermissiveArtifact(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	store := DirectoryStore{Path: root}
+	ref, err := store.Put(context.Background(), testMetadata(t), strings.NewReader("private"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hexDigest := strings.TrimPrefix(ref.ID, "sha256:")
+	artifactPath := filepath.Join(root, "sha256", hexDigest[:2], hexDigest)
+	if err := os.Chmod(artifactPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Read(context.Background(), ref); err == nil ||
+		!strings.Contains(err.Error(), "permissions") {
+		t.Fatalf("Read(permissive artifact) error = %v", err)
 	}
 }
 
@@ -214,6 +256,51 @@ func TestMemoryStoreRequiresClassificationBeforeReadingContent(t *testing.T) {
 	}
 	if reader.reads != 0 {
 		t.Fatalf("invalid metadata consumed content %d times", reader.reads)
+	}
+}
+
+func TestMemoryStoreReadContract(t *testing.T) {
+	store := NewMemoryStore()
+	ref, err := store.Put(
+		context.Background(),
+		testMetadata(t),
+		strings.NewReader("memory payload"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := store.Read(context.Background(), ref)
+	if err != nil || string(payload) != "memory payload" {
+		t.Fatalf("Read() = %q, %v", payload, err)
+	}
+	payload[0] = 'X'
+	again, err := store.Read(context.Background(), ref)
+	if err != nil || string(again) != "memory payload" {
+		t.Fatalf("Read() did not return an isolated copy: %q, %v", again, err)
+	}
+
+	wrongURI := ref
+	wrongURI.URI = "memory://sha256/" + strings.Repeat("f", 64)
+	if _, err := store.Read(context.Background(), wrongURI); err == nil ||
+		!strings.Contains(err.Error(), "does not belong") {
+		t.Fatalf("Read(wrong URI) error = %v", err)
+	}
+	missing := ref
+	missing.ID = "sha256:" + strings.Repeat("f", 64)
+	missing.URI = "memory://sha256/" + strings.Repeat("f", 64)
+	if _, err := store.Read(context.Background(), missing); err == nil ||
+		!strings.Contains(err.Error(), "was not found") {
+		t.Fatalf("Read(missing) error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.Read(ctx, ref); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Read(canceled) error = %v", err)
+	}
+	var nilStore *MemoryStore
+	if _, err := nilStore.Read(context.Background(), ref); err == nil ||
+		!strings.Contains(err.Error(), "store is required") {
+		t.Fatalf("nil Read() error = %v", err)
 	}
 }
 

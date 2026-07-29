@@ -86,6 +86,18 @@ Reports with a configured spec policy require a matching evaluation, and a
 passed report cannot contain required `failed` or `unknown` verdicts. See
 [recovery-policy.md](recovery-policy.md).
 
+Writer validation applies additional proof obligations to newly produced
+passed reports. A native drill must retain the selected backup. Every probe
+descriptor in the canonical spec must be represented by at least one passed
+check carrying the exact `probe_name` attribute and at least one resolvable
+evidence reference, and a passed report cannot introduce a probe not declared
+by that spec. A native report requires the ordered prepare, one or more restore,
+PostgreSQL start, and cleanup graph; a managed report requires managed start
+and cleanup. Every retained operation must have succeeded. Policy machine
+fields are recomputed from the retained backup, recovery target, operation
+checkpoints, and timestamps; diagnostic message wording is deliberately not
+part of that identity check.
+
 Command evidence contains redacted arguments, environment values, output, and a
 structured exit status. `path` is the configured executable name or path;
 `resolved_path`, when present, is the executable selected by the operating
@@ -107,6 +119,30 @@ counts and `stdout_truncated`/`stderr_truncated` make either preview or raw
 truncation explicit. A successful native exit can therefore coexist with a
 failed capture contract; consumers must not use `exit_status.success` alone as
 the drill verdict.
+
+Canonical reports are also capacity-bounded before persistence and after
+loading: at most 4,096 checks, 4,096 evidence records, 1,024 operation
+checkpoints, 4,096 command arguments, and 4,096 command environment entries.
+Each durable command output preview must be valid UTF-8 and no larger than
+1 MiB. These limits keep otherwise schema-valid input from turning report
+validation into an unbounded allocation or iteration boundary.
+
+For newly produced reports, operation timestamps, command execution
+timestamps, and evidence collection timestamps must remain inside the report
+interval. A command must finish no later than the evidence record that captures
+it, and `duration_millis` must equal the whole-millisecond timestamp interval.
+`recovery_proven_at` cannot precede the successful PostgreSQL/managed-target
+start checkpoint or evidence referenced by a passing required probe. These
+checks are writer obligations; the reader keeps the documented pre-GA
+compatibility boundary for immutable historical reports.
+
+Native recovery proof records a strict
+`pgdrill.recovery-observation/v2` JSON observation in command evidence. For
+targeted recovery, v2 distinguishes an actual replay state of `paused` from a
+mere pause request and rejects already-promoted recovery; plain `latest`
+requires completed, unpaused recovery. Consumers should use the resulting
+typed recovery check and policy verdict rather than parsing the internal SQL
+observation directly.
 
 Long CNPG readiness waits retain each distinct raw command state without
 duplicating unchanged snapshots on every poll. Compacted records expose

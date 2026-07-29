@@ -12,12 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/adapterutil"
 	"github.com/r314tive/pgdrill/internal/command"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/restorechecks/pgverifybackup"
 )
 
-const defaultBinary = "wal-g"
+const (
+	defaultBinary      = "wal-g"
+	maxWALVerifyChecks = model.MaxChecksPerReport - 1
+)
 
 type Config struct {
 	Binary         string
@@ -84,7 +89,11 @@ func (a *Adapter) DiscoverBackups(ctx context.Context) (model.BackupCatalog, err
 
 	backups, err := ParseBackupList(result.Raw.Stdout)
 	if err != nil {
-		return catalog, err
+		return catalog, result.RedactError(err)
+	}
+	backups, err = adapterutil.RedactBackups(backups, result)
+	if err != nil {
+		return catalog, fmt.Errorf("redact wal-g backup catalog: %w", err)
 	}
 	catalog.Backups = backups
 	return catalog, nil
@@ -117,14 +126,34 @@ func (a *Adapter) ValidateCatalog(ctx context.Context, _ model.BackupCatalog, ba
 		RedactValues: append(append([]string{}, a.cfg.RedactValues...), a.cfg.WALVerify.RedactValues...),
 	})
 	evidence := commandEvidence(model.ProviderWALG, "wal-verify", result.Evidence)
+	checks, err := adapterutil.RedactChecks(
+		walVerifyChecks(result.Raw.Stdout, a.walVerifyChecks(), evidence.ID, result.Evidence.ExitStatus, runErr),
+		result,
+	)
+	if err != nil {
+		return model.CheckReport{
+			Evidence: []model.EvidenceRecord{evidence},
+		}, fmt.Errorf("redact wal-g wal-verify checks: %w", result.RedactError(err))
+	}
 	return model.CheckReport{
-		Checks:   walVerifyChecks(result.Raw.Stdout, a.walVerifyChecks(), evidence.ID, result.Evidence.ExitStatus, runErr),
+		Checks:   checks,
 		Evidence: []model.EvidenceRecord{evidence},
 	}, nil
 }
 
 func (a *Adapter) walVerifyArgs(backup model.Backup) ([]string, error) {
 	checks := a.walVerifyChecks()
+	if len(checks) > maxWALVerifyChecks {
+		return nil, fmt.Errorf(
+			"wal-g wal_verify checks exceed maximum count %d",
+			maxWALVerifyChecks,
+		)
+	}
+	for _, check := range checks {
+		if err := validateWALVerifyCheckName(check); err != nil {
+			return nil, err
+		}
+	}
 	backupName := firstNonEmpty(a.cfg.WALVerify.BackupName, backup.ProviderID)
 	if slices.Contains(checks, "integrity") && backupName == "" {
 		return nil, fmt.Errorf("wal-g wal_verify integrity check requires selected backup provider_id or provider.wal_verify.backup_name")
@@ -146,9 +175,14 @@ func (a *Adapter) walVerifyArgs(backup model.Backup) ([]string, error) {
 
 func (a *Adapter) walVerifyChecks() []string {
 	checks := make([]string, 0, len(a.cfg.WALVerify.Checks))
+	seen := make(map[string]struct{}, len(a.cfg.WALVerify.Checks))
 	for _, check := range a.cfg.WALVerify.Checks {
 		check = strings.ToLower(strings.TrimSpace(check))
 		if check != "" {
+			if _, duplicate := seen[check]; duplicate {
+				continue
+			}
+			seen[check] = struct{}{}
 			checks = append(checks, check)
 		}
 	}
@@ -175,7 +209,7 @@ func walVerifyChecks(data []byte, requested []string, evidenceID string, exitSta
 	}
 
 	var output map[string]walVerifyCheckOutput
-	if err := json.Unmarshal(data, &output); err != nil {
+	if err := jsonutil.DecodeOne(data, &output); err != nil {
 		return []model.Check{{
 			Name:        "wal-g-wal-verify",
 			Status:      model.CheckStatusFailed,
@@ -189,15 +223,62 @@ func walVerifyChecks(data []byte, requested []string, evidenceID string, exitSta
 	if len(output) == 0 {
 		return []model.Check{walVerifyCommandCheck(model.CheckStatusFailed, evidenceID, "wal-g wal-verify JSON output contained no checks", exitStatus, runErr)}
 	}
+	if len(output) > maxWALVerifyChecks || len(requested) > maxWALVerifyChecks {
+		return []model.Check{walVerifyCommandCheck(
+			model.CheckStatusFailed,
+			evidenceID,
+			fmt.Sprintf(
+				"wal-g wal-verify checks exceed maximum count %d",
+				maxWALVerifyChecks,
+			),
+			exitStatus,
+			runErr,
+		)}
+	}
 
-	keys := append([]string{}, requested...)
-	seen := map[string]bool{}
-	for _, key := range keys {
+	keys := make([]string, 0, min(maxWALVerifyChecks, len(requested)+len(output)))
+	seen := make(map[string]bool, len(requested)+len(output))
+	for _, key := range requested {
+		if seen[key] {
+			continue
+		}
+		if err := validateWALVerifyCheckName(key); err != nil {
+			return []model.Check{walVerifyCommandCheck(
+				model.CheckStatusFailed,
+				evidenceID,
+				"wal-g wal-verify requested check name is invalid",
+				exitStatus,
+				runErr,
+			)}
+		}
 		seen[key] = true
+		keys = append(keys, key)
 	}
 	for key := range output {
+		if err := validateWALVerifyCheckName(key); err != nil {
+			return []model.Check{walVerifyCommandCheck(
+				model.CheckStatusFailed,
+				evidenceID,
+				"wal-g wal-verify output contains an invalid check name",
+				exitStatus,
+				runErr,
+			)}
+		}
 		if !seen[key] {
+			if len(keys) == maxWALVerifyChecks {
+				return []model.Check{walVerifyCommandCheck(
+					model.CheckStatusFailed,
+					evidenceID,
+					fmt.Sprintf(
+						"wal-g wal-verify checks exceed maximum count %d",
+						maxWALVerifyChecks,
+					),
+					exitStatus,
+					runErr,
+				)}
+			}
 			keys = append(keys, key)
+			seen[key] = true
 		}
 	}
 	if len(keys) > len(requested) {
@@ -228,11 +309,21 @@ func walVerifyChecks(data []byte, requested []string, evidenceID string, exitSta
 	return checks
 }
 
+func validateWALVerifyCheckName(name string) error {
+	if err := model.ValidateIdentity(
+		"wal-g wal_verify check name",
+		"wal-g-wal-verify-"+name,
+	); err != nil {
+		return fmt.Errorf("invalid wal-g wal_verify check name: %w", err)
+	}
+	return nil
+}
+
 func walVerifyStatusCheck(name string, status string, evidenceID string) model.Check {
 	status = strings.ToUpper(strings.TrimSpace(status))
 	check := model.Check{
 		Name:        "wal-g-wal-verify-" + name,
-		Status:      model.CheckStatusWarning,
+		Status:      model.CheckStatusFailed,
 		EvidenceIDs: []string{evidenceID},
 		Attributes: map[string]string{
 			"operation":         "wal-verify",
@@ -421,13 +512,25 @@ func (a *Adapter) recoveryConfig(target model.RecoveryTarget) (string, error) {
 	if target.Inclusive != nil {
 		lines = append(lines, "recovery_target_inclusive = "+boolString(*target.Inclusive))
 	}
+	if target.Type != model.RecoveryTargetLatest {
+		lines = append(lines, "recovery_target_action = 'pause'")
+	}
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
 func ParseBackupList(data []byte) ([]model.Backup, error) {
 	var entries []backupListEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
+	if err := jsonutil.DecodeOne(data, &entries); err != nil {
 		return nil, fmt.Errorf("parse wal-g backup-list json: %w", err)
+	}
+	if entries == nil {
+		return nil, fmt.Errorf("parse wal-g backup-list json: expected array")
+	}
+	if len(entries) > model.MaxBackupsPerCatalog {
+		return nil, fmt.Errorf(
+			"parse wal-g backup-list json: backups exceed maximum count %d",
+			model.MaxBackupsPerCatalog,
+		)
 	}
 
 	backups := make([]model.Backup, 0, len(entries))
@@ -461,6 +564,9 @@ type backupListEntry struct {
 }
 
 func (e backupListEntry) toBackup() (model.Backup, error) {
+	if err := e.validateAliases(); err != nil {
+		return model.Backup{}, err
+	}
 	name := firstNonEmpty(e.Name, e.BackupName)
 	if name == "" {
 		return model.Backup{}, fmt.Errorf("missing backup name")
@@ -500,6 +606,47 @@ func (e backupListEntry) toBackup() (model.Backup, error) {
 		Permanent:         e.IsPermanent,
 		Metadata:          metadataOrNil(metadata),
 	}, nil
+}
+
+func (e backupListEntry) validateAliases() error {
+	if e.Name != "" && e.BackupName != "" && e.Name != e.BackupName {
+		return fmt.Errorf(`backup name aliases "name" and "backup_name" conflict`)
+	}
+	times := []struct {
+		key   string
+		value optionalTime
+	}{
+		{key: "last_modified", value: e.LastModified},
+		{key: "modified", value: e.Modified},
+		{key: "time", value: e.Time},
+	}
+	var selected *struct {
+		key   string
+		value optionalTime
+	}
+	for index := range times {
+		if !times[index].value.Valid {
+			continue
+		}
+		if selected != nil && !selected.value.Time.Equal(times[index].value.Time) {
+			return fmt.Errorf(
+				`last modified time aliases %q and %q conflict`,
+				selected.key,
+				times[index].key,
+			)
+		}
+		if selected == nil {
+			selected = &times[index]
+		}
+	}
+	if e.PGVersion.Valid &&
+		e.PostgresVersion.Valid &&
+		e.PGVersion.Value != e.PostgresVersion.Value {
+		return fmt.Errorf(
+			`PostgreSQL version aliases "pg_version" and "postgres_version" conflict`,
+		)
+	}
+	return nil
 }
 
 func normalizeWALLSN(value string) (string, error) {

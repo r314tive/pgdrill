@@ -128,6 +128,94 @@ func TestRecoveryTargetTimestamp(t *testing.T) {
 	}
 }
 
+func TestBackupValidateRecoveryMetadata(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		backup Backup
+		want   string
+	}{
+		{
+			name: "valid",
+			backup: Backup{
+				StartedAt:  &now,
+				FinishedAt: timePointer(now.Add(time.Second)),
+				WALRange:   WALRange{StartLSN: "0/10", EndLSN: "0/20", Timeline: "1"},
+			},
+		},
+		{
+			name: "reversed time",
+			backup: Backup{
+				StartedAt:  &now,
+				FinishedAt: timePointer(now.Add(-time.Second)),
+			},
+			want: "finished_at must not be earlier",
+		},
+		{
+			name:   "invalid lsn",
+			backup: Backup{WALRange: WALRange{StartLSN: "decimal"}},
+			want:   "invalid wal_range.start_lsn",
+		},
+		{
+			name:   "invalid timeline",
+			backup: Backup{WALRange: WALRange{Timeline: "zero"}},
+			want:   "invalid wal_range.timeline",
+		},
+		{
+			name:   "invalid segment",
+			backup: Backup{WALRange: WALRange{StartSegment: "not-a-segment"}},
+			want:   "invalid wal_range.start_segment",
+		},
+		{
+			name: "reversed lsn",
+			backup: Backup{WALRange: WALRange{
+				StartLSN: "0/20",
+				EndLSN:   "0/10",
+			}},
+			want: "end_lsn must not be earlier",
+		},
+		{
+			name: "segment timeline mismatch",
+			backup: Backup{WALRange: WALRange{
+				StartSegment: "000000010000000000000001",
+				Timeline:     "2",
+			}},
+			want: "does not match wal_range.timeline",
+		},
+		{
+			name: "segment range timeline mismatch",
+			backup: Backup{WALRange: WALRange{
+				StartSegment: "000000010000000000000001",
+				EndSegment:   "000000020000000000000002",
+			}},
+			want: "must use the same timeline",
+		},
+		{
+			name: "reversed segment",
+			backup: Backup{WALRange: WALRange{
+				StartSegment: "000000010000000000000002",
+				EndSegment:   "000000010000000000000001",
+			}},
+			want: "end_segment must not be earlier",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.backup.ValidateRecoveryMetadata()
+			if test.want == "" && err != nil {
+				t.Fatalf("ValidateRecoveryMetadata() error = %v", err)
+			}
+			if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("ValidateRecoveryMetadata() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func timePointer(value time.Time) *time.Time {
+	return &value
+}
+
 func TestNewDrillFailureCollectsUniqueEvidenceIDs(t *testing.T) {
 	failure := NewDrillFailure(DrillStageBackupSelection, fmt.Errorf("no eligible backup"), []EvidenceRecord{
 		{ID: "catalog"},
@@ -169,6 +257,39 @@ func TestDrillStageIsKnown(t *testing.T) {
 	for _, stage := range []DrillStage{"", "future_stage"} {
 		if stage.IsKnown() {
 			t.Errorf("expected stage %q to be unknown", stage)
+		}
+	}
+}
+
+func TestSpecEnumPredicatesAndDefaultProbeNames(t *testing.T) {
+	for _, mode := range []DrillMode{DrillModeNative, DrillModeManaged} {
+		if !mode.IsKnown() {
+			t.Fatalf("known drill mode %q was rejected", mode)
+		}
+	}
+	if DrillMode("future").IsKnown() {
+		t.Fatal("unknown drill mode was accepted")
+	}
+	for _, selection := range []BackupSelectionType{
+		BackupSelectionLatestAvailable,
+		BackupSelectionByID,
+	} {
+		if !selection.IsKnown() {
+			t.Fatalf("known backup selection %q was rejected", selection)
+		}
+	}
+	if BackupSelectionType("future").IsKnown() {
+		t.Fatal("unknown backup selection was accepted")
+	}
+	for probeType, want := range map[ProbeType]string{
+		ProbePGIsReady: "pg_isready",
+		ProbeSQL:       "sql",
+		ProbeAMCheck:   "pg_amcheck",
+		ProbePGDump:    "pg_dump",
+		ProbeType("x"): "x",
+	} {
+		if got := DefaultProbeName(probeType); got != want {
+			t.Fatalf("DefaultProbeName(%q) = %q, want %q", probeType, got, want)
 		}
 	}
 }

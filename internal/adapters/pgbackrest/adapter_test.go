@@ -2,6 +2,7 @@ package pgbackrest
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -100,6 +101,117 @@ func TestParseInfo(t *testing.T) {
 	}
 }
 
+func TestParseInfoRejectsMalformedTimestamp(t *testing.T) {
+	_, err := ParseInfo([]byte(`[{
+		"name": "main",
+		"status": {"code": 0},
+		"backup": [{
+			"label": "20240502-030405F",
+			"type": "full",
+			"error": false,
+			"timestamp": {"start": "not-a-time", "stop": 1714619046}
+		}]
+	}]`), "main")
+	if err == nil || !strings.Contains(err.Error(), "unsupported time format") {
+		t.Fatalf("ParseInfo() error = %v", err)
+	}
+}
+
+func TestParseInfoRejectsConflictingAliases(t *testing.T) {
+	_, err := ParseInfo([]byte(`[{
+		"name": "main",
+		"status": {"code": 0},
+		"backup": [{"label": "first", "set": "second", "error": false}]
+	}]`), "main")
+
+	if err == nil || !strings.Contains(err.Error(), "backup label aliases") {
+		t.Fatalf("ParseInfo() error = %v", err)
+	}
+}
+
+func TestCollectStanzasRejectsExcessiveCount(t *testing.T) {
+	_, err := collectStanzas(make([]any, model.MaxBackupsPerCatalog+1))
+	if err == nil || !strings.Contains(err.Error(), "exceed maximum count") {
+		t.Fatalf("collectStanzas() error = %v", err)
+	}
+}
+
+func TestParseTimeValueRejectsFractionalOrNegativeEpoch(t *testing.T) {
+	for _, value := range []any{1.5, json.Number("-1"), "-1"} {
+		if _, _, err := parseTimeValue(value); err == nil {
+			t.Fatalf("parseTimeValue(%#v) succeeded", value)
+		}
+	}
+}
+
+func TestDiscoveryRequiresPositiveAvailabilityProof(t *testing.T) {
+	tests := []struct {
+		name       string
+		stanzaData string
+		wantStatus model.BackupStatus
+	}{
+		{
+			name:       "healthy stanza and explicit successful backup",
+			stanzaData: `"status":{"code":0,"message":"ok"},"backup":[{"label":"full","error":false}]`,
+			wantStatus: model.BackupStatusAvailable,
+		},
+		{
+			name:       "missing backup error",
+			stanzaData: `"status":{"code":0,"message":"ok"},"backup":[{"label":"full"}]`,
+			wantStatus: model.BackupStatusFailed,
+		},
+		{
+			name:       "missing stanza status",
+			stanzaData: `"backup":[{"label":"full","error":false}]`,
+			wantStatus: model.BackupStatusFailed,
+		},
+		{
+			name:       "missing stanza status code",
+			stanzaData: `"status":{"message":"unknown"},"backup":[{"label":"full","error":false}]`,
+			wantStatus: model.BackupStatusFailed,
+		},
+		{
+			name:       "nonzero stanza status",
+			stanzaData: `"status":{"code":1,"message":"stanza invalid"},"backup":[{"label":"full","error":false}]`,
+			wantStatus: model.BackupStatusFailed,
+		},
+		{
+			name:       "explicit backup error",
+			stanzaData: `"status":{"code":0,"message":"ok"},"backup":[{"label":"full","error":true}]`,
+			wantStatus: model.BackupStatusFailed,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := []byte(`[{"name":"main",` + test.stanzaData + `}]`)
+
+			backups, err := ParseInfo(input, "main")
+			if err != nil {
+				t.Fatalf("ParseInfo() error = %v", err)
+			}
+			if len(backups) != 1 || backups[0].Status != test.wantStatus {
+				t.Fatalf("ParseInfo() backups = %#v, want one %q backup", backups, test.wantStatus)
+			}
+
+			catalog, err := New(
+				Config{Stanza: "main"},
+				&fakeRunner{result: successResult(input)},
+			).DiscoverBackups(context.Background())
+			if err != nil {
+				t.Fatalf("DiscoverBackups() error = %v", err)
+			}
+			if len(catalog.Backups) != 1 || catalog.Backups[0].Status != test.wantStatus {
+				t.Fatalf(
+					"DiscoverBackups() backups = %#v, want one %q backup",
+					catalog.Backups,
+					test.wantStatus,
+				)
+			}
+		})
+	}
+}
+
 func TestParseInfoDoesNotGuessDatabaseMetadataAcrossHistories(t *testing.T) {
 	backups, err := ParseInfo([]byte(`[
   {
@@ -121,6 +233,67 @@ func TestParseInfoDoesNotGuessDatabaseMetadataAcrossHistories(t *testing.T) {
 		if backup.PostgreSQLVersion != "" || backup.Metadata["system_identifier"] != "" {
 			t.Fatalf("unexpected guessed database metadata in %#v", backup)
 		}
+	}
+}
+
+func TestParseInfoRejectsCoercedIdentityBooleanAndStatusFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "numeric stanza name",
+			input: `[{"name":1,"backup":[]}]`,
+		},
+		{
+			name:  "numeric backup label",
+			input: `[{"name":"main","backup":[{"label":20240502030405,"error":false}]}]`,
+		},
+		{
+			name:  "boolean prior label",
+			input: `[{"name":"main","backup":[{"label":"20240502-030405F","prior":true,"error":false}]}]`,
+		},
+		{
+			name:  "string error flag",
+			input: `[{"name":"main","backup":[{"label":"20240502-030405F","error":"false"}]}]`,
+		},
+		{
+			name:  "scalar stanza status",
+			input: `[{"name":"main","status":"ok","backup":[]}]`,
+		},
+		{
+			name:  "boolean stanza status code",
+			input: `[{"name":"main","status":{"code":true},"backup":[]}]`,
+		},
+		{
+			name:  "numeric backup type",
+			input: `[{"name":"main","backup":[{"label":"20240502-030405F","type":1,"error":false}]}]`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if backups, err := ParseInfo([]byte(test.input), "main"); err == nil {
+				t.Fatalf("ParseInfo() accepted coerced field: %#v", backups)
+			}
+		})
+	}
+}
+
+func TestParseInfoRequiresBackupArray(t *testing.T) {
+	for _, value := range []string{`{}`, `"none"`, `1`, `true`, `null`} {
+		t.Run(value, func(t *testing.T) {
+			input := `[{"name":"main","status":{"code":0},"backup":` + value + `}]`
+			if backups, err := ParseInfo([]byte(input), "main"); err == nil {
+				t.Fatalf("ParseInfo() accepted backup=%s: %#v", value, backups)
+			}
+		})
+	}
+	if backups, err := ParseInfo(
+		[]byte(`[{"name":"main","status":{"code":0},"backup":[]}]`),
+		"main",
+	); err != nil || len(backups) != 0 {
+		t.Fatalf("ParseInfo(empty backup array) = %#v, %v", backups, err)
 	}
 }
 
@@ -167,6 +340,58 @@ func TestAdapterDiscoverBackupsRunsPgBackRestInfo(t *testing.T) {
 	}
 	if got, want := runner.invocation.RedactValues, []string{"secret"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected redactions: got %#v want %#v", got, want)
+	}
+}
+
+func TestDiscoverRedactsMetadataWithoutBreakingPGBackRestRestoreIdentity(t *testing.T) {
+	adapter := New(Config{
+		Stanza:       "main",
+		RedactValues: []string{"73924987654321"},
+	}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/info-output.json")),
+	})
+
+	catalog, err := adapter.DiscoverBackups(context.Background())
+	if err != nil {
+		t.Fatalf("discover backups: %v", err)
+	}
+	backup := catalog.Backups[0]
+	if backup.ProviderID == "" || backup.Metadata["system_identifier"] != "[REDACTED]" {
+		t.Fatalf("unexpected redacted backup %#v", backup)
+	}
+	plan, err := adapter.PlanRestore(
+		context.Background(),
+		backup,
+		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		model.TargetSpec{
+			Type:    model.RestoreTargetLocal,
+			WorkDir: filepath.Join(t.TempDir(), "restore"),
+		},
+	)
+	if err != nil {
+		t.Fatalf("plan discovered backup: %v", err)
+	}
+	if plan.BackupID != backup.ID {
+		t.Fatalf("restore plan identity drift: plan=%q backup=%q", plan.BackupID, backup.ID)
+	}
+}
+
+func TestDiscoverRejectsRedactionOfCanonicalPGBackRestIdentityWithoutLeak(t *testing.T) {
+	const secret = "20240502-030405F"
+	adapter := New(Config{
+		Stanza:       "main",
+		RedactValues: []string{secret},
+	}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/info-output.json")),
+	})
+
+	_, err := adapter.DiscoverBackups(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "canonical field") {
+		t.Fatalf("DiscoverBackups() error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("DiscoverBackups() leaked canonical identity: %v", err)
 	}
 }
 
@@ -461,7 +686,7 @@ func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 		"--target=2026-07-06 01:02:03+00:00",
 		"--target-timeline=latest",
 		"--target-exclusive",
-		"--target-action=promote",
+		"--target-action=pause",
 	}
 	if !reflect.DeepEqual(step.Command.Args, wantArgs) {
 		t.Fatalf("unexpected restore args:\ngot  %#v\nwant %#v", step.Command.Args, wantArgs)
@@ -480,6 +705,30 @@ func TestPlanRestoreBuildsPgBackRestRestoreStep(t *testing.T) {
 	}
 	if len(plan.Evidence) != 1 || plan.Evidence[0].Kind != model.EvidencePlan {
 		t.Fatalf("expected plan evidence, got %#v", plan.Evidence)
+	}
+}
+
+func TestPGBackRestRecoveryArgsPauseEveryTargetedRecovery(t *testing.T) {
+	targets := []model.RecoveryTarget{
+		{Type: model.RecoveryTargetImmediate},
+		{Type: model.RecoveryTargetTimestamp, Value: "2026-07-27T12:44:07Z"},
+		{Type: model.RecoveryTargetLSN, Value: "0/420000C0"},
+		{Type: model.RecoveryTargetXID, Value: "757"},
+		{Type: model.RecoveryTargetRestorePoint, Value: "before_upgrade"},
+	}
+
+	for _, target := range targets {
+		t.Run(string(target.Type), func(t *testing.T) {
+			args, err := pgBackRestRecoveryArgs(target)
+			if err != nil {
+				t.Fatalf("pgBackRestRecoveryArgs() error = %v", err)
+			}
+			joined := strings.Join(args, " ")
+			if !strings.Contains(joined, "--target-action=pause") ||
+				strings.Contains(joined, "--target-action=promote") {
+				t.Fatalf("targeted recovery action is not fail-closed pause: %#v", args)
+			}
+		})
 	}
 }
 
@@ -592,6 +841,50 @@ func TestPlanRestoreRequiresRecoveryTargetValue(t *testing.T) {
 	}
 }
 
+func TestParseInfoRejectsAmbiguousJSON(t *testing.T) {
+	for _, input := range []string{
+		`[] []`,
+		`[] trailing`,
+		`[{"name":"main","name":"other"}]`,
+		`null`,
+	} {
+		if _, err := ParseInfo([]byte(input), "main"); err == nil {
+			t.Fatalf("ParseInfo(%s) succeeded, want strict JSON error", input)
+		}
+	}
+}
+
+func FuzzParseInfo(f *testing.F) {
+	fixture, err := os.ReadFile("testdata/info-output.json")
+	if err != nil {
+		f.Fatalf("read fuzz seed: %v", err)
+	}
+	f.Add(fixture)
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`null`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		first, firstErr := ParseInfo(data, "main")
+		second, secondErr := ParseInfo(data, "main")
+		if (firstErr == nil) != (secondErr == nil) {
+			t.Fatalf("ParseInfo() acceptance is not deterministic: first=%v second=%v", firstErr, secondErr)
+		}
+		if firstErr != nil {
+			return
+		}
+		if !reflect.DeepEqual(first, second) {
+			t.Fatal("ParseInfo() result is not deterministic")
+		}
+		for _, backup := range first {
+			if backup.Provider != model.ProviderPGBackRest || backup.ProviderID == "" ||
+				backup.ID != model.ProviderScopedID(model.ProviderPGBackRest, backup.ProviderID) {
+				t.Fatalf("ParseInfo() returned invalid identity %#v", backup)
+			}
+		}
+	})
+}
+
 type fakeRunner struct {
 	invocation command.Invocation
 	result     command.Result
@@ -600,7 +893,7 @@ type fakeRunner struct {
 
 func (r *fakeRunner) Run(_ context.Context, inv command.Invocation) (command.Result, error) {
 	r.invocation = inv
-	return r.result, r.err
+	return r.result.WithRedactValues(inv.RedactValues...), r.err
 }
 
 func successResult(stdout []byte) command.Result {

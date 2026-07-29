@@ -99,6 +99,7 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 			}, nil
 		}
 		t.controller.created = true
+		t.controller.cluster = owned
 		_, manifestArtifact, artifactErr := t.controller.prepareManifestArtifact(ctx)
 		if artifactErr != nil {
 			return model.OperationReconciliation{Evidence: evidence}, artifactErr
@@ -116,6 +117,7 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 		instance, waitEvidence, waitErr := t.controller.Client.WaitForInstanceReady(ctx, t.Spec, WaitOptions{
 			Timeout:      t.controller.Options.WaitTimeout,
 			PollInterval: t.controller.Options.PollInterval,
+			Cluster:      owned,
 		})
 		evidence = append(evidence, waitEvidence...)
 		if waitErr != nil {
@@ -154,18 +156,37 @@ func (t *VerifyTarget) Reconcile(ctx context.Context, checkpoint model.Operation
 			}}, Evidence: evidence, Artifacts: append([]model.ArtifactRef(nil), t.controller.artifactRefs...)},
 		}, nil
 	case model.OperationTargetCleanup:
-		if !owned.Found {
-			t.controller.created = false
+		if owned.Found {
+			t.controller.created = true
 			return model.OperationReconciliation{
-				Disposition: model.ReconciliationCompleted,
-				Message:     "no CNPG cluster has the attempt ownership id",
+				Disposition: model.ReconciliationNotApplied,
+				Message:     "owned CNPG cluster still requires cleanup",
 				Evidence:    evidence,
 			}, nil
 		}
-		t.controller.created = true
+
+		message := "owned CNPG cluster is absent"
+		if t.controller.Options.CleanupPVC {
+			ownedPVCs, pvcEvidence, pvcErr := t.controller.Client.FindOwnedPVCs(ctx, t.Spec)
+			evidence = append(evidence, pvcEvidence...)
+			if pvcErr != nil {
+				return model.OperationReconciliation{Evidence: evidence}, pvcErr
+			}
+			if len(ownedPVCs.Items) != 0 {
+				t.controller.created = true
+				return model.OperationReconciliation{
+					Disposition: model.ReconciliationNotApplied,
+					Message:     fmt.Sprintf("%d owned CNPG PVCs still require cleanup", len(ownedPVCs.Items)),
+					Evidence:    evidence,
+				}, nil
+			}
+			message = "owned CNPG cluster and PVCs are absent"
+		}
+
+		t.controller.created = false
 		return model.OperationReconciliation{
-			Disposition: model.ReconciliationNotApplied,
-			Message:     "owned CNPG cluster still requires cleanup",
+			Disposition: model.ReconciliationCompleted,
+			Message:     message,
 			Evidence:    evidence,
 		}, nil
 	default:

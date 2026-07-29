@@ -183,7 +183,18 @@ func (l *runLifecycle) Finish(ctx context.Context, status model.DrillStatus, run
 		if err := l.writeReport(ctx); err != nil {
 			writeErr := fmt.Errorf("write evidence: %w", err)
 			finalErr = errors.Join(finalErr, writeErr)
+			wasPassed := l.result.Status == model.DrillStatusPassed
 			l.markFinalizationFailure(writeErr)
+			if wasPassed {
+				if rewriteErr := l.writeReport(ctx); rewriteErr != nil {
+					finalErr = errors.Join(
+						finalErr,
+						fmt.Errorf("rewrite failed evidence after uncertain report write: %w", rewriteErr),
+					)
+				} else {
+					reportWritten = true
+				}
+			}
 		} else {
 			reportWritten = true
 		}

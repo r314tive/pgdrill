@@ -14,7 +14,9 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/filelock"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/runspec"
@@ -82,6 +84,9 @@ func (s DirectoryStore) WriteEvent(ctx context.Context, event model.RunEvent) er
 		if err := ensureDirectory(eventsDir); err != nil {
 			return fmt.Errorf("create history events directory: %w", err)
 		}
+		if err := cleanupHistoryTemporaryFiles(eventsDir); err != nil {
+			return fmt.Errorf("recover history event write: %w", err)
+		}
 		exists, err := validateEventPosition(eventsDir, event)
 		if err != nil {
 			return err
@@ -127,7 +132,7 @@ func (s DirectoryStore) SaveReport(ctx context.Context, result model.DrillResult
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := report.Validate(result); err != nil {
+	if err := report.ValidateReaderContract(result); err != nil {
 		return fmt.Errorf("validate history report: %w", err)
 	}
 	if err := validateIdentityText("attempt_id", result.AttemptID); err != nil {
@@ -241,6 +246,13 @@ func (s DirectoryStore) withWriteLock(ctx context.Context, operation func(string
 	return withLock(ctx, root, filelock.Exclusive, true, func() error {
 		if err := ensureMetadata(ctx, root); err != nil {
 			return err
+		}
+		state, err := inspectRetentionState(root)
+		if err != nil {
+			return err
+		}
+		if err := requireCleanRetentionState(state); err != nil {
+			return fmt.Errorf("history write requires clean retention state: %w", err)
 		}
 		return operation(root)
 	})
@@ -384,7 +396,7 @@ func validateIdentityCapacity(root, runID, attemptID string) error {
 		return fmt.Errorf("inspect history run capacity: %w", err)
 	}
 	if !runExists {
-		count, err := countHashDirectories(runsDir, "history runs")
+		count, err := countHashDirectories(runsDir, "history runs", MaxRuns)
 		if err != nil {
 			return err
 		}
@@ -402,7 +414,11 @@ func validateIdentityCapacity(root, runID, attemptID string) error {
 		return nil
 	}
 	if runExists {
-		count, err := countHashDirectories(filepath.Join(runDir, "attempts"), "history attempts")
+		count, err := countHashDirectories(
+			filepath.Join(runDir, "attempts"),
+			"history attempts",
+			MaxAttemptsPerRun,
+		)
 		if err != nil {
 			return err
 		}
@@ -448,14 +464,14 @@ func privateDirectoryExists(path string) (bool, error) {
 	return true, nil
 }
 
-func countHashDirectories(path, description string) (int, error) {
+func countHashDirectories(path, description string, limit int) (int, error) {
 	if err := requireDirectory(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	entries, err := os.ReadDir(path)
+	entries, err := durablefs.ReadDirBounded(path, limit)
 	if err != nil {
 		return 0, fmt.Errorf("read %s: %w", description, err)
 	}
@@ -472,10 +488,10 @@ func countHashDirectories(path, description string) (int, error) {
 
 func countTotalAttempts(root string) (int, error) {
 	runsDir := filepath.Join(root, "runs")
-	if _, err := countHashDirectories(runsDir, "history runs"); err != nil {
+	if _, err := countHashDirectories(runsDir, "history runs", MaxRuns); err != nil {
 		return 0, err
 	}
-	entries, err := os.ReadDir(runsDir)
+	entries, err := durablefs.ReadDirBounded(runsDir, MaxRuns)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -485,7 +501,11 @@ func countTotalAttempts(root string) (int, error) {
 	total := 0
 	for _, entry := range entries {
 		runDir := filepath.Join(runsDir, entry.Name())
-		count, err := countHashDirectories(filepath.Join(runDir, "attempts"), "history attempts")
+		count, err := countHashDirectories(
+			filepath.Join(runDir, "attempts"),
+			"history attempts",
+			MaxAttemptsPerRun,
+		)
 		if err != nil {
 			return 0, err
 		}
@@ -499,10 +519,14 @@ func countTotalAttempts(root string) (int, error) {
 
 func countRunEvents(runDir string) (int, int64, error) {
 	attemptsDir := filepath.Join(runDir, "attempts")
-	if _, err := countHashDirectories(attemptsDir, "history attempts"); err != nil {
+	if _, err := countHashDirectories(
+		attemptsDir,
+		"history attempts",
+		MaxAttemptsPerRun,
+	); err != nil {
 		return 0, 0, err
 	}
-	entries, err := os.ReadDir(attemptsDir)
+	entries, err := durablefs.ReadDirBounded(attemptsDir, MaxAttemptsPerRun)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, 0, nil
 	}
@@ -533,16 +557,34 @@ func countEventFiles(eventsDir string) (int, int64, error) {
 		}
 		return 0, 0, err
 	}
-	entries, err := os.ReadDir(eventsDir)
+	entries, err := durablefs.ReadDirBounded(
+		eventsDir,
+		MaxEventsPerAttempt+maxHistoryTemporaryFilesPerDirectory,
+	)
 	if err != nil {
 		return 0, 0, fmt.Errorf("read history events: %w", err)
 	}
 	var totalBytes int64
+	eventCount := 0
+	temporaryCount := 0
 	for _, entry := range entries {
+		path := filepath.Join(eventsDir, entry.Name())
+		if isHistoryTemporaryFileName(entry.Name()) {
+			temporaryCount++
+			if temporaryCount > maxHistoryTemporaryFilesPerDirectory {
+				return 0, 0, fmt.Errorf(
+					"history events exceeds maximum temporary file count %d",
+					maxHistoryTemporaryFilesPerDirectory,
+				)
+			}
+			if err := validateHistoryTemporaryFile(path); err != nil {
+				return 0, 0, err
+			}
+			continue
+		}
 		if _, ok := parseEventFileName(entry.Name()); !ok {
 			return 0, 0, fmt.Errorf("history events contains unexpected entry %q", entry.Name())
 		}
-		path := filepath.Join(eventsDir, entry.Name())
 		info, err := os.Lstat(path)
 		if err != nil {
 			return 0, 0, err
@@ -557,16 +599,21 @@ func countEventFiles(eventsDir string) (int, int64, error) {
 			return 0, 0, fmt.Errorf("%s exceeds %d bytes", path, MaxEventBytes)
 		}
 		totalBytes += info.Size()
+		eventCount++
 	}
-	return len(entries), totalBytes, nil
+	return eventCount, totalBytes, nil
 }
 
 func countRunReports(runDir string) (int64, error) {
 	attemptsDir := filepath.Join(runDir, "attempts")
-	if _, err := countHashDirectories(attemptsDir, "history attempts"); err != nil {
+	if _, err := countHashDirectories(
+		attemptsDir,
+		"history attempts",
+		MaxAttemptsPerRun,
+	); err != nil {
 		return 0, err
 	}
-	entries, err := os.ReadDir(attemptsDir)
+	entries, err := durablefs.ReadDirBounded(attemptsDir, MaxAttemptsPerRun)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -724,11 +771,14 @@ func marshalJSON(value any, maxBytes int) ([]byte, error) {
 	return payload, nil
 }
 
-func writeImmutable(ctx context.Context, dir, path string, payload []byte, maxBytes int) error {
+func writeImmutable(ctx context.Context, dir, path string, payload []byte, maxBytes int) (resultErr error) {
 	if len(payload) > maxBytes {
 		return fmt.Errorf("document exceeds %d bytes", maxBytes)
 	}
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := cleanupHistoryTemporaryFiles(dir); err != nil {
 		return err
 	}
 	existing, err := readRegularFile(path, maxBytes)
@@ -747,7 +797,25 @@ func writeImmutable(ctx context.Context, dir, path string, payload []byte, maxBy
 		return fmt.Errorf("create temporary history file: %w", err)
 	}
 	tmpPath := file.Name()
-	defer os.Remove(tmpPath) //nolint:errcheck
+	defer func() {
+		removeErr := os.Remove(tmpPath)
+		if errors.Is(removeErr, os.ErrNotExist) {
+			return
+		}
+		if removeErr != nil {
+			resultErr = errors.Join(
+				resultErr,
+				fmt.Errorf("remove temporary history file: %w", removeErr),
+			)
+			return
+		}
+		if syncErr := syncDirectory(dir); syncErr != nil {
+			resultErr = errors.Join(
+				resultErr,
+				fmt.Errorf("sync history directory after temporary cleanup: %w", syncErr),
+			)
+		}
+	}()
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("chmod temporary history file: %w", err)
@@ -782,6 +850,94 @@ func writeImmutable(ctx context.Context, dir, path string, payload []byte, maxBy
 	return syncDirectory(dir)
 }
 
+func cleanupHistoryTemporaryFiles(dir string) error {
+	entries, err := durablefs.ReadDirBounded(
+		dir,
+		MaxEventsPerRun+maxHistoryTemporaryFilesPerDirectory,
+	)
+	if err != nil {
+		return fmt.Errorf("read history directory for temporary recovery: %w", err)
+	}
+	paths := make([]string, 0)
+	for _, entry := range entries {
+		if !isHistoryTemporaryFileName(entry.Name()) {
+			continue
+		}
+		if len(paths) >= maxHistoryTemporaryFilesPerDirectory {
+			return fmt.Errorf(
+				"history directory %s exceeds maximum temporary file count %d",
+				dir,
+				maxHistoryTemporaryFilesPerDirectory,
+			)
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := validateHistoryTemporaryFile(path); err != nil {
+			return err
+		}
+		paths = append(paths, path)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	var removeErr error
+	removed := false
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			removeErr = fmt.Errorf("remove temporary history file %s: %w", path, err)
+			break
+		}
+		removed = true
+	}
+	var syncErr error
+	if removed {
+		if err := syncDirectory(dir); err != nil {
+			syncErr = fmt.Errorf("sync history directory after temporary recovery: %w", err)
+		}
+	}
+	return errors.Join(removeErr, syncErr)
+}
+
+func validateHistoryTemporaryFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect temporary history file %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("temporary history file is not a regular non-symbolic-link file: %s", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf(
+			"temporary history file permissions %o are not private: %s",
+			info.Mode().Perm(),
+			path,
+		)
+	}
+	if info.Size() > MaxReportBytes {
+		return fmt.Errorf("temporary history file %s exceeds %d bytes", path, MaxReportBytes)
+	}
+	return nil
+}
+
+func isHistoryTemporaryFileName(name string) bool {
+	const (
+		prefix = ".history-"
+		suffix = ".tmp"
+	)
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	random := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if random == "" {
+		return false
+	}
+	for _, character := range random {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func withLock(ctx context.Context, root string, mode filelock.Mode, create bool, operation func() error) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -790,21 +946,11 @@ func withLock(ctx context.Context, root string, mode filelock.Mode, create bool,
 		return err
 	}
 	lockPath := filepath.Join(root, ".lock")
-	if info, err := os.Lstat(lockPath); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return fmt.Errorf("history store lock must be a regular non-symbolic-link file")
-		}
-		if info.Mode().Perm()&0o077 != 0 {
-			return fmt.Errorf("history store lock permissions %o are not private", info.Mode().Perm())
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect history store lock: %w", err)
-	}
 	flags := os.O_RDONLY
 	if create {
 		flags = os.O_CREATE | os.O_RDWR
 	}
-	lock, err := os.OpenFile(lockPath, flags, 0o600)
+	lock, err := filelock.OpenPrivate(lockPath, flags)
 	if err != nil {
 		return fmt.Errorf("open history store lock: %w", err)
 	}
@@ -817,7 +963,7 @@ func withLock(ctx context.Context, root string, mode filelock.Mode, create bool,
 }
 
 func ensureDirectory(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	if err := durablefs.MkdirAll(path, 0o700); err != nil {
 		return err
 	}
 	return requireDirectory(path)
@@ -838,24 +984,18 @@ func requireDirectory(path string) error {
 }
 
 func readRegularFile(path string, maxBytes int) ([]byte, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular non-symbolic-link file", path)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%s permissions %o are not private", path, info.Mode().Perm())
-	}
-	if info.Size() > int64(maxBytes) {
-		return nil, fmt.Errorf("%s exceeds %d bytes", path, maxBytes)
-	}
-	file, err := os.Open(path)
+	file, err := filelock.OpenPrivate(path, os.O_RDONLY)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > int64(maxBytes) {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, maxBytes)
+	}
 	payload, err := io.ReadAll(io.LimitReader(file, int64(maxBytes)+1))
 	if err != nil {
 		return nil, err
@@ -872,28 +1012,14 @@ func readJSONFile[T any](path string, maxBytes int) (T, error) {
 	if err != nil {
 		return value, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&value); err != nil {
+	if err := jsonutil.DecodeOneStrict(payload, &value); err != nil {
 		return value, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err != nil {
-			return value, fmt.Errorf("decode trailing data: %w", err)
-		}
-		return value, fmt.Errorf("multiple JSON values")
 	}
 	return value, nil
 }
 
 func syncDirectory(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return durablefs.SyncDirectory(path)
 }
 
 func runDirectoryName(runID string) string {

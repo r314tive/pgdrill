@@ -152,9 +152,75 @@ called out explicitly even while the major version is `0`.
   bounded inherited-pipe waiting in the command runner, preventing a timed-out
   provider subprocess from holding evidence capture open indefinitely and
   preventing Unix descendants from outliving the attempt.
+- Native Go fuzz targets for provider JSON, configuration, canonical specs,
+  reports, fleet plans, compatibility matrices, command evidence, and
+  canonical validators, plus reproducible coverage, stress, and aggregate
+  torture gates for development review.
 
 ### Changed
 
+- Native targeted recovery now configures `recovery_target_action=pause` and
+  accepts attainment only when PostgreSQL proves an actual paused replay state;
+  a pending pause request or an already-promoted server fails closed. Plain
+  `latest` recovery must complete without a pause.
+- Provider discovery preserves canonical backup identity under redaction.
+  Configured redaction values that occur in provider IDs, other canonical
+  backup fields, check/evidence identifiers, probe names, or structured
+  attribute keys now reject the observation instead of silently changing its
+  meaning; only diagnostic values are rewritten.
+- Redaction cardinality and byte limits are checked before matcher
+  construction, command environment names cannot contain configured secret
+  values, and custom runners can retain the invocation redaction contract for
+  adapter normalization. `Result.WithRedactValues` now re-sanitizes every
+  durable command-evidence field while preserving raw in-process parser input;
+  structurally invalid redaction sets erase durable text instead of emitting a
+  replacement that can itself contain the configured literal.
+- Canonical native and managed drill specifications, CNPG target manifests,
+  and discovered CNPG resource identity now reject configured redaction
+  literals that would alter immutable intent instead of hashing or applying
+  sanitized identities.
+- Provider parsers now reject conflicting canonical aliases for backup
+  identity, timestamps, WAL boundaries, timelines, and PostgreSQL versions.
+  WAL-G verification, preflight expansion, configured probes, and retained
+  `pg_isready` retry evidence are bounded before they can overflow a report.
+- Coverage runs now use `-coverpkg=./...`, attributing shared conformance and
+  integration execution to the production packages under test while retaining
+  the rule that coverage without behavioral assertions is not correctness
+  evidence.
+- Config loading is bounded to 4 MiB and accepts exactly one JSON or YAML
+  document. Barman, pgBackRest, and pg_probackup JSON readers likewise reject
+  concatenated or trailing values, while WAL-G and Barman discovery reject
+  scalar roots instead of treating malformed output as an empty catalog.
+- Shared JSON decoding now rejects duplicate object members, invalid UTF-8,
+  unpaired UTF-16 surrogate escapes, excessive nesting, and case-folded
+  aliases of declared struct fields while retaining exact unknown-field
+  policy at each call site.
+- Durable command output normalizes invalid byte sequences to valid UTF-8
+  before evidence truncation; raw in-memory adapter output remains unchanged.
+- Command execution uses one inherited-environment snapshot for both the child
+  process and redaction, redacts inherited sensitive variables, and never
+  exposes an unredacted process error through `errors.Unwrap`.
+- Checkpoint recovery now requires private root, attempt, lock, and journal
+  permissions and binds every opened journal file to its pre-open filesystem
+  identity before trusting persisted state.
+- Artifact, checkpoint, history, retention, migration, and GC paths open
+  persisted state and lock files through private no-follow descriptors. History
+  writes stop while maintenance is pending, and interrupted artifact GC
+  recovers every durable publication prefix without widening deletion scope.
+- Policy verdict validation now rejects contradictory status/evidence-basis
+  pairs and observations attached to bases that did not measure a duration.
+- Canonical report capacity limits now cover checks, evidence records,
+  operations, command arguments, command environment entries, and the
+  documented 1 MiB durable output previews at both engine and reader
+  boundaries.
+- Newly produced passed reports bind every required probe descriptor to at
+  least one passed check, require the selected backup for native drills,
+  recompute policy verdicts from retained facts, and bound operation, command,
+  and evidence timestamps to the report interval.
+- Local target recovery binds a retained PostgreSQL PID to its operating-system
+  process creation identity before signalling or deleting owned state, closing
+  the PID-reuse ambiguity. CNPG cleanup records success only after both the
+  owned Cluster and its owned PVCs are observed absent.
 - Canonical SHA-256 validation now accepts only lowercase hexadecimal digests,
   and artifact GC, history retention, migration, and full-store verification
   reject persisted counts, byte totals, reference totals, and maintenance
@@ -243,6 +309,56 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- CNPG cleanup re-observes owned PVCs after foreground Cluster deletion and
+  deletes only resources that still exist, so a garbage-collected PVC cannot
+  turn successful cleanup into a stale-UID failure. Cluster, Pod, and PVC
+  observations remain bound to exact UIDs, ownership labels, owner references,
+  and the recovery-contract digest.
+- CNPG manifest-render evidence no longer claims a Cluster UID before the API
+  server has created one; it records the deterministic recovery-contract
+  digest instead.
+- CNPG kubectl parse and comparison errors apply target redaction before
+  leaving discovery, including direct `target manifest --discover` calls.
+  Cluster, PVC, Pod, Backup, image, and plugin fields that define canonical
+  resource identity fail closed if redaction would alter them.
+- CNPG pod execution rejects empty, option-like, assignment-bearing, NUL, and
+  invalid UTF-8 environment names before converting logical environment
+  entries into `env` command arguments.
+- Local target publication rejects hard-linked ownership and process receipts,
+  writes private state atomically, and refuses work-directory aliases that
+  would escape the attempt boundary. Persistence directory scans are bounded,
+  and history migration removes only the exact stage tree proven by its plan.
+- A report that was provisionally passed but could not be durably published is
+  rewritten as failed evidence instead of returning a successful in-memory
+  verdict with uncertain persistence.
+- Passed reports can no longer omit the selected backup, a prepare/restore/start
+  or cleanup operation, or raw evidence for a required passing probe. Current
+  execution also rejects read-only legacy specs before lifecycle events or
+  external work, binds command durations to their timestamps, and prevents
+  recovery proof from preceding PostgreSQL start or required probe evidence.
+- Reconciliation retains independently valid evidence, artifacts, and checks
+  when another returned check is malformed, while still failing the operation
+  protocol.
+- pgBackRest discovery now marks a backup available only when the stanza status
+  is explicitly successful and `backup.error` is explicitly false. Barman
+  validation now fails when `show-backup` reports another server, backup ID, or
+  a non-available terminal status.
+- Local PostgreSQL startup redacts sensitive values inherited from the parent
+  environment. Interrupted cleanup signals an identity-bound process handle
+  (`pidfd` on Linux and one creation-time-validated handle on Windows) and
+  fails closed on platforms without an equivalent primitive.
+- CNPG readiness uses one hard deadline across every kubectl poll and sleep.
+  Full-recovery observation rejects command failures and JSON that does not
+  positively contain a valid pod list instead of treating missing `items` as
+  proof that no recovery failed.
+- History writes service bounded private `.history-*.tmp` crash prefixes while
+  readers tolerate but validate them. Checkpoint writes likewise service
+  bounded temporary state, and artifact GC can restart after interruption
+  between operation-directory creation and plan publication.
+- History migration rejects a symbolic link in any destination ancestor before
+  creating locks or staging data, leaves the source snapshot unchanged on
+  refusal, and normalizes destination directories to private writable mode so
+  a successfully migrated stable store accepts new runs.
 - CNPG verification now preserves artifact references returned by
   post-restore probes instead of retaining only their checks and evidence.
 - Local target recovery now inspects every retained operation receipt and
@@ -268,6 +384,13 @@ called out explicitly even while the major version is `0`.
 
 ### Breaking Changes
 
+- Native targeted drills no longer promote the disposable server after target
+  attainment. Post-restore probes for those targets must be valid while
+  PostgreSQL remains paused in recovery; use plain `latest` when a promoted
+  writable instance is the required contract.
+- Redaction configuration that overlaps a canonical identifier now causes the
+  relevant discovery or check to fail instead of emitting a redacted
+  identifier that cannot be used for restore planning.
 - Machine consumers that matched `v1alpha1` as the current output identifier
   must accept `v1`. The alpha identifiers remain reader inputs only for the
   documented compatibility generation.

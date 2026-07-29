@@ -184,6 +184,14 @@ func TestManifestYAMLRendersCNPGRecoveryCluster(t *testing.T) {
 	if manifest.Spec.InheritedMetadata.Labels[labelOwnershipID] != spec.OwnershipID {
 		t.Fatalf("ownership label must be inherited by CNPG resources: %#v", manifest.Spec.InheritedMetadata)
 	}
+	contractDigest, err := spec.ContractDigest()
+	if err != nil {
+		t.Fatalf("ContractDigest() error = %v", err)
+	}
+	if manifest.Metadata.Annotations[annotationRecoveryContract] != contractDigest ||
+		manifest.Spec.InheritedMetadata.Annotations[annotationRecoveryContract] != contractDigest {
+		t.Fatalf("recovery contract annotation is not bound to cluster and inherited resources")
+	}
 	if manifest.Spec.Storage.Size != "20Gi" || manifest.Spec.Storage.StorageClass != "fast" {
 		t.Fatalf("unexpected storage %#v", manifest.Spec.Storage)
 	}

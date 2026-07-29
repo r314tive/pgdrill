@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/filelock"
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -38,17 +40,11 @@ func withStoreLock(
 	}
 
 	lockPath := filepath.Join(root, storeLockFileName)
-	if info, err := os.Lstat(lockPath); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return fmt.Errorf("artifact store lock must be a regular non-symbolic-link file")
-		}
-		if info.Mode().Perm()&0o077 != 0 {
-			return fmt.Errorf("artifact store lock permissions %o are not private", info.Mode().Perm())
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect artifact store lock: %w", err)
+	flags := os.O_RDWR
+	if createRoot {
+		flags |= os.O_CREATE
 	}
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := filelock.OpenPrivate(lockPath, flags)
 	if err != nil {
 		return fmt.Errorf("open artifact store lock: %w", err)
 	}
@@ -142,8 +138,16 @@ func writeBlobClaim(
 		strings.TrimPrefix(claimDigest, "sha256:")+".json",
 	)
 	if _, err := os.Lstat(claimPath); errors.Is(err, os.ErrNotExist) {
-		entries, readErr := os.ReadDir(blobRoot)
+		entries, readErr := durablefs.ReadDirBounded(blobRoot, MaxClaimsPerBlob)
 		if readErr != nil {
+			var limitErr *durablefs.DirectoryLimitError
+			if errors.As(readErr, &limitErr) {
+				return fmt.Errorf(
+					"artifact %s exceeds maximum claim count %d",
+					ref.ID,
+					MaxClaimsPerBlob,
+				)
+			}
 			return fmt.Errorf("count artifact blob claims: %w", readErr)
 		}
 		if len(entries) >= MaxClaimsPerBlob {
@@ -229,17 +233,8 @@ func readJSONFile[T any](path string, maxBytes int) (T, error) {
 	if len(payload) > maxBytes {
 		return zero, fmt.Errorf("%s exceeds %d bytes", path, maxBytes)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	var value T
-	if err := decoder.Decode(&value); err != nil {
-		return zero, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return zero, fmt.Errorf("%s contains multiple JSON values", path)
-		}
+	if err := jsonutil.DecodeOneStrict(payload, &value); err != nil {
 		return zero, err
 	}
 	return value, nil

@@ -251,7 +251,7 @@ func runReportShow(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "json":
-		if err := report.WriteJSON(stdout, result); err != nil {
+		if err := report.WriteCompatibleJSON(stdout, result); err != nil {
 			fmt.Fprintf(stderr, "write report output: %v\n", err)
 			return 1
 		}
@@ -357,6 +357,10 @@ func runCatalogList(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err != nil {
 		fmt.Fprintf(stderr, "discover backups: %v\n", err)
 		return failureExitCode(ctx, model.DrillStatusUnknown)
+	}
+	if err := core.ValidateBackupCatalog(provider.Type(), catalog); err != nil {
+		fmt.Fprintf(stderr, "validate backup catalog: %v\n", err)
+		return 1
 	}
 
 	output := catalogListOutput{

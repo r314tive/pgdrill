@@ -1,4 +1,4 @@
-.PHONY: build check container-check container-smoke cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot smoke test test-integration-all test-integration-barman test-integration-cnpg test-integration-cnpg-plugin test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-postgresql-17 test-integration-walg test-integration-walg-s3 test-local toolchain-check vet workflow-check
+.PHONY: build check container-check container-smoke coverage cross-compile-check demo-check demo-infra-check demo-rehearsal fmt format fuzz integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot shellcheck smoke stress test test-integration-all test-integration-barman test-integration-cnpg test-integration-cnpg-plugin test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-postgresql-17 test-integration-walg test-integration-walg-s3 test-local toolchain-check torture vet workflow-check
 
 VERSION ?= v0.3.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -22,6 +22,10 @@ TERRAFORM ?= terraform
 DEMO_RELEASE_ARCHIVE ?=
 DEMO_RELEASE_COMMIT ?=
 DEMO_RELEASE_SHA256 ?=
+FUZZ_TIME ?= 10s
+STRESS_COUNT ?= 10
+COVERAGE_MIN ?= 72.0
+COVERAGE_PROFILE ?= .cache/coverage.out
 BINARY := pgdrill
 DEMO_TERRAFORM_DIR := demo/yandex-cloud/terraform
 VERSION_PKG := github.com/r314tive/pgdrill/internal/version
@@ -52,6 +56,38 @@ vet:
 test:
 	go test ./...
 
+coverage:
+	mkdir -p "$(dir $(COVERAGE_PROFILE))"
+	go test -count=1 -covermode=atomic -coverpkg=./... -coverprofile="$(COVERAGE_PROFILE)" ./...
+	@coverage="$$(go tool cover -func="$(COVERAGE_PROFILE)" | awk '/^total:/ { gsub(/%/, "", $$3); print $$3 }')"; \
+	test -n "$$coverage"; \
+	printf 'total statement coverage: %s%% (minimum %s%%)\n' "$$coverage" "$(COVERAGE_MIN)"; \
+	awk -v actual="$$coverage" -v minimum="$(COVERAGE_MIN)" 'BEGIN { exit !(actual + 0 >= minimum + 0) }'
+
+fuzz:
+	go test -run='^$$' -fuzz='^FuzzDecodeOne$$' -fuzztime="$(FUZZ_TIME)" ./internal/jsonutil
+	go test -run='^$$' -fuzz='^FuzzDecodeOneCaseFoldOracle$$' -fuzztime="$(FUZZ_TIME)" ./internal/jsonutil
+	go test -run='^$$' -fuzz='^FuzzDecodeOneUTF16Oracle$$' -fuzztime="$(FUZZ_TIME)" ./internal/jsonutil
+	go test -run='^$$' -fuzz='^FuzzDecodeOneInvalidUTF8Oracle$$' -fuzztime="$(FUZZ_TIME)" ./internal/jsonutil
+	go test -run='^$$' -fuzz='^FuzzParseBackupList$$' -fuzztime="$(FUZZ_TIME)" ./internal/adapters/walg
+	go test -run='^$$' -fuzz='^FuzzParseBackupList$$' -fuzztime="$(FUZZ_TIME)" ./internal/adapters/barman
+	go test -run='^$$' -fuzz='^FuzzShowBackupAttributes$$' -fuzztime="$(FUZZ_TIME)" ./internal/adapters/barman
+	go test -run='^$$' -fuzz='^FuzzParseInfo$$' -fuzztime="$(FUZZ_TIME)" ./internal/adapters/pgbackrest
+	go test -run='^$$' -fuzz='^FuzzParseShow$$' -fuzztime="$(FUZZ_TIME)" ./internal/adapters/pgprobackup
+	go test -run='^$$' -fuzz='^FuzzEvidenceOutput$$' -fuzztime="$(FUZZ_TIME)" ./internal/command
+	go test -run='^$$' -fuzz='^FuzzLoad$$' -fuzztime="$(FUZZ_TIME)" ./internal/config
+	go test -run='^$$' -fuzz='^FuzzCanonicalValidators$$' -fuzztime="$(FUZZ_TIME)" ./internal/model
+	go test -run='^$$' -fuzz='^FuzzParse$$' -fuzztime="$(FUZZ_TIME)" ./internal/runspec
+	go test -run='^$$' -fuzz='^FuzzReadJSON$$' -fuzztime="$(FUZZ_TIME)" ./internal/report
+	go test -run='^$$' -fuzz='^FuzzParseObservation$$' -fuzztime="$(FUZZ_TIME)" ./internal/recoveryproof
+	go test -run='^$$' -fuzz='^FuzzLoad$$' -fuzztime="$(FUZZ_TIME)" ./internal/planner
+	go test -run='^$$' -fuzz='^FuzzParse$$' -fuzztime="$(FUZZ_TIME)" ./internal/compatibility
+
+stress:
+	go test -shuffle=on -count="$(STRESS_COUNT)" ./...
+
+torture: check race coverage stress fuzz
+
 cross-compile-check:
 	@tmp="$$(mktemp -d)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
@@ -71,8 +107,10 @@ demo-check:
 		fi; \
 	done
 
-demo-infra-check: demo-check
-	$(SHELLCHECK) -x $$(find demo -type f -name '*.sh' -print | sort)
+shellcheck: demo-check integration-syntax-check
+	$(SHELLCHECK) -x $$(find demo test/integration -type f -name '*.sh' -print | sort)
+
+demo-infra-check: shellcheck
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) init -backend=false -input=false -lockfile=readonly
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) fmt -check -recursive
 	$(TERRAFORM) -chdir=$(DEMO_TERRAFORM_DIR) validate
@@ -246,6 +284,7 @@ release-check:
 	$(MAKE) -s toolchain-check
 	$(MAKE) -s check
 	$(MAKE) -s workflow-check
+	$(MAKE) -s shellcheck
 	$(MAKE) -s race
 	$(MAKE) -s smoke VERSION="$(VERSION)" COMMIT="$(RELEASE_COMMIT)" DATE="$(RELEASE_DATE)"
 	$(MAKE) -s release-artifacts VERSION="$(VERSION)" RELEASE_COMMIT="$(RELEASE_COMMIT)" RELEASE_DATE="$(RELEASE_DATE)" RELEASE_TARGETS="$(RELEASE_TARGETS)"

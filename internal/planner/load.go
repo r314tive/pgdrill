@@ -2,13 +2,13 @@ package planner
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,17 +43,8 @@ func Load(reader io.Reader, format string) (Fleet, error) {
 	var fleet Fleet
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "json":
-		decoder := json.NewDecoder(bytes.NewReader(payload))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&fleet); err != nil {
+		if err := jsonutil.DecodeOneStrict(payload, &fleet); err != nil {
 			return Fleet{}, fmt.Errorf("parse json fleet: %w", err)
-		}
-		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF {
-			if err == nil {
-				return Fleet{}, fmt.Errorf("parse json fleet: multiple JSON values")
-			}
-			return Fleet{}, fmt.Errorf("parse json fleet trailing data: %w", err)
 		}
 	case "yaml", "yml", "":
 		decoder := yaml.NewDecoder(bytes.NewReader(payload))

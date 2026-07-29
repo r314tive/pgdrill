@@ -1,7 +1,6 @@
 package report
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/r314tive/pgdrill/internal/jsonutil"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -118,21 +118,13 @@ func readJSON(reader io.Reader, maxBytes int64) (model.DrillResult, error) {
 	}
 
 	var result model.DrillResult
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	if err := decoder.Decode(&result); err != nil {
+	if err := jsonutil.DecodeOne(payload, &result); err != nil {
 		return model.DrillResult{}, fmt.Errorf("parse report json: %w", err)
 	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return model.DrillResult{}, fmt.Errorf("parse report json: multiple JSON values")
-		}
-		return model.DrillResult{}, fmt.Errorf("parse report json trailing data: %w", err)
-	}
-	if err := normalizeSchemaVersion(&result); err != nil {
+	if err := normalizeReadSchemaVersion(&result); err != nil {
 		return model.DrillResult{}, err
 	}
-	if err := Validate(result); err != nil {
+	if err := ValidateReaderContract(result); err != nil {
 		return model.DrillResult{}, fmt.Errorf("validate report: %w", err)
 	}
 	return result, nil
@@ -170,7 +162,7 @@ func writeJSONMode(
 		return err
 	}
 	validate := Validate
-	if produced {
+	if produced || result.SchemaVersion == model.CurrentReportSchemaVersion {
 		validate = ValidateProduced
 	}
 	if err := validate(result); err != nil {
@@ -199,9 +191,19 @@ func normalizeSchemaVersion(result *model.DrillResult) error {
 	case "":
 		result.SchemaVersion = model.CurrentReportSchemaVersion
 		return nil
-	case model.CurrentReportSchemaVersion, model.LegacyReportSchemaVersion:
+	case model.CurrentReportSchemaVersion,
+		model.PreviousReportSchemaVersion,
+		model.LegacyReportSchemaVersion:
 		return nil
 	default:
 		return fmt.Errorf("unsupported report schema_version %q", result.SchemaVersion)
 	}
+}
+
+func normalizeReadSchemaVersion(result *model.DrillResult) error {
+	if result.SchemaVersion == "" {
+		result.SchemaVersion = model.LegacyReportSchemaVersion
+		return nil
+	}
+	return normalizeSchemaVersion(result)
 }

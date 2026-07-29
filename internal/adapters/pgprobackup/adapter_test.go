@@ -2,6 +2,7 @@ package pgprobackup
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -94,6 +95,23 @@ func TestParseShow(t *testing.T) {
 	}
 }
 
+func TestInstanceObjectsRejectsExcessiveCount(t *testing.T) {
+	_, err := instanceObjects(make([]any, model.MaxBackupsPerCatalog+1))
+	if err == nil || !strings.Contains(err.Error(), "exceed maximum count") {
+		t.Fatalf("instanceObjects() error = %v", err)
+	}
+}
+
+func TestParseShowRejectsExcessiveBackupCount(t *testing.T) {
+	payload := `[{"instance":"main","backups":[` +
+		strings.Repeat(`{"id":"backup","status":"OK"},`, model.MaxBackupsPerCatalog) +
+		`{"id":"backup","status":"OK"}]}]`
+	_, err := ParseShow([]byte(payload), "")
+	if err == nil || !strings.Contains(err.Error(), "exceed maximum count") {
+		t.Fatalf("ParseShow() error = %v", err)
+	}
+}
+
 func TestParseShowRejectsMalformedEntries(t *testing.T) {
 	_, err := ParseShow([]byte(`[{"instance":"main","backups":[{"status":"OK"}]}]`), "")
 	if err == nil || !strings.Contains(err.Error(), "missing backup id") {
@@ -103,6 +121,84 @@ func TestParseShowRejectsMalformedEntries(t *testing.T) {
 	_, err = ParseShow([]byte(`[{"instance":"main","backups":[{"id":"X","start-time":"yesterday"}]}]`), "")
 	if err == nil || !strings.Contains(err.Error(), "unsupported time format") {
 		t.Fatalf("expected time format error, got %v", err)
+	}
+}
+
+func TestParseShowRejectsConflictingAliases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "backup id",
+			input: `[{"instance":"main","backups":[{"id":"first","backup-id":"second","status":"OK"}]}]`,
+			want:  "backup id aliases",
+		},
+		{
+			name: "start time",
+			input: `[{"instance":"main","backups":[{
+				"id":"first",
+				"status":"OK",
+				"start-time":"2026-07-01T00:00:00Z",
+				"start_time":"2026-07-02T00:00:00Z"
+			}]}]`,
+			want: "time aliases",
+		},
+		{
+			name: "start LSN",
+			input: `[{"instance":"main","backups":[{
+				"id":"first",
+				"status":"OK",
+				"start-lsn":"0/1",
+				"start_lsn":"0/2"
+			}]}]`,
+			want: "start LSN aliases",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseShow([]byte(test.input), "main")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ParseShow() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestParseShowRejectsCoercedIdentityStatusAndKindFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "numeric instance",
+			input: `[{"instance":1,"backups":[]}]`,
+		},
+		{
+			name:  "numeric backup id",
+			input: `[{"instance":"main","backups":[{"id":123,"status":"OK"}]}]`,
+		},
+		{
+			name:  "numeric parent backup id",
+			input: `[{"instance":"main","backups":[{"id":"SBOL94","status":"OK","parent-backup-id":123}]}]`,
+		},
+		{
+			name:  "boolean status",
+			input: `[{"instance":"main","backups":[{"id":"SBOL94","status":true}]}]`,
+		},
+		{
+			name:  "numeric backup mode",
+			input: `[{"instance":"main","backups":[{"id":"SBOL94","status":"OK","backup-mode":1}]}]`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if backups, err := ParseShow([]byte(test.input), "main"); err == nil {
+				t.Fatalf("ParseShow() accepted coerced field: %#v", backups)
+			}
+		})
 	}
 }
 
@@ -140,6 +236,94 @@ func TestAdapterDiscoverBackupsRunsShow(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.invocation.RedactValues, []string{"secret"}) {
 		t.Fatalf("unexpected redactions %#v", runner.invocation.RedactValues)
+	}
+}
+
+func TestDiscoverRedactsMetadataWithoutBreakingPGProbackupRestoreIdentity(t *testing.T) {
+	adapter := New(Config{
+		BackupDir:    "/srv/pg_probackup",
+		Instance:     "main",
+		RedactValues: []string{"3862224379"},
+	}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/show-output.json")),
+	})
+
+	catalog, err := adapter.DiscoverBackups(context.Background())
+	if err != nil {
+		t.Fatalf("discover backups: %v", err)
+	}
+	backup := catalog.Backups[0]
+	if backup.ProviderID == "" || backup.Metadata["content-crc"] != "[REDACTED]" {
+		t.Fatalf("unexpected redacted backup %#v", backup)
+	}
+	plan, err := adapter.PlanRestore(
+		context.Background(),
+		backup,
+		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		model.TargetSpec{
+			Type:    model.RestoreTargetLocal,
+			WorkDir: filepath.Join(t.TempDir(), "restore"),
+		},
+	)
+	if err != nil {
+		t.Fatalf("plan discovered backup: %v", err)
+	}
+	if plan.BackupID != backup.ID {
+		t.Fatalf("restore plan identity drift: plan=%q backup=%q", plan.BackupID, backup.ID)
+	}
+}
+
+func TestDiscoverRejectsRedactionOfCanonicalPGProbackupIdentityWithoutLeak(t *testing.T) {
+	const secret = "SBOL94"
+	adapter := New(Config{
+		BackupDir:    "/srv/pg_probackup",
+		Instance:     "main",
+		RedactValues: []string{secret},
+	}, &fakeRunner{
+		result: successResult(readFixture(t, "testdata/show-output.json")),
+	})
+
+	_, err := adapter.DiscoverBackups(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "canonical field") {
+		t.Fatalf("DiscoverBackups() error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("DiscoverBackups() leaked canonical identity: %v", err)
+	}
+}
+
+func TestAdapterDiscoverBackupsDoesNotRetainFreeFormNote(t *testing.T) {
+	const secret = "catalog-secret"
+	result := successResult([]byte(
+		`[{"instance":"main","backups":[{"id":"B1","status":"OK","backup-mode":"FULL","note":"` +
+			secret +
+			`"}]}]`,
+	))
+	result.Evidence.Stdout = strings.ReplaceAll(result.Evidence.Stdout, secret, "[REDACTED]")
+	runner := &fakeRunner{result: result}
+	adapter := New(Config{
+		BackupDir:    "/srv/pg_probackup",
+		Instance:     "main",
+		RedactValues: []string{secret},
+	}, runner)
+
+	catalog, err := adapter.DiscoverBackups(context.Background())
+	if err != nil {
+		t.Fatalf("discover backups: %v", err)
+	}
+	if len(catalog.Backups) != 1 {
+		t.Fatalf("unexpected catalog %#v", catalog)
+	}
+	if _, retained := catalog.Backups[0].Metadata["note"]; retained {
+		t.Fatalf("free-form note must not be retained: %#v", catalog.Backups[0].Metadata)
+	}
+	encoded, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatalf("marshal catalog: %v", err)
+	}
+	if strings.Contains(string(encoded), secret) {
+		t.Fatalf("catalog retained configured secret: %s", encoded)
 	}
 }
 
@@ -276,7 +460,7 @@ func TestPlanRestoreBuildsLocalRestore(t *testing.T) {
 	wantArgs := []string{
 		"restore", "-B", "/backups", "--instance=main", "-i", "SBOL94",
 		"-D", "/var/tmp/pgdrill/main/data",
-		"--recovery-target=latest", "--recovery-target-action=promote",
+		"--recovery-target=latest",
 	}
 	if step.Command == nil || !reflect.DeepEqual(step.Command.Args, wantArgs) {
 		t.Fatalf("unexpected restore step %#v", step)
@@ -332,13 +516,14 @@ func TestRecoveryArgs(t *testing.T) {
 		target model.RecoveryTarget
 		want   []string
 	}{
-		{name: "zero value is latest", target: model.RecoveryTarget{}, want: []string{"--recovery-target=latest", "--recovery-target-action=promote"}},
-		{name: "latest", target: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, want: []string{"--recovery-target=latest", "--recovery-target-action=promote"}},
-		{name: "immediate", target: model.RecoveryTarget{Type: model.RecoveryTargetImmediate}, want: []string{"--recovery-target=immediate", "--recovery-target-action=promote"}},
-		{name: "timestamp", target: model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "2026-07-20T06:02:03+05:00", Inclusive: &inclusive}, want: []string{"--recovery-target-time=2026-07-20 01:02:03+00:00", "--recovery-target-inclusive=true", "--recovery-target-action=promote"}},
-		{name: "lsn", target: model.RecoveryTarget{Type: model.RecoveryTargetLSN, Value: "0/420000C0"}, want: []string{"--recovery-target-lsn=0/420000C0", "--recovery-target-action=promote"}},
-		{name: "xid", target: model.RecoveryTarget{Type: model.RecoveryTargetXID, Value: "757"}, want: []string{"--recovery-target-xid=757", "--recovery-target-action=promote"}},
-		{name: "restore point", target: model.RecoveryTarget{Type: model.RecoveryTargetRestorePoint, Value: "before_upgrade", Timeline: "latest"}, want: []string{"--recovery-target-name=before_upgrade", "--recovery-target-timeline=latest", "--recovery-target-action=promote"}},
+		{name: "zero value is latest", target: model.RecoveryTarget{}, want: []string{"--recovery-target=latest"}},
+		{name: "latest", target: model.RecoveryTarget{Type: model.RecoveryTargetLatest}, want: []string{"--recovery-target=latest"}},
+		{name: "latest timeline", target: model.RecoveryTarget{Type: model.RecoveryTargetLatest, Timeline: "2"}, want: []string{"--recovery-target=latest", "--recovery-target-timeline=2"}},
+		{name: "immediate", target: model.RecoveryTarget{Type: model.RecoveryTargetImmediate}, want: []string{"--recovery-target=immediate", "--recovery-target-action=pause"}},
+		{name: "timestamp", target: model.RecoveryTarget{Type: model.RecoveryTargetTimestamp, Value: "2026-07-20T06:02:03+05:00", Inclusive: &inclusive}, want: []string{"--recovery-target-time=2026-07-20 01:02:03+00:00", "--recovery-target-inclusive=true", "--recovery-target-action=pause"}},
+		{name: "lsn", target: model.RecoveryTarget{Type: model.RecoveryTargetLSN, Value: "0/420000C0"}, want: []string{"--recovery-target-lsn=0/420000C0", "--recovery-target-action=pause"}},
+		{name: "xid", target: model.RecoveryTarget{Type: model.RecoveryTargetXID, Value: "757"}, want: []string{"--recovery-target-xid=757", "--recovery-target-action=pause"}},
+		{name: "restore point", target: model.RecoveryTarget{Type: model.RecoveryTargetRestorePoint, Value: "before_upgrade", Timeline: "latest"}, want: []string{"--recovery-target-name=before_upgrade", "--recovery-target-timeline=latest", "--recovery-target-action=pause"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -348,6 +533,9 @@ func TestRecoveryArgs(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("unexpected recovery args:\ngot  %#v\nwant %#v", got, tt.want)
+			}
+			if strings.Contains(strings.Join(got, " "), "action=promote") {
+				t.Fatalf("recovery args contain unsafe promote action: %#v", got)
 			}
 		})
 	}
@@ -373,6 +561,50 @@ func TestPlanRestoreRejectsInstanceMismatch(t *testing.T) {
 	}
 }
 
+func TestParseShowRejectsAmbiguousJSON(t *testing.T) {
+	for _, input := range []string{
+		`[] []`,
+		`[] trailing`,
+		`[{"instance":"main","instance":"other"}]`,
+		`null`,
+	} {
+		if _, err := ParseShow([]byte(input), "main"); err == nil {
+			t.Fatalf("ParseShow(%s) succeeded, want strict JSON error", input)
+		}
+	}
+}
+
+func FuzzParseShow(f *testing.F) {
+	fixture, err := os.ReadFile("testdata/show-output.json")
+	if err != nil {
+		f.Fatalf("read fuzz seed: %v", err)
+	}
+	f.Add(fixture)
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`null`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		first, firstErr := ParseShow(data, "main")
+		second, secondErr := ParseShow(data, "main")
+		if (firstErr == nil) != (secondErr == nil) {
+			t.Fatalf("ParseShow() acceptance is not deterministic: first=%v second=%v", firstErr, secondErr)
+		}
+		if firstErr != nil {
+			return
+		}
+		if !reflect.DeepEqual(first, second) {
+			t.Fatal("ParseShow() result is not deterministic")
+		}
+		for _, backup := range first {
+			if backup.Provider != model.ProviderPGProbackup || backup.ProviderID == "" ||
+				backup.ID != model.ProviderScopedID(model.ProviderPGProbackup, backup.ProviderID) {
+				t.Fatalf("ParseShow() returned invalid identity %#v", backup)
+			}
+		}
+	})
+}
+
 type fakeRunner struct {
 	invocation command.Invocation
 	result     command.Result
@@ -381,7 +613,7 @@ type fakeRunner struct {
 
 func (r *fakeRunner) Run(_ context.Context, invocation command.Invocation) (command.Result, error) {
 	r.invocation = invocation
-	return r.result, r.err
+	return r.result.WithRedactValues(invocation.RedactValues...), r.err
 }
 
 func successResult(stdout []byte) command.Result {

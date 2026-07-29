@@ -43,6 +43,14 @@ func Requirements(cfg config.Config) ([]Requirement, error) {
 			Env:          copyStringMap(cfg.Target.Env),
 			RedactValues: append([]string{}, cfg.Target.RedactValues...),
 		})
+		requirements = append(requirements, Requirement{
+			Tool:         model.ToolPSQL,
+			Components:   []string{"recovery.target"},
+			Binary:       firstNonEmpty(cfg.Target.PSQLBinary, "psql"),
+			Args:         []string{"--version"},
+			Env:          copyStringMap(cfg.Target.Env),
+			RedactValues: append([]string{}, cfg.Target.RedactValues...),
+		})
 		if cfg.Restore.VerifyBackup.Enabled {
 			requirements = append(requirements, Requirement{
 				Tool:       model.ToolPGVerifyBackup,

@@ -14,11 +14,12 @@ import (
 )
 
 type ManagedResolution struct {
-	Backup         model.Backup
-	Target         ManagedRestoreTarget
-	RecoveryTarget model.RecoveryTarget
-	Checks         PostRestoreChecker
-	Probes         []model.ProbeDescriptor
+	Backup           model.Backup
+	Target           ManagedRestoreTarget
+	RecoveryTarget   model.RecoveryTarget
+	RecoveryVerifier RecoveryTargetVerifier
+	Checks           PostRestoreChecker
+	Probes           []model.ProbeDescriptor
 }
 
 type ManagedDrillRequest struct {
@@ -44,6 +45,9 @@ type ManagedEngine struct {
 }
 
 func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.DrillResult, error) {
+	if err := validateExecutableSpec(req.Spec); err != nil {
+		return model.DrillResult{}, fmt.Errorf("validate executable drill spec: %w", err)
+	}
 	clock := e.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -51,6 +55,12 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	startedAt := req.StartedAt.UTC()
 	if req.StartedAt.IsZero() {
 		startedAt = clock().UTC()
+	} else if now := clock().UTC(); startedAt.After(now) {
+		return model.DrillResult{}, fmt.Errorf(
+			"managed drill started_at %s is later than current time %s",
+			startedAt.Format(time.RFC3339Nano),
+			now.Format(time.RFC3339Nano),
+		)
 	}
 	specDocument := req.Spec.Document()
 	recoveryTarget := specDocument.RecoveryTarget
@@ -99,8 +109,8 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		return lifecycle.Finish(ctx, status, err)
 	}
 
-	specValidationErr := req.Spec.Validate()
-	specValidated := specValidationErr == nil
+	specValidationErr := error(nil)
+	specValidated := true
 	var recoveryProvenAt time.Time
 	fail := func(stage model.DrillStage, runErr error) (model.DrillResult, error) {
 		if specValidated && result.PolicyEvaluation == nil {
@@ -170,7 +180,7 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 			if preflightErr != nil {
 				preflightErr = errors.Join(preflightErr, artifactErr)
 				if reportErr := validateCheckReport(preflightReport, false); reportErr == nil {
-					result.Checks = append(result.Checks, preflightReport.Checks...)
+					preflightErr = errors.Join(preflightErr, appendChecks(&result.Checks, preflightReport.Checks))
 				} else {
 					preflightErr = errors.Join(preflightErr, fmt.Errorf("invalid partial preflight report: %w", reportErr))
 				}
@@ -182,7 +192,9 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 			if err := validateCheckReport(preflightReport, true); err != nil {
 				return fmt.Errorf("validate managed target preflight report: %w", err)
 			}
-			result.Checks = append(result.Checks, preflightReport.Checks...)
+			if err := appendChecks(&result.Checks, preflightReport.Checks); err != nil {
+				return fmt.Errorf("collect managed target preflight checks: %w", err)
+			}
 			if hasFailedChecks(preflightReport.Checks) {
 				return fmt.Errorf("managed target preflight failed")
 			}
@@ -202,7 +214,7 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if resolveErr != nil {
 			resolveErr = errors.Join(resolveErr, artifactErr)
 			if reportErr := validateCheckReport(discoveryReport, false); reportErr == nil {
-				result.Checks = append(result.Checks, discoveryReport.Checks...)
+				resolveErr = errors.Join(resolveErr, appendChecks(&result.Checks, discoveryReport.Checks))
 			} else {
 				resolveErr = errors.Join(resolveErr, fmt.Errorf("invalid partial managed discovery report: %w", reportErr))
 			}
@@ -214,7 +226,9 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if err := validateCheckReport(discoveryReport, false); err != nil {
 			return fmt.Errorf("validate managed discovery report: %w", err)
 		}
-		result.Checks = append(result.Checks, discoveryReport.Checks...)
+		if err := appendChecks(&result.Checks, discoveryReport.Checks); err != nil {
+			return fmt.Errorf("collect managed discovery checks: %w", err)
+		}
 		if hasFailedChecks(discoveryReport.Checks) {
 			return fmt.Errorf("managed target discovery failed")
 		}
@@ -234,6 +248,20 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	if err != nil {
 		return fail(model.DrillStageTargetDiscovery, err)
 	}
+	if err := requireCheckCapacity(
+		len(result.Checks),
+		len(specDocument.ProbeProfile.Probes)+2,
+		"managed start, recovery proof, and probe profile",
+	); err != nil {
+		return fail(model.DrillStageTargetDiscovery, err)
+	}
+	if err := requireEvidenceCapacity(
+		len(result.Evidence),
+		len(specDocument.ProbeProfile.Probes)+1,
+		"managed recovery proof and probe profile",
+	); err != nil {
+		return fail(model.DrillStageTargetDiscovery, err)
+	}
 
 	targetStarted := false
 	cleanupOperation, err := model.NewOperation(attempt.Identity, model.DrillStageTargetCleanup, model.OperationTargetCleanup, "cleanup-target", 1)
@@ -251,11 +279,11 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 				return operationOutput{evidence: evidence}, err
 			})
 			cancel()
-			result.Evidence = append(result.Evidence, output.evidence...)
+			outputErr := appendOperationOutput(&result, output)
 			targetStarted = false
-			var cleanupErr error
+			cleanupErr := outputErr
 			if destroyErr != nil {
-				cleanupErr = fmt.Errorf("destroy managed restore target: %w", destroyErr)
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("destroy managed restore target: %w", destroyErr))
 			}
 			if err := ctx.Err(); err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("managed drill canceled during target cleanup: %w", err))
@@ -278,16 +306,19 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 			return operationOutput{postgres: &running, report: report}, err
 		})
 		startReport := output.report
-		result.Evidence = append(result.Evidence, output.evidence...)
+		evidenceErr := appendStandaloneEvidence(&result.Evidence, output.evidence)
 		artifactErr := appendCheckReportOutput(&result, startReport)
 		if startErr != nil {
-			startErr = errors.Join(startErr, artifactErr)
+			startErr = errors.Join(startErr, evidenceErr, artifactErr)
 			if reportErr := validateCheckReport(startReport, false); reportErr == nil {
-				result.Checks = append(result.Checks, startReport.Checks...)
+				startErr = errors.Join(startErr, appendChecks(&result.Checks, startReport.Checks))
 			} else {
 				startErr = errors.Join(startErr, fmt.Errorf("invalid partial managed target start report: %w", reportErr))
 			}
 			return fmt.Errorf("start managed restore target: %w", startErr)
+		}
+		if evidenceErr != nil {
+			return fmt.Errorf("collect managed target start evidence: %w", evidenceErr)
 		}
 		if artifactErr != nil {
 			return fmt.Errorf("collect managed target artifacts: %w", artifactErr)
@@ -300,7 +331,9 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if err := validateCheckReport(startReport, true); err != nil {
 			return fmt.Errorf("validate managed target start report: %w", err)
 		}
-		result.Checks = append(result.Checks, startReport.Checks...)
+		if err := appendChecks(&result.Checks, startReport.Checks); err != nil {
+			return fmt.Errorf("collect managed target start checks: %w", err)
+		}
 		if hasFailedChecks(startReport.Checks) {
 			return fmt.Errorf("managed restore target failed readiness checks")
 		}
@@ -312,12 +345,36 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 	}
 
 	err = lifecycle.RunStage(ctx, model.DrillStageProbeExecution, func() error {
+		proofReport, proofErr := runRecoveryTargetProof(
+			ctx,
+			resolution.RecoveryVerifier,
+			pg,
+			recoveryTarget,
+		)
+		if err := appendRecoveryTargetProof(&result, proofReport, proofErr); err != nil {
+			return err
+		}
 		checkReport, checkErr := resolution.Checks.Check(ctx, pg)
+		boundChecks, bindingErr := bindResolvedProbeChecks(
+			resolution.Probes,
+			checkReport.Checks,
+			checkErr == nil,
+		)
+		if bindingErr == nil {
+			checkReport.Checks = boundChecks
+			bindingErr = bindResolvedProbeEvidence(checkReport.Checks, checkReport.Evidence)
+		}
 		artifactErr := appendCheckReportOutput(&result, checkReport)
+		if bindingErr != nil {
+			return fmt.Errorf(
+				"run post-restore checks: %w",
+				errors.Join(checkErr, artifactErr, fmt.Errorf("bind post-restore checks: %w", bindingErr)),
+			)
+		}
 		if checkErr != nil {
 			checkErr = errors.Join(checkErr, artifactErr)
 			if reportErr := validateCheckReport(checkReport, false); reportErr == nil {
-				result.Checks = append(result.Checks, checkReport.Checks...)
+				checkErr = errors.Join(checkErr, appendChecks(&result.Checks, checkReport.Checks))
 			} else {
 				checkErr = errors.Join(checkErr, fmt.Errorf("invalid partial post-restore check report: %w", reportErr))
 			}
@@ -329,7 +386,12 @@ func (e ManagedEngine) Run(ctx context.Context, req ManagedDrillRequest) (model.
 		if err := validateCheckReport(checkReport, true); err != nil {
 			return fmt.Errorf("validate post-restore check report: %w", err)
 		}
-		result.Checks = append(result.Checks, checkReport.Checks...)
+		if err := validateProbeEvidenceProof(resolution.Probes, checkReport.Checks, checkReport.Evidence); err != nil {
+			return fmt.Errorf("validate post-restore probe evidence: %w", err)
+		}
+		if err := appendChecks(&result.Checks, checkReport.Checks); err != nil {
+			return fmt.Errorf("collect post-restore checks: %w", err)
+		}
 		if hasFailedChecks(checkReport.Checks) {
 			return fmt.Errorf("post-restore checks failed")
 		}
@@ -394,6 +456,9 @@ func validateManagedResolution(requestedTarget model.TargetSpec, requestedRecove
 	if backup.Status != model.BackupStatusAvailable {
 		return fmt.Errorf("resolved backup %q is not available", backup.ID)
 	}
+	if err := backup.ValidateRecoveryMetadata(); err != nil {
+		return fmt.Errorf("resolved backup %q has invalid recovery metadata: %w", backup.ID, err)
+	}
 	if !resolution.RecoveryTarget.Type.IsKnown() {
 		return fmt.Errorf("resolved recovery target is required")
 	}
@@ -402,6 +467,9 @@ func validateManagedResolution(requestedTarget model.TargetSpec, requestedRecove
 	}
 	if !reflect.DeepEqual(resolution.RecoveryTarget.Normalized(), requestedRecovery.Normalized()) {
 		return fmt.Errorf("resolved recovery target %#v does not match requested target %#v", resolution.RecoveryTarget, requestedRecovery)
+	}
+	if resolution.RecoveryVerifier == nil {
+		return fmt.Errorf("recovery target verifier is required")
 	}
 	return nil
 }
@@ -430,6 +498,9 @@ func validateProvisionalManagedBackup(backup model.Backup) error {
 		if backup.Status != "" && !backup.Status.IsKnown() {
 			return fmt.Errorf("provisional backup status %q is unsupported", backup.Status)
 		}
+		if err := backup.ValidateRecoveryMetadata(); err != nil {
+			return fmt.Errorf("provisional backup has invalid recovery metadata: %w", err)
+		}
 		return nil
 	}
 	if backup.ID != strings.TrimSpace(backup.ID) {
@@ -454,6 +525,9 @@ func validateProvisionalManagedBackup(backup model.Backup) error {
 		if backup.ID != model.ProviderScopedID(backup.Provider, backup.ProviderID) {
 			return fmt.Errorf("provisional backup id %q does not match provider-scoped id", backup.ID)
 		}
+	}
+	if err := backup.ValidateRecoveryMetadata(); err != nil {
+		return fmt.Errorf("provisional backup has invalid recovery metadata: %w", err)
 	}
 	return nil
 }

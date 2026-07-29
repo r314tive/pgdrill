@@ -26,6 +26,25 @@ func TestDirectoryStoreRejectsBlankPathWithoutCreatingState(t *testing.T) {
 	}
 }
 
+func TestDirectoryStoreReadDoesNotRecreateMissingLock(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "history")
+	store := DirectoryStore{Path: root}
+	result := validResult(t, "missing-lock-run", "attempt-1", model.DrillStatusPassed)
+	if err := store.WriteEvent(context.Background(), validEvents(result)[0]); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, historyStoreLockFileName)
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(context.Background()); err == nil {
+		t.Fatal("List() accepted store with missing lock")
+	}
+	if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("List() recreated missing lock: %v", err)
+	}
+}
+
 func TestDirectoryStorePersistsOrderedEventsSpecAndReport(t *testing.T) {
 	t.Parallel()
 
@@ -199,6 +218,88 @@ func TestDirectoryStoreIsIdempotentUnderConcurrentExactRetries(t *testing.T) {
 	}
 }
 
+func TestDirectoryStoreRecoversBoundedHistoryTemporaryFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "history")
+	store := DirectoryStore{Path: root}
+	result := validResult(t, "run-temp-recovery", "attempt-1", model.DrillStatusFailed)
+	events := validEvents(result)
+	if err := store.WriteEvent(context.Background(), events[0]); err != nil {
+		t.Fatal(err)
+	}
+	eventsDir := filepath.Join(
+		root,
+		"runs",
+		runDirectoryName(result.ID),
+		"attempts",
+		attemptDirectoryName(result.ID, result.AttemptID),
+		"events",
+	)
+	tempPath := filepath.Join(eventsDir, ".history-123456789.tmp")
+	if err := os.WriteFile(tempPath, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() with recoverable temporary file error = %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].EventCount != 1 {
+		t.Fatalf("List() summaries = %#v", summaries)
+	}
+	verification, err := store.Verify(context.Background())
+	if err != nil {
+		t.Fatalf("Verify() with recoverable temporary file error = %v", err)
+	}
+	if verification.Events != 1 {
+		t.Fatalf("Verify() events = %d, want 1", verification.Events)
+	}
+	if err := store.WriteEvent(context.Background(), events[1]); err != nil {
+		t.Fatalf("WriteEvent() recovery error = %v", err)
+	}
+	if _, err := os.Lstat(tempPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary file remains after retry: %v", err)
+	}
+	verification, err = store.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verification.Events != 2 {
+		t.Fatalf("Verify() recovered events = %d, want 2", verification.Events)
+	}
+}
+
+func TestDirectoryStoreBoundsHistoryTemporaryFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "history")
+	store := DirectoryStore{Path: root}
+	result := validResult(t, "run-temp-bound", "attempt-1", model.DrillStatusFailed)
+	event := validEvents(result)[0]
+	if err := store.WriteEvent(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	eventsDir := filepath.Join(
+		root,
+		"runs",
+		runDirectoryName(result.ID),
+		"attempts",
+		attemptDirectoryName(result.ID, result.AttemptID),
+		"events",
+	)
+	for index := 0; index <= maxHistoryTemporaryFilesPerDirectory; index++ {
+		path := filepath.Join(eventsDir, fmt.Sprintf(".history-%d.tmp", index))
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.Verify(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "maximum temporary file count") {
+		t.Fatalf("Verify() error = %v, want bounded temporary-state refusal", err)
+	}
+	if err := store.WriteEvent(context.Background(), event); err == nil ||
+		!strings.Contains(err.Error(), "maximum temporary file count") {
+		t.Fatalf("WriteEvent() error = %v, want bounded recovery refusal", err)
+	}
+}
+
 func TestDirectoryStoreRejectsEventGapsConflictsAndPostTerminalWrites(t *testing.T) {
 	t.Parallel()
 
@@ -293,6 +394,22 @@ func TestDirectoryStoreRejectsIdentityAndTerminalStatusChanges(t *testing.T) {
 	other.SpecDigest = spec.Digest()
 	if err := store.SaveReport(context.Background(), other); err == nil || !strings.Contains(err.Error(), "different content") {
 		t.Fatalf("SaveReport(identity change) error = %v", err)
+	}
+}
+
+func TestDirectoryStoreRejectsCurrentReportThatOnlyMeetsLegacyContract(t *testing.T) {
+	t.Parallel()
+
+	store := DirectoryStore{Path: filepath.Join(t.TempDir(), "history")}
+	result := validResult(t, "run-current-contract", "attempt-1", model.DrillStatusPassed)
+	result.SchemaVersion = model.CurrentReportSchemaVersion
+
+	err := store.SaveReport(context.Background(), result)
+	if err == nil || !strings.Contains(err.Error(), "backup is required for a passed report") {
+		t.Fatalf("SaveReport(current legacy-shaped report) error = %v", err)
+	}
+	if _, statErr := os.Lstat(store.Path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("rejected current report created history store: %v", statErr)
 	}
 }
 
@@ -886,7 +1003,7 @@ func validResult(t *testing.T, runID, attemptID string, status model.DrillStatus
 	canonical := spec.Document()
 	started := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
 	result := model.DrillResult{
-		SchemaVersion:  model.CurrentReportSchemaVersion,
+		SchemaVersion:  model.LegacyReportSchemaVersion,
 		PGDrillVersion: "test",
 		ID:             runID,
 		AttemptID:      attemptID,

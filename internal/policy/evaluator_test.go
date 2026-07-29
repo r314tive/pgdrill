@@ -151,6 +151,303 @@ func TestEvaluateNonTemporalRPOAndMissingCleanupRemainUnknown(t *testing.T) {
 	}
 }
 
+func TestEvaluateRPOEvidenceMatrix(t *testing.T) {
+	startedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	recent := startedAt.Add(-5 * time.Minute)
+	old := startedAt.Add(-2 * time.Hour)
+	future := startedAt.Add(time.Minute)
+	tests := []struct {
+		name       string
+		target     model.RecoveryTarget
+		backup     model.Backup
+		wantStatus model.PolicyVerdictStatus
+		wantBasis  model.PolicyVerdictBasis
+	}{
+		{
+			name:       "latest missing backup finish",
+			target:     model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisMissingBackupFinish,
+		},
+		{
+			name:       "latest future backup finish",
+			target:     model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			backup:     model.Backup{FinishedAt: &future},
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisInvalidTimeOrder,
+		},
+		{
+			name:       "latest recent backup finish",
+			target:     model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			backup:     model.Backup{FinishedAt: &recent},
+			wantStatus: model.PolicyVerdictPassed,
+			wantBasis:  model.PolicyBasisBackupFinishLowerBound,
+		},
+		{
+			name:       "immediate missing backup start",
+			target:     model.RecoveryTarget{Type: model.RecoveryTargetImmediate},
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisMissingBackupStart,
+		},
+		{
+			name:       "immediate future backup start",
+			target:     model.RecoveryTarget{Type: model.RecoveryTargetImmediate},
+			backup:     model.Backup{StartedAt: &future},
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisInvalidTimeOrder,
+		},
+		{
+			name:       "immediate recent backup start",
+			target:     model.RecoveryTarget{Type: model.RecoveryTargetImmediate},
+			backup:     model.Backup{StartedAt: &recent},
+			wantStatus: model.PolicyVerdictPassed,
+			wantBasis:  model.PolicyBasisBackupStartLowerBound,
+		},
+		{
+			name:       "immediate old backup start is only a stale lower bound",
+			target:     model.RecoveryTarget{Type: model.RecoveryTargetImmediate},
+			backup:     model.Backup{StartedAt: &old},
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisBackupStartLowerBound,
+		},
+		{
+			name: "future timestamp target",
+			target: model.RecoveryTarget{
+				Type:  model.RecoveryTargetTimestamp,
+				Value: future.Format(time.RFC3339Nano),
+			},
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisFutureRecoveryTarget,
+		},
+		{
+			name: "recent timestamp target",
+			target: model.RecoveryTarget{
+				Type:  model.RecoveryTargetTimestamp,
+				Value: recent.Format(time.RFC3339Nano),
+			},
+			wantStatus: model.PolicyVerdictPassed,
+			wantBasis:  model.PolicyBasisDrillStartToRequestedTime,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluation, err := Evaluate(
+				model.RecoveryPolicy{MaximumRPO: "30m"},
+				tt.target,
+				Facts{
+					StartedAt:        startedAt,
+					EvaluatedAt:      startedAt.Add(2 * time.Minute),
+					RecoveryProvenAt: startedAt.Add(time.Minute),
+					Backup:           tt.backup,
+				},
+			)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			verdict := verdictFor(t, evaluation, model.PolicyAssertionRPO)
+			if verdict.Status != tt.wantStatus || verdict.Basis != tt.wantBasis {
+				t.Fatalf("RPO verdict = %#v, want status=%q basis=%q", verdict, tt.wantStatus, tt.wantBasis)
+			}
+		})
+	}
+}
+
+func TestEvaluateRecoveryProofFailsClosed(t *testing.T) {
+	startedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	backupFinishedAt := startedAt.Add(-5 * time.Minute)
+	tests := []struct {
+		name          string
+		recoveryProof time.Time
+		wantBasis     model.PolicyVerdictBasis
+	}{
+		{
+			name:      "missing",
+			wantBasis: model.PolicyBasisMissingRecoveryProof,
+		},
+		{
+			name:          "before drill",
+			recoveryProof: startedAt.Add(-time.Second),
+			wantBasis:     model.PolicyBasisInvalidTimeOrder,
+		},
+		{
+			name:          "after evaluation",
+			recoveryProof: startedAt.Add(3 * time.Minute),
+			wantBasis:     model.PolicyBasisInvalidTimeOrder,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluation, err := Evaluate(
+				model.RecoveryPolicy{
+					MaximumRTO:            "10m",
+					MaximumRPO:            "30m",
+					RequireRecoveryTarget: true,
+				},
+				model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+				Facts{
+					StartedAt:        startedAt,
+					EvaluatedAt:      startedAt.Add(2 * time.Minute),
+					RecoveryProvenAt: tt.recoveryProof,
+					Backup:           model.Backup{FinishedAt: &backupFinishedAt},
+				},
+			)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			if evaluation.RecoveryProvenAt != nil {
+				t.Fatalf("invalid proof was persisted: %#v", evaluation.RecoveryProvenAt)
+			}
+			for _, assertion := range []model.PolicyAssertion{
+				model.PolicyAssertionRTO,
+				model.PolicyAssertionRPO,
+				model.PolicyAssertionRecoveryTarget,
+			} {
+				verdict := verdictFor(t, evaluation, assertion)
+				if verdict.Status != model.PolicyVerdictUnknown || verdict.Basis != tt.wantBasis {
+					t.Fatalf("%s verdict = %#v", assertion, verdict)
+				}
+			}
+		})
+	}
+}
+
+func TestEvaluateBackupAgeAndCleanupFailClosedMatrix(t *testing.T) {
+	startedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	recent := startedAt.Add(-5 * time.Minute)
+	future := startedAt.Add(time.Minute)
+
+	for _, tt := range []struct {
+		name       string
+		finishedAt *time.Time
+		wantStatus model.PolicyVerdictStatus
+		wantBasis  model.PolicyVerdictBasis
+	}{
+		{
+			name:       "missing backup finish",
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisMissingBackupFinish,
+		},
+		{
+			name:       "future backup finish",
+			finishedAt: &future,
+			wantStatus: model.PolicyVerdictUnknown,
+			wantBasis:  model.PolicyBasisInvalidTimeOrder,
+		},
+		{
+			name:       "recent backup finish",
+			finishedAt: &recent,
+			wantStatus: model.PolicyVerdictPassed,
+			wantBasis:  model.PolicyBasisDrillStartToBackupFinish,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluation, err := Evaluate(
+				model.RecoveryPolicy{MaximumBackupAge: "30m"},
+				model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+				Facts{
+					StartedAt:   startedAt,
+					EvaluatedAt: startedAt.Add(time.Minute),
+					Backup:      model.Backup{FinishedAt: tt.finishedAt},
+				},
+			)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			verdict := verdictFor(t, evaluation, model.PolicyAssertionBackupAge)
+			if verdict.Status != tt.wantStatus || verdict.Basis != tt.wantBasis {
+				t.Fatalf("backup age verdict = %#v", verdict)
+			}
+		})
+	}
+
+	evaluation, err := Evaluate(
+		model.RecoveryPolicy{RequireCleanup: true},
+		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		Facts{StartedAt: startedAt, EvaluatedAt: startedAt.Add(time.Minute)},
+	)
+	if err != nil {
+		t.Fatalf("Evaluate(no owned target) error = %v", err)
+	}
+	cleanup := verdictFor(t, evaluation, model.PolicyAssertionCleanup)
+	if cleanup.Status != model.PolicyVerdictPassed || cleanup.Basis != model.PolicyBasisNoOwnedTarget {
+		t.Fatalf("no-owned-target cleanup verdict = %#v", cleanup)
+	}
+
+	evaluation, err = Evaluate(
+		model.RecoveryPolicy{RequireCleanup: true},
+		model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+		Facts{
+			StartedAt:   startedAt,
+			EvaluatedAt: startedAt.Add(3 * time.Minute),
+			Operations: []model.OperationCheckpoint{
+				{
+					Operation: model.Operation{Kind: model.OperationTargetCleanup},
+					State:     model.OperationStateSucceeded,
+					UpdatedAt: startedAt.Add(time.Minute),
+				},
+				{
+					Operation: model.Operation{Kind: model.OperationTargetCleanup},
+					State:     model.OperationStateUnknown,
+					UpdatedAt: startedAt.Add(2 * time.Minute),
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Evaluate(latest cleanup) error = %v", err)
+	}
+	cleanup = verdictFor(t, evaluation, model.PolicyAssertionCleanup)
+	if cleanup.Status != model.PolicyVerdictUnknown || cleanup.Basis != model.PolicyBasisCleanupCheckpoint {
+		t.Fatalf("latest cleanup verdict = %#v", cleanup)
+	}
+}
+
+func TestEvaluateRejectsInvalidFacts(t *testing.T) {
+	startedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		policy model.RecoveryPolicy
+		target model.RecoveryTarget
+		facts  Facts
+	}{
+		{
+			name:   "invalid policy",
+			policy: model.RecoveryPolicy{MaximumRTO: "not-a-duration"},
+			target: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			facts:  Facts{StartedAt: startedAt, EvaluatedAt: startedAt},
+		},
+		{
+			name:   "invalid target",
+			target: model.RecoveryTarget{Type: model.RecoveryTargetTimestamp},
+			facts:  Facts{StartedAt: startedAt, EvaluatedAt: startedAt},
+		},
+		{
+			name:   "missing started at",
+			target: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			facts:  Facts{EvaluatedAt: startedAt},
+		},
+		{
+			name:   "missing evaluated at",
+			target: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			facts:  Facts{StartedAt: startedAt},
+		},
+		{
+			name:   "evaluation before start",
+			target: model.RecoveryTarget{Type: model.RecoveryTargetLatest},
+			facts:  Facts{StartedAt: startedAt, EvaluatedAt: startedAt.Add(-time.Second)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Evaluate(tt.policy, tt.target, tt.facts); err == nil {
+				t.Fatal("Evaluate() accepted invalid input")
+			}
+		})
+	}
+}
+
 func TestEvaluateDisabledPolicyProducesExplicitNotConfiguredVerdicts(t *testing.T) {
 	startedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	evaluation, err := Evaluate(

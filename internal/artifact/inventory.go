@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r314tive/pgdrill/internal/durablefs"
 	"github.com/r314tive/pgdrill/internal/model"
 )
 
@@ -136,7 +137,7 @@ func scanStore(
 }
 
 func inspectStoreRoot(root string, inventory *storeInventory) error {
-	entries, err := os.ReadDir(root)
+	entries, err := durablefs.ReadDirBounded(root, MaxTemporaryFiles+5)
 	if err != nil {
 		return fmt.Errorf("read artifact store: %w", err)
 	}
@@ -190,7 +191,7 @@ func scanBlobs(ctx context.Context, root string) ([]blobState, error) {
 		}
 		return nil, fmt.Errorf("inspect artifact digest directory: %w", err)
 	}
-	prefixes, err := os.ReadDir(digestRoot)
+	prefixes, err := durablefs.ReadDirBounded(digestRoot, 256)
 	if err != nil {
 		return nil, fmt.Errorf("read artifact digest directory: %w", err)
 	}
@@ -203,7 +204,7 @@ func scanBlobs(ctx context.Context, root string) ([]blobState, error) {
 		if err := requireRealDirectory(prefixPath); err != nil {
 			return nil, err
 		}
-		entries, err := os.ReadDir(prefixPath)
+		entries, err := durablefs.ReadDirBounded(prefixPath, MaxStoreBlobs)
 		if err != nil {
 			return nil, fmt.Errorf("read artifact prefix directory: %w", err)
 		}
@@ -238,7 +239,7 @@ func countStoredBlobs(digestRoot string) (int, error) {
 		}
 		return 0, err
 	}
-	prefixes, err := os.ReadDir(digestRoot)
+	prefixes, err := durablefs.ReadDirBounded(digestRoot, 256)
 	if err != nil {
 		return 0, err
 	}
@@ -254,7 +255,7 @@ func countStoredBlobs(digestRoot string) (int, error) {
 		if err := requireRealDirectory(prefixPath); err != nil {
 			return 0, err
 		}
-		entries, err := os.ReadDir(prefixPath)
+		entries, err := durablefs.ReadDirBounded(prefixPath, MaxStoreBlobs)
 		if err != nil {
 			return 0, err
 		}
@@ -337,7 +338,7 @@ func scanClaims(
 		}
 		return nil, nil, nil, fmt.Errorf("inspect artifact claim directory: %w", err)
 	}
-	claimRootEntries, err := os.ReadDir(claimRoot)
+	claimRootEntries, err := durablefs.ReadDirBounded(claimRoot, 1)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -356,12 +357,13 @@ func scanClaims(
 		}
 		return nil, nil, nil, fmt.Errorf("inspect artifact claim directory: %w", err)
 	}
-	prefixes, err := os.ReadDir(claimDigestRoot)
+	prefixes, err := durablefs.ReadDirBounded(claimDigestRoot, 256)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	orphanSet := make(map[string]struct{})
 	temporary := []temporaryState{}
+	digestCount := 0
 	for _, prefix := range prefixes {
 		if !prefix.IsDir() || !isLowerHex(prefix.Name(), 2) {
 			return nil, nil, nil, fmt.Errorf(
@@ -373,11 +375,18 @@ func scanClaims(
 		if err := requireRealDirectory(prefixPath); err != nil {
 			return nil, nil, nil, err
 		}
-		digests, err := os.ReadDir(prefixPath)
+		digests, err := durablefs.ReadDirBounded(prefixPath, MaxStoreBlobs)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		for _, digest := range digests {
+			digestCount++
+			if digestCount > MaxStoreBlobs {
+				return nil, nil, nil, fmt.Errorf(
+					"artifact store exceeds maximum claim digest count %d",
+					MaxStoreBlobs,
+				)
+			}
 			if !digest.IsDir() || !isLowerHex(digest.Name(), 64) ||
 				!strings.HasPrefix(digest.Name(), prefix.Name()) {
 				return nil, nil, nil, fmt.Errorf(
@@ -391,16 +400,9 @@ func scanClaims(
 			if err := requireRealDirectory(claimPath); err != nil {
 				return nil, nil, nil, err
 			}
-			entries, err := os.ReadDir(claimPath)
+			entries, err := durablefs.ReadDirBounded(claimPath, MaxClaimsPerBlob)
 			if err != nil {
 				return nil, nil, nil, err
-			}
-			if len(entries) > MaxClaimsPerBlob {
-				return nil, nil, nil, fmt.Errorf(
-					"artifact %s exceeds maximum claim count %d",
-					id,
-					MaxClaimsPerBlob,
-				)
 			}
 			for _, entry := range entries {
 				path := filepath.Join(claimPath, entry.Name())

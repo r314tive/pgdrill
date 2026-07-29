@@ -1,7 +1,9 @@
 package command
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/r314tive/pgdrill/internal/model"
 )
 
 func TestRunnerCapturesRawAndRedactedEvidence(t *testing.T) {
@@ -88,6 +92,36 @@ func TestRunnerEnvironmentOverridesParentWithoutDuplicates(t *testing.T) {
 	merged := mergeEnv([]string{name + "=first", "OTHER=value", name + "=second"}, map[string]string{name: "override"})
 	if got := strings.Join(merged, "\n"); strings.Count(got, name+"=") != 1 || !strings.Contains(got, name+"=override") {
 		t.Fatalf("mergeEnv() = %#v, want one override", merged)
+	}
+}
+
+func TestRunnerRedactsSensitiveInheritedEnvironment(t *testing.T) {
+	const (
+		name   = "PGDRILL_INHERITED_PASSWORD"
+		secret = "inherited-command-secret"
+	)
+	t.Setenv(name, secret)
+	runner := NewRunner(Options{})
+
+	result, err := runner.Run(context.Background(), Invocation{
+		Path: os.Args[0],
+		Args: []string{
+			"-test.run=TestHelperProcess",
+			"--",
+			"print-env",
+			name,
+		},
+		Env: map[string]string{"PGDRILL_COMMAND_HELPER": "1"},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(string(result.Raw.Stdout), secret) {
+		t.Fatalf("raw evidence lost inherited value: %q", result.Raw.Stdout)
+	}
+	if strings.Contains(result.Evidence.Stdout, secret) ||
+		!strings.Contains(result.Evidence.Stdout, defaultReplacement) {
+		t.Fatalf("durable evidence leaked inherited secret: %q", result.Evidence.Stdout)
 	}
 }
 
@@ -228,6 +262,9 @@ func TestRunnerRedactsStartError(t *testing.T) {
 	if result.Evidence.ExitStatus.Started || !strings.Contains(err.Error(), defaultReplacement) {
 		t.Fatalf("unexpected start error result: err=%q evidence=%#v", err, result.Evidence.ExitStatus)
 	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		t.Fatalf("redacted start error exposed raw cause: %v", unwrapped)
+	}
 }
 
 func TestRunnerReturnsOutputLimitErrorWithBoundedRawEvidence(t *testing.T) {
@@ -246,23 +283,269 @@ func TestRunnerReturnsOutputLimitErrorWithBoundedRawEvidence(t *testing.T) {
 	if !errors.As(err, &limitErr) {
 		t.Fatalf("expected output limit error, got %v", err)
 	}
-	if limitErr.LimitBytes != 8 || limitErr.StdoutBytes != 32 || limitErr.StderrBytes != 24 {
+	if limitErr.LimitBytes != 8 ||
+		(limitErr.StdoutBytes <= 8 && limitErr.StderrBytes <= 8) {
 		t.Fatalf("unexpected output limit error %#v", limitErr)
 	}
-	if len(result.Raw.Stdout) != 8 || result.Raw.StdoutBytes != 32 || !result.Raw.StdoutTruncated {
+	if len(result.Raw.Stdout) > 8 || result.Raw.StdoutBytes != limitErr.StdoutBytes {
 		t.Fatalf("unexpected raw stdout %#v", result.Raw)
 	}
-	if len(result.Raw.Stderr) != 8 || result.Raw.StderrBytes != 24 || !result.Raw.StderrTruncated {
+	if len(result.Raw.Stderr) > 8 || result.Raw.StderrBytes != limitErr.StderrBytes {
 		t.Fatalf("unexpected raw stderr %#v", result.Raw)
 	}
-	if len(result.Evidence.Stdout) != 4 || result.Evidence.StdoutBytes != 32 || !result.Evidence.StdoutTruncated {
+	if len(result.Evidence.Stdout) > 4 || result.Evidence.StdoutBytes != limitErr.StdoutBytes {
 		t.Fatalf("unexpected durable stdout %#v", result.Evidence)
 	}
-	if len(result.Evidence.Stderr) != 4 || result.Evidence.StderrBytes != 24 || !result.Evidence.StderrTruncated {
+	if len(result.Evidence.Stderr) > 4 || result.Evidence.StderrBytes != limitErr.StderrBytes {
 		t.Fatalf("unexpected durable stderr %#v", result.Evidence)
 	}
-	if !result.Evidence.ExitStatus.Success {
-		t.Fatalf("output capture failure must preserve process exit status %#v", result.Evidence.ExitStatus)
+	if result.Evidence.ExitStatus.TimedOut || result.Evidence.ExitStatus.Canceled {
+		t.Fatalf("output limit was misclassified as context termination %#v", result.Evidence.ExitStatus)
+	}
+}
+
+func TestRunnerTerminatesContinuouslyOverproducingCommand(t *testing.T) {
+	runner := NewRunner(Options{
+		DefaultMaxOutputBytes:   1024,
+		DefaultMaxEvidenceBytes: 256,
+	})
+	started := time.Now()
+
+	result, err := runner.Run(context.Background(), Invocation{
+		Path:    os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess", "--", "unbounded-output"},
+		Timeout: 5 * time.Second,
+		Env:     map[string]string{"PGDRILL_COMMAND_HELPER": "1"},
+	})
+
+	var limitErr *OutputLimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("Run() error = %v, want OutputLimitError", err)
+	}
+	if time.Since(started) >= 2*time.Second {
+		t.Fatalf("output-limited command was not terminated promptly: %s", time.Since(started))
+	}
+	if len(result.Raw.Stdout) != 1024 || !result.Raw.StdoutTruncated {
+		t.Fatalf("raw output = %#v", result.Raw)
+	}
+	if result.Evidence.ExitStatus.TimedOut || result.Evidence.ExitStatus.Canceled {
+		t.Fatalf("output limit status = %#v", result.Evidence.ExitStatus)
+	}
+}
+
+func TestRunnerEnforcesCanonicalCommandCapacityBeforeExecution(t *testing.T) {
+	runner := NewRunner(Options{
+		DefaultMaxOutputBytes:   DefaultMaxOutputBytes + 1,
+		DefaultMaxEvidenceBytes: DefaultMaxEvidenceBytes + 1,
+	})
+	if runner.defaultMaxOutputBytes != DefaultMaxOutputBytes {
+		t.Fatalf("default output limit = %d", runner.defaultMaxOutputBytes)
+	}
+	if runner.defaultMaxEvidenceBytes != DefaultMaxEvidenceBytes {
+		t.Fatalf("default evidence limit = %d", runner.defaultMaxEvidenceBytes)
+	}
+
+	args := make([]string, model.MaxCommandArguments+1)
+	if _, err := runner.Run(context.Background(), Invocation{
+		Path: "/definitely/not/executed",
+		Args: args,
+	}); err == nil || !strings.Contains(err.Error(), "arguments exceed maximum count") {
+		t.Fatalf("Run(excessive arguments) error = %v", err)
+	}
+
+	env := make(map[string]string, model.MaxCommandEnvironmentEntries+1)
+	for index := 0; index <= model.MaxCommandEnvironmentEntries; index++ {
+		env[fmt.Sprintf("PGDRILL_LIMIT_%04d", index)] = "value"
+	}
+	if _, err := runner.Run(context.Background(), Invocation{
+		Path: "/definitely/not/executed",
+		Env:  env,
+	}); err == nil || !strings.Contains(err.Error(), "environment exceeds maximum count") {
+		t.Fatalf("Run(excessive environment) error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		invocation Invocation
+		want       string
+	}{
+		{
+			name:       "invalid path utf8",
+			invocation: Invocation{Path: string([]byte{0xff})},
+			want:       "path must be valid UTF-8",
+		},
+		{
+			name: "argument nul",
+			invocation: Invocation{
+				Path: "tool",
+				Args: []string{"bad\x00argument"},
+			},
+			want: "argument 0 must not contain NUL",
+		},
+		{
+			name: "environment name",
+			invocation: Invocation{
+				Path: "tool",
+				Env:  map[string]string{"BAD=NAME": "value"},
+			},
+			want: "must not contain '='",
+		},
+		{
+			name:       "negative timeout",
+			invocation: Invocation{Path: "tool", Timeout: -time.Second},
+			want:       "timeout must not be negative",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := runner.Run(context.Background(), test.invocation); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Run() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	if _, err := runner.Run(nil, Invocation{Path: "tool"}); err == nil ||
+		!strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("Run(nil context) error = %v", err)
+	}
+	var missing *ExecRunner
+	if _, err := missing.Run(context.Background(), Invocation{Path: "tool"}); err == nil ||
+		!strings.Contains(err.Error(), "runner is required") {
+		t.Fatalf("nil Runner.Run() error = %v", err)
+	}
+}
+
+func TestRunnerRejectsRedactionValueInEnvironmentNameWithoutLeakingIt(t *testing.T) {
+	const secret = "name-secret"
+	runner := NewRunner(Options{})
+
+	_, err := runner.Run(context.Background(), Invocation{
+		Path:         "/definitely/not-executed",
+		Env:          map[string]string{"PREFIX_" + secret: "value"},
+		RedactValues: []string{secret},
+	})
+
+	if err == nil ||
+		!strings.Contains(err.Error(), "environment name contains a configured redaction value") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("Run() error leaked environment name secret: %v", err)
+	}
+}
+
+func TestResultWithRedactValuesSupportsCustomRunners(t *testing.T) {
+	const secret = "custom-runner-secret"
+	result := (Result{
+		Raw: RawEvidence{
+			Stdout: []byte("raw " + secret),
+		},
+		Evidence: model.CommandEvidence{
+			Path:         "/bin/" + secret,
+			ResolvedPath: "/resolved/" + secret,
+			Args:         []string{"--token=" + secret},
+			Env: map[string]string{
+				"AUTH_TOKEN":      secret,
+				"VISIBLE":         "prefix-" + secret,
+				"KEY_" + secret:   "must be omitted",
+				"NON_SECRET_NAME": "value",
+			},
+			WorkDir: "/tmp/" + secret,
+			ExitStatus: model.ExitStatus{
+				Error: "failed with " + secret,
+			},
+			Stdout: "stdout " + secret,
+			Stderr: "stderr " + secret,
+		},
+	}).WithRedactValues(secret)
+
+	if got := result.RedactString("before " + secret + " after"); got != "before [REDACTED] after" {
+		t.Fatalf("RedactString() = %q", got)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", result.Evidence), secret) {
+		t.Fatalf("WithRedactValues() leaked durable evidence: %#v", result.Evidence)
+	}
+	if !strings.Contains(string(result.Raw.Stdout), secret) {
+		t.Fatalf("WithRedactValues() changed raw adapter input: %#v", result.Raw)
+	}
+	if _, exists := result.Evidence.Env["KEY_"+secret]; exists {
+		t.Fatalf("WithRedactValues() retained sensitive environment name: %#v", result.Evidence.Env)
+	}
+}
+
+func TestResultWithRedactValuesErasesEvidenceForInvalidConfiguration(t *testing.T) {
+	const secret = "REDACT"
+	result := (Result{
+		Raw: RawEvidence{
+			Path:   secret,
+			Stdout: []byte(secret),
+		},
+		Evidence: model.CommandEvidence{
+			Path:         secret,
+			ResolvedPath: secret,
+			Args:         []string{secret},
+			Env:          map[string]string{"PGUSER": secret},
+			WorkDir:      secret,
+			Stdout:       secret,
+			Stderr:       secret,
+			ExitStatus:   model.ExitStatus{Error: secret},
+		},
+	}).WithRedactValues(secret)
+
+	encoded, err := json.Marshal(result.Evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(secret)) {
+		t.Fatalf("invalid redaction configuration leaked durable evidence: %s", encoded)
+	}
+	if result.Evidence.Path != "" ||
+		result.Evidence.ResolvedPath != "" ||
+		len(result.Evidence.Args) != 1 ||
+		result.Evidence.Args[0] != "" ||
+		len(result.Evidence.Env) != 0 ||
+		result.Evidence.WorkDir != "" ||
+		result.Evidence.Stdout != "" ||
+		result.Evidence.Stderr != "" ||
+		result.Evidence.ExitStatus.Error != "" {
+		t.Fatalf("invalid redaction configuration retained durable text: %#v", result.Evidence)
+	}
+	if result.Raw.Path != secret || string(result.Raw.Stdout) != secret {
+		t.Fatalf("WithRedactValues() changed raw adapter input: %#v", result.Raw)
+	}
+}
+
+func TestEvidenceOutputNormalizesInvalidUTF8(t *testing.T) {
+	raw := []byte{0xff, 0xfe, 'x'}
+	output, truncated := evidenceOutput(raw, false, 32, NewRedactor())
+	if output != "\uFFFDx" {
+		t.Fatalf("evidenceOutput() = %q, want replacement rune and suffix", output)
+	}
+	if truncated {
+		t.Fatal("evidenceOutput() marked normalized output as truncated")
+	}
+	if got := string(raw); got != string([]byte{0xff, 0xfe, 'x'}) {
+		t.Fatalf("evidenceOutput() mutated raw input: %q", got)
+	}
+}
+
+func TestEvidenceOutputRedactsTruncatedSecretPrefix(t *testing.T) {
+	output, truncated := evidenceOutput(
+		[]byte("prefix secret-va"),
+		true,
+		64,
+		NewRedactor("secret-value"),
+	)
+	if !truncated || output != "prefix [REDACTED]" {
+		t.Fatalf("evidenceOutput() = %q, %t", output, truncated)
+	}
+}
+
+func TestDurableRedactionNormalizesReplacementUTF8(t *testing.T) {
+	redactor := NewRedactor("secret").withReplacement(string([]byte{0xff}))
+	if got := durableRedactedString("before-secret-after", redactor); got != "before-\uFFFD-after" {
+		t.Fatalf("durableRedactedString() = %q", got)
 	}
 }
 
@@ -288,6 +571,32 @@ func TestRunnerTruncatesDurableEvidenceAfterRedaction(t *testing.T) {
 	}
 	if !result.Evidence.StdoutTruncated || strings.Contains(result.Evidence.Stdout, "secret") || result.Evidence.Stdout != "[REDACTE" {
 		t.Fatalf("unexpected redacted preview %#v", result.Evidence)
+	}
+}
+
+func TestEvidenceOutputBoundsRedactionExpansion(t *testing.T) {
+	raw := []byte(strings.Repeat("x", 64<<10))
+	redactor := NewRedactor("x").withReplacement(strings.Repeat("r", maxRedactionReplacementBytes))
+
+	output, truncated := evidenceOutput(raw, false, 1024, redactor)
+
+	if !truncated {
+		t.Fatal("expanded evidence must be marked truncated")
+	}
+	if len(output) != 1024 || output != strings.Repeat("r", 1024) {
+		t.Fatalf("bounded expanded evidence length = %d", len(output))
+	}
+}
+
+func TestRunnerRejectsInvalidRedactorBeforeExecution(t *testing.T) {
+	runner := NewRunner(Options{
+		Redactor: NewRedactor().withReplacement(string([]byte{0xff})),
+	})
+
+	_, err := runner.Run(context.Background(), Invocation{Path: "/definitely/not/executed"})
+
+	if err == nil || !strings.Contains(err.Error(), "command redactor: replacement must be valid UTF-8") {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 
@@ -403,6 +712,13 @@ func TestHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString(strings.Repeat("x", 32))
 		_, _ = os.Stderr.WriteString(strings.Repeat("y", 24))
 		os.Exit(0)
+	case "unbounded-output":
+		for {
+			if _, err := os.Stdout.WriteString(strings.Repeat("x", 4096)); err != nil {
+				os.Exit(0)
+			}
+			time.Sleep(time.Millisecond)
+		}
 	case "secret-output":
 		_, _ = os.Stdout.WriteString("secret-value-and-more")
 		os.Exit(0)

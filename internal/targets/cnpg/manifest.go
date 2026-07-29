@@ -3,6 +3,7 @@ package cnpg
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -24,6 +25,8 @@ const (
 	labelSourceCluster = "pgdrill.io/source-cluster"
 	labelDrillID       = "pgdrill.io/drill-id"
 	labelOwnershipID   = "pgdrill.io/ownership-id"
+
+	annotationRecoveryContract = "pgdrill.io/recovery-contract-sha256"
 )
 
 type RecoveryMethod string
@@ -238,6 +241,10 @@ func (s VerifyClusterSpec) ManifestYAML() ([]byte, error) {
 	if err := validateOwnershipID(s.OwnershipID); err != nil {
 		return nil, err
 	}
+	contractDigest, err := s.ContractDigest()
+	if err != nil {
+		return nil, err
+	}
 
 	manifest := clusterManifest{
 		APIVersion: "postgresql.cnpg.io/v1",
@@ -246,12 +253,18 @@ func (s VerifyClusterSpec) ManifestYAML() ([]byte, error) {
 			Name:      s.Name,
 			Namespace: s.Namespace,
 			Labels:    s.Labels,
+			Annotations: map[string]string{
+				annotationRecoveryContract: contractDigest,
+			},
 		},
 		Spec: clusterSpec{
 			ImageName: s.ImageName,
 			Instances: 1,
 			InheritedMetadata: embeddedObjectMeta{
 				Labels: map[string]string{labelOwnershipID: s.OwnershipID},
+				Annotations: map[string]string{
+					annotationRecoveryContract: contractDigest,
+				},
 			},
 			Storage: storageSpec{
 				Size:         s.StorageSize,
@@ -285,6 +298,15 @@ func (s VerifyClusterSpec) ManifestYAML() ([]byte, error) {
 		return nil, fmt.Errorf("marshal cnpg cluster manifest: %w", err)
 	}
 	return out, nil
+}
+
+func (s VerifyClusterSpec) ContractDigest() (string, error) {
+	payload, err := json.Marshal(s)
+	if err != nil {
+		return "", fmt.Errorf("encode CNPG recovery contract: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func (s VerifyClusterSpec) recoveryManifest(method RecoveryMethod) (recoverySpec, []externalClusterSpec, error) {
@@ -338,9 +360,10 @@ type clusterManifest struct {
 }
 
 type objectMeta struct {
-	Name      string            `yaml:"name"`
-	Namespace string            `yaml:"namespace,omitempty"`
-	Labels    map[string]string `yaml:"labels,omitempty"`
+	Name        string            `yaml:"name"`
+	Namespace   string            `yaml:"namespace,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty"`
+	Annotations map[string]string `yaml:"annotations,omitempty"`
 }
 
 type clusterSpec struct {
@@ -355,7 +378,8 @@ type clusterSpec struct {
 }
 
 type embeddedObjectMeta struct {
-	Labels map[string]string `yaml:"labels,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty"`
+	Annotations map[string]string `yaml:"annotations,omitempty"`
 }
 
 type storageSpec struct {

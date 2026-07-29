@@ -15,6 +15,7 @@ func TestRequirementsForLocalDrill(t *testing.T) {
 		Target: config.TargetConfig{
 			Type:           model.RestoreTargetLocal,
 			PostgresBinary: "/opt/pgsql/bin/postgres",
+			PSQLBinary:     "/opt/pgsql/bin/psql",
 		},
 		Restore: config.RestoreConfig{VerifyBackup: config.VerifyBackupConfig{Enabled: true}},
 		Probes: []config.ProbeConfig{
@@ -28,8 +29,12 @@ func TestRequirementsForLocalDrill(t *testing.T) {
 		t.Fatalf("build requirements: %v", err)
 	}
 	got := make(map[model.ToolType]Requirement, len(requirements))
+	var recoveryPSQL Requirement
 	for _, requirement := range requirements {
 		got[requirement.Tool] = requirement
+		if reflect.DeepEqual(requirement.Components, []string{"recovery.target"}) {
+			recoveryPSQL = requirement
+		}
 	}
 	for _, tool := range []model.ToolType{
 		model.ToolWALG,
@@ -52,6 +57,9 @@ func TestRequirementsForLocalDrill(t *testing.T) {
 	}
 	if got[model.ToolPostgres].Binary != "/opt/pgsql/bin/postgres" {
 		t.Fatalf("unexpected postgres requirement %#v", got[model.ToolPostgres])
+	}
+	if recoveryPSQL.Binary != "/opt/pgsql/bin/psql" {
+		t.Fatalf("unexpected recovery proof psql requirement %#v", recoveryPSQL)
 	}
 	if want := []string{"probe.pg_isready"}; !reflect.DeepEqual(got[model.ToolPGIsReady].Components, want) {
 		t.Fatalf("expected duplicate preset tools to merge: got %#v want %#v", got[model.ToolPGIsReady].Components, want)

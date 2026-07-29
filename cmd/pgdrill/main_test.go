@@ -16,6 +16,7 @@ import (
 	"github.com/r314tive/pgdrill/internal/model"
 	"github.com/r314tive/pgdrill/internal/policy"
 	"github.com/r314tive/pgdrill/internal/preflight"
+	"github.com/r314tive/pgdrill/internal/recoveryproof"
 	"github.com/r314tive/pgdrill/internal/report"
 	"github.com/r314tive/pgdrill/internal/runspec"
 	"gopkg.in/yaml.v3"
@@ -31,6 +32,21 @@ func TestVersionCommand(t *testing.T) {
 	}
 	if got := strings.TrimSpace(stdout.String()); got == "" {
 		t.Fatal("expected version output")
+	}
+}
+
+func TestSampleConfigCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := run([]string{"sample-config"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	}
+	for _, want := range []string{"provider:", "target:", "probes:", "report:"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("sample config missing %q:\n%s", want, stdout.String())
+		}
 	}
 }
 
@@ -125,15 +141,32 @@ func TestUnknownCommand(t *testing.T) {
 }
 
 func TestSubcommandHelpReturnsSuccess(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	code := run([]string{"run", "-h"}, &stdout, &stderr)
-
-	if code != 0 {
-		t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+	tests := []struct {
+		name       string
+		args       []string
+		want       string
+		fromStderr bool
+	}{
+		{name: "run", args: []string{"run", "-h"}, want: "Usage of run", fromStderr: true},
+		{name: "report", args: []string{"report", "help"}, want: "pgdrill report <command>"},
+		{name: "catalog", args: []string{"catalog", "help"}, want: "pgdrill catalog <command>"},
+		{name: "target", args: []string{"target", "help"}, want: "pgdrill target <command>"},
 	}
-	if got := stderr.String(); !strings.Contains(got, "Usage of run") {
-		t.Fatalf("expected run help output, got: %s", got)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(test.args, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("expected exit code 0, got %d: %s", code, stderr.String())
+			}
+			output := stdout.String()
+			if test.fromStderr {
+				output = stderr.String()
+			}
+			if !strings.Contains(output, test.want) {
+				t.Fatalf("help output missing %q: %s", test.want, output)
+			}
+		})
 	}
 }
 
@@ -434,6 +467,54 @@ recovery:
 	if len(output.Evidence) != 0 {
 		t.Fatalf("expected evidence to be omitted by default, got %#v", output.Evidence)
 	}
+	var text bytes.Buffer
+	if err := writeCatalogListText(&text, output); err != nil {
+		t.Fatalf("format catalog list: %v", err)
+	}
+	for _, want := range []string{
+		"PROVIDER",
+		"wal-g:base_00000001000000000000007F",
+		"2026-07-06T01:02:03Z",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("catalog list text missing %q:\n%s", want, text.String())
+		}
+	}
+}
+
+func TestCatalogListRejectsDuplicateCanonicalBackupID(t *testing.T) {
+	dir := t.TempDir()
+	walgPath := filepath.Join(dir, "wal-g")
+	configPath := filepath.Join(dir, "pgdrill.yaml")
+	writeExecutable(t, walgPath, `#!/bin/sh
+cat <<'JSON'
+[
+  {"name":"base_duplicate","start_time":"2026-07-06T01:02:03Z"},
+  {"name":"base_duplicate","start_time":"2026-07-06T01:02:03Z"}
+]
+JSON
+`)
+	writeFile(t, configPath, `
+provider:
+  type: wal-g
+  binary: `+walgPath+`
+target:
+  type: local
+  work_dir: `+dir+`
+`)
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"catalog", "list", "-f", configPath, "-format", "json"},
+		&stdout,
+		&stderr,
+	)
+	if code != 1 || !strings.Contains(stderr.String(), "duplicate backup id") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("invalid canonical catalog was emitted: %s", stdout.String())
+	}
 }
 
 func TestCatalogListCommandJSONPgBackRest(t *testing.T) {
@@ -518,6 +599,33 @@ func TestCatalogListRequiresConfig(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "requires -f or -config") {
 		t.Fatalf("expected missing config error, got: %s", got)
+	}
+}
+
+func TestReportShowJSONPreservesLegacyReaderCompatibility(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-report.json")
+	writeFile(t, path, `{
+  "schema_version": "pgdrill.report/v1alpha1",
+  "id": "legacy-failed",
+  "target": {"type": "local"},
+  "recovery_target": {"type": "latest"},
+  "started_at": "2026-07-20T11:59:00Z",
+  "finished_at": "2026-07-20T12:00:00Z",
+  "status": "failed",
+  "failure": {"stage": "backup_selection", "message": "no backup"}
+}`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"report", "show", "-format", "json", path}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	decoded, err := report.ReadJSON(bytes.NewReader(stdout.Bytes()))
+	if err != nil {
+		t.Fatalf("ReadJSON(re-encoded legacy report) error = %v\n%s", err, stdout.String())
+	}
+	if decoded.SchemaVersion != model.LegacyReportSchemaVersion || decoded.ID != "legacy-failed" {
+		t.Fatalf("unexpected re-encoded report %#v", decoded)
 	}
 }
 
@@ -684,8 +792,12 @@ func TestTargetVerifyCommandRunsCNPGLifecycleAndProbes(t *testing.T) {
 	kubectlPath := filepath.Join(dir, "kubectl")
 	configPath := filepath.Join(dir, "pgdrill.yaml")
 	reportPath := filepath.Join(dir, "cnpg-report.json")
+	clusterStatePath := filepath.Join(dir, "cnpg-cluster-created")
+	manifestStatePath := filepath.Join(dir, "cnpg-created-manifest.yaml")
 
 	writeExecutable(t, kubectlPath, `#!/bin/sh
+cluster_state='`+clusterStatePath+`'
+manifest_state='`+manifestStatePath+`'
 case "$*" in
   "version --client --output=json")
     echo '{"clientVersion":{"gitVersion":"v1.34.1"}}'
@@ -698,28 +810,37 @@ JSON
   *" get cluster.postgresql.cnpg.io altbox -o json"*)
     echo '{"spec":{"imageName":"ghcr.io/cloudnative-pg/postgresql:16"}}'
     ;;
-  *" create -f -"*)
-    manifest="$(cat)"
-    case "$manifest" in
-      *"name: altbox-backup-20260707"*) exit 0 ;;
-      *) echo "manifest did not contain expected backup" >&2; exit 64 ;;
-    esac
+	  *" create -f -"*)
+	    manifest="$(cat)"
+	    case "$manifest" in
+	      *"name: altbox-backup-20260707"*)
+	        printf '%s\n' "$manifest" > "$manifest_state"
+	        touch "$cluster_state"
+	        exit 0
+	        ;;
+	      *) echo "manifest did not contain expected backup" >&2; exit 64 ;;
+	    esac
     ;;
-  *" get pods -l cnpg.io/cluster=verify-altbox-test,cnpg.io/jobRole=full-recovery -o json"*)
+  *" get pods -l cnpg.io/cluster=verify-altbox-test,cnpg.io/jobRole=full-recovery,pgdrill.io/ownership-id="*" -o json"*)
     cat <<'JSON'
 {"items":[]}
 JSON
     ;;
   *" get pod verify-altbox-test-1 -o json"*)
-    cat <<'JSON'
-{"metadata":{"annotations":{"cnpg.io/operatorVersion":"1.26.3"}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}
-JSON
+    contract_digest="$(awk '$1 == "pgdrill.io/recovery-contract-sha256:" { print $2; exit }' "$manifest_state")"
+    ownership_id="$(awk '$1 == "pgdrill.io/ownership-id:" { print $2; exit }' "$manifest_state")"
+    printf '%s\n' '{"metadata":{"name":"verify-altbox-test-1","uid":"pod-uid-1","labels":{"cnpg.io/cluster":"verify-altbox-test","pgdrill.io/ownership-id":"'"$ownership_id"'"},"annotations":{"cnpg.io/operatorVersion":"1.26.3","pgdrill.io/recovery-contract-sha256":"'"$contract_digest"'"},"ownerReferences":[{"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","name":"verify-altbox-test","uid":"cluster-uid-1"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}'
     ;;
   *" exec verify-altbox-test-1 -c postgres -- postgres --version"*)
     echo "postgres (PostgreSQL) 16.4"
     ;;
   *" exec verify-altbox-test-1 -c postgres -- /usr/local/bin/psql --version"*)
     echo "psql (PostgreSQL) 16.4"
+    ;;
+  *"pgdrill.recovery-observation/v2"*)
+    cat <<'JSON'
+{"schema_version":"pgdrill.recovery-observation/v2","in_recovery":false,"replay_paused":false,"replay_pause_state":"not paused","recovery_target":"","recovery_target_time":"","recovery_target_lsn":"","recovery_target_xid":"","recovery_target_name":"","recovery_target_timeline":"latest","recovery_target_inclusive":"on","recovery_target_action":"pause"}
+JSON
     ;;
   *" exec verify-altbox-test-1 -c postgres -- /usr/local/bin/psql -X -v ON_ERROR_STOP=1 -d host=/controller/run dbname=postgres user=postgres -c select 1"*)
     echo "1"
@@ -754,11 +875,26 @@ JSON
   *" logs verify-altbox-test-1 -c bootstrap-controller --timestamps --tail=25"*)
     echo "postgres bootstrap ready"
     ;;
-  *" delete cluster.postgresql.cnpg.io -l pgdrill.io/ownership-id="*" --ignore-not-found=true --wait=true --timeout=5s"*)
-    echo "cluster deleted"
-    ;;
+	  *" delete --raw=/apis/postgresql.cnpg.io/v1/namespaces/d003-db/clusters/verify-altbox-test -f -"*)
+	    rm -f "$cluster_state"
+	    echo "cluster deleted"
+	    ;;
+	  *" wait --for=delete cluster.postgresql.cnpg.io/verify-altbox-test --timeout=5s"*)
+	    echo "cluster deletion observed"
+	    ;;
+	  *" get cluster.postgresql.cnpg.io -l pgdrill.io/ownership-id="*" -o json"*)
+	    if [ -f "$cluster_state" ]; then
+	      contract_digest="$(awk '$1 == "pgdrill.io/recovery-contract-sha256:" { print $2; exit }' "$manifest_state")"
+	      printf '%s\n' '{"items":[{"metadata":{"name":"verify-altbox-test","uid":"cluster-uid-1","annotations":{"pgdrill.io/recovery-contract-sha256":"'"$contract_digest"'"}}}]}'
+	    else
+	      echo '{"items":[]}'
+	    fi
+	    ;;
   *" delete pvc -l cnpg.io/cluster=verify-altbox-test,pgdrill.io/ownership-id="*" --ignore-not-found=true --wait=true --timeout=5s"*)
     echo "pvc deleted"
+    ;;
+  *" get pvc -l cnpg.io/cluster=verify-altbox-test,pgdrill.io/ownership-id="*" -o json"*)
+    echo '{"items":[]}'
     ;;
   *)
     echo "unexpected kubectl args: $*" >&2
@@ -773,6 +909,7 @@ provider:
   type: wal-g
 target:
   type: kubernetes
+  psql_binary: /usr/local/bin/psql
   labels:
     env: d003
   kubernetes:
@@ -849,8 +986,10 @@ report:
 		"kubectl-capture-full-recovery-bootstrap-log",
 		"kubectl-capture-postgres-log",
 		"kubectl-capture-postgres-bootstrap-log",
+		"kubectl-find-owned-cluster",
+		"kubectl-find-owned-pvcs",
 		"kubectl-delete-cluster",
-		"kubectl-delete-pvcs",
+		"kubectl-wait-cluster-delete",
 	} {
 		if !hasEvidenceOperation(result.Evidence, operation) {
 			t.Fatalf("expected evidence operation %q, got %#v", operation, result.Evidence)
@@ -888,7 +1027,12 @@ report:
 	if !hasCheckNamed(result.Checks, "tool.psql", model.CheckStatusFailed) {
 		t.Fatalf("expected failed restored-target psql preflight, got %#v", result.Checks)
 	}
-	for _, operation := range []string{"kubectl-delete-cluster", "kubectl-delete-pvcs"} {
+	for _, operation := range []string{
+		"kubectl-find-owned-cluster",
+		"kubectl-find-owned-pvcs",
+		"kubectl-delete-cluster",
+		"kubectl-wait-cluster-delete",
+	} {
 		if !hasEvidenceOperation(result.Evidence, operation) {
 			t.Fatalf("expected cleanup evidence %q after remote preflight failure, got %#v", operation, result.Evidence)
 		}
@@ -1094,6 +1238,9 @@ exit 0
 	writeExecutable(t, psqlPath, `#!/bin/sh
 case "$*" in
   "--version") echo "psql (PostgreSQL) 16.4" ;;
+  *"pgdrill.recovery-observation/v2"*)
+    echo '{"schema_version":"pgdrill.recovery-observation/v2","in_recovery":false,"replay_paused":false,"replay_pause_state":"not paused","recovery_target":"","recovery_target_time":"","recovery_target_lsn":"","recovery_target_xid":"","recovery_target_name":"","recovery_target_timeline":"latest","recovery_target_inclusive":"on","recovery_target_action":"pause"}'
+    ;;
   *"select 1"*) exit 0 ;;
   *) echo "unexpected psql args: $*" >&2; exit 64 ;;
 esac
@@ -1131,6 +1278,7 @@ target:
   type: local
   work_dir: `+workDir+`
   postgres_binary: `+postgresPath+`
+  psql_binary: `+psqlPath+`
   postgres_port: 15432
   startup_timeout: 100ms
   shutdown_timeout: 5s
@@ -1227,6 +1375,7 @@ func TestRunCommandExecutesBarmanLocalDrill(t *testing.T) {
 	barmanPath := filepath.Join(dir, "barman")
 	postgresPath := filepath.Join(dir, "postgres")
 	pgIsReadyPath := filepath.Join(dir, "pg_isready")
+	psqlPath := filepath.Join(dir, "psql")
 	configPath := filepath.Join(dir, "pgdrill.yaml")
 	reportPath := filepath.Join(dir, "report.json")
 	workDir := filepath.Join(dir, "restore")
@@ -1251,16 +1400,18 @@ case "$1" in
           exit 64
         fi
         cat <<'JSON'
-[
-  {
+{
+  "main": [
+    {
     "backup_id": "20240502T030405",
     "server_name": "main",
     "status": "DONE",
     "backup_type": "full",
     "begin_time": "2024-05-02T03:04:05Z",
     "end_time": "2024-05-02T03:14:05Z"
-  }
-]
+    }
+  ]
+}
 JSON
         ;;
       show-backup)
@@ -1340,6 +1491,15 @@ while true; do sleep 1; done
 if [ "$1" = "--version" ]; then echo "pg_isready (PostgreSQL) 16.4"; fi
 exit 0
 `)
+	writeExecutable(t, psqlPath, `#!/bin/sh
+case "$*" in
+  "--version") echo "psql (PostgreSQL) 16.4" ;;
+  *"pgdrill.recovery-observation/v2"*)
+    echo '{"schema_version":"pgdrill.recovery-observation/v2","in_recovery":true,"replay_paused":true,"replay_pause_state":"paused","recovery_target":"","recovery_target_time":"2026-07-06 01:02:03+00","recovery_target_lsn":"","recovery_target_xid":"","recovery_target_name":"","recovery_target_timeline":"latest","recovery_target_inclusive":"on","recovery_target_action":"pause"}'
+    ;;
+  *) echo "unexpected psql args: $*" >&2; exit 64 ;;
+esac
+`)
 	writeFile(t, configPath, `
 cluster:
   name: test-main
@@ -1356,6 +1516,7 @@ target:
   type: local
   work_dir: `+workDir+`
   postgres_binary: `+postgresPath+`
+  psql_binary: `+psqlPath+`
   postgres_port: 15434
   startup_timeout: 100ms
   shutdown_timeout: 5s
@@ -1385,7 +1546,7 @@ report:
 	if result.Status != model.DrillStatusPassed {
 		t.Fatalf("expected passed report, got %#v", result)
 	}
-	for _, name := range []string{"tool.barman", "tool.postgres", "tool.pg_isready"} {
+	for _, name := range []string{"tool.barman", "tool.postgres", "tool.psql", "tool.pg_isready"} {
 		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
 			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
 		}
@@ -1421,6 +1582,7 @@ func TestRunCommandExecutesPgBackRestLocalDrill(t *testing.T) {
 	pgBackRestPath := filepath.Join(dir, "pgbackrest")
 	postgresPath := filepath.Join(dir, "postgres")
 	pgIsReadyPath := filepath.Join(dir, "pg_isready")
+	psqlPath := filepath.Join(dir, "psql")
 	configPath := filepath.Join(dir, "pgdrill.yaml")
 	reportPath := filepath.Join(dir, "report.json")
 	workDir := filepath.Join(dir, "restore")
@@ -1498,7 +1660,7 @@ JSON
         --reset-pg1-host) saw_reset=1 ;;
         --type=time) saw_type=1 ;;
         "--target=2026-07-06 01:02:03+00:00") saw_target=1 ;;
-        --target-action=promote) saw_action=1 ;;
+        --target-action=pause) saw_action=1 ;;
       esac
     done
     if [ "$set" != "20240502-030405F" ] || [ -z "$dest" ] || [ "$saw_reset" != "1" ] || [ "$saw_type" != "1" ] || [ "$saw_target" != "1" ] || [ "$saw_action" != "1" ]; then
@@ -1533,6 +1695,15 @@ while true; do sleep 1; done
 if [ "$1" = "--version" ]; then echo "pg_isready (PostgreSQL) 16.4"; fi
 exit 0
 `)
+	writeExecutable(t, psqlPath, `#!/bin/sh
+case "$*" in
+  "--version") echo "psql (PostgreSQL) 16.4" ;;
+  *"pgdrill.recovery-observation/v2"*)
+    echo '{"schema_version":"pgdrill.recovery-observation/v2","in_recovery":true,"replay_paused":true,"replay_pause_state":"paused","recovery_target":"","recovery_target_time":"2026-07-06 01:02:03+00","recovery_target_lsn":"","recovery_target_xid":"","recovery_target_name":"","recovery_target_timeline":"latest","recovery_target_inclusive":"on","recovery_target_action":"pause"}'
+    ;;
+  *) echo "unexpected psql args: $*" >&2; exit 64 ;;
+esac
+`)
 	writeFile(t, configPath, `
 cluster:
   name: test-main
@@ -1550,6 +1721,7 @@ target:
   type: local
   work_dir: `+workDir+`
   postgres_binary: `+postgresPath+`
+  psql_binary: `+psqlPath+`
   postgres_port: 15435
   startup_timeout: 100ms
   shutdown_timeout: 5s
@@ -1582,7 +1754,7 @@ report:
 	if result.Cluster != "test-main" || !strings.Contains(stdout.String(), "Cluster      test-main") {
 		t.Fatalf("expected configured cluster in report and summary: cluster=%q summary=%s", result.Cluster, stdout.String())
 	}
-	for _, name := range []string{"tool.pgbackrest", "tool.postgres", "tool.pg_isready"} {
+	for _, name := range []string{"tool.pgbackrest", "tool.postgres", "tool.psql", "tool.pg_isready"} {
 		if !hasCheckNamed(result.Checks, name, model.CheckStatusPassed) {
 			t.Fatalf("expected passed preflight check %q, got %#v", name, result.Checks)
 		}
@@ -1936,7 +2108,7 @@ func TestReportMetricsCommandPrometheus(t *testing.T) {
 
 	output := stdout.String()
 	for _, expected := range []string{
-		`pgdrill_report_info{cluster="production-main",schema_version="pgdrill.report/v1"} 1`,
+		`pgdrill_report_info{cluster="production-main",schema_version="pgdrill.report/v2"} 1`,
 		"# TYPE pgdrill_drill_status gauge",
 		`pgdrill_drill_status{cluster="production-main",provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 1`,
 		`pgdrill_drill_duration_seconds{cluster="production-main",provider="pgbackrest",target_type="local",recovery_target="timestamp",status="passed"} 120`,
@@ -1986,6 +2158,64 @@ func writeExecutable(t *testing.T, path, content string) {
 
 func writeDrillReport(t *testing.T, path string, result model.DrillResult) {
 	t.Helper()
+	atPercent := func(percent int) time.Time {
+		return result.StartedAt.Add(result.FinishedAt.Sub(result.StartedAt) * time.Duration(percent) / 100)
+	}
+	probeEvidenceAt := atPercent(60)
+	recoveryProofAt := atPercent(55)
+	if result.Status == model.DrillStatusPassed && result.Backup.ID == "" {
+		result.Backup = model.Backup{
+			ID:         model.ProviderScopedID(result.Provider, "test-backup"),
+			Provider:   result.Provider,
+			ProviderID: "test-backup",
+			Kind:       model.BackupKindFull,
+			Status:     model.BackupStatusAvailable,
+		}
+	}
+	if result.Status == model.DrillStatusPassed {
+		proofCheck, proofEvidence := testRecoveryProof(
+			t,
+			result.RecoveryTarget,
+			recoveryProofAt,
+		)
+		result.Checks = append(result.Checks, proofCheck)
+		result.Evidence = append(result.Evidence, proofEvidence)
+
+		const probeEvidenceID = "probe:test-select-1"
+		probeProven := false
+		for index := range result.Checks {
+			if result.Checks[index].Probe != model.ProbeSQL ||
+				result.Checks[index].Name != "select_1" {
+				continue
+			}
+			attributes := make(map[string]string, len(result.Checks[index].Attributes)+1)
+			for key, value := range result.Checks[index].Attributes {
+				attributes[key] = value
+			}
+			attributes[model.ProbeNameAttribute] = "select_1"
+			result.Checks[index].Attributes = attributes
+			if result.Checks[index].Status == model.CheckStatusPassed {
+				result.Checks[index].EvidenceIDs = []string{probeEvidenceID}
+				probeProven = true
+			}
+		}
+		if !probeProven {
+			result.Checks = append(result.Checks, model.Check{
+				Name:        "select_1",
+				Probe:       model.ProbeSQL,
+				Status:      model.CheckStatusPassed,
+				EvidenceIDs: []string{probeEvidenceID},
+				Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
+			})
+		}
+		result.Evidence = append(result.Evidence, model.EvidenceRecord{
+			ID:          probeEvidenceID,
+			Kind:        model.EvidenceCheck,
+			Source:      "test",
+			CollectedAt: probeEvidenceAt,
+			Attributes:  map[string]string{model.ProbeNameAttribute: "select_1"},
+		})
+	}
 	selection := model.BackupSelection{Type: model.BackupSelectionLatestAvailable}
 	if result.Backup.ID != "" {
 		selection = model.BackupSelection{Type: model.BackupSelectionByID, BackupID: result.Backup.ID}
@@ -2019,11 +2249,54 @@ func writeDrillReport(t *testing.T, path string, result model.DrillResult) {
 	result.AttemptID = "attempt-1"
 	result.SpecDigest = spec.Digest()
 	result.Spec = &document
+	if result.Status == model.DrillStatusPassed {
+		identity := model.AttemptIdentity{
+			RunID:      result.ID,
+			AttemptID:  result.AttemptID,
+			SpecDigest: result.SpecDigest,
+		}
+		definitions := []struct {
+			stage   model.DrillStage
+			kind    model.OperationKind
+			name    string
+			ordinal int
+		}{
+			{model.DrillStageTargetPreparation, model.OperationTargetPrepare, "prepare-target", 0},
+			{model.DrillStageRestoreExecution, model.OperationRestoreStep, "restore-backup", 1},
+			{model.DrillStagePostgresStart, model.OperationPostgresStart, "start-postgres", 2},
+			{model.DrillStageTargetCleanup, model.OperationTargetCleanup, "cleanup-target", 3},
+		}
+		result.Operations = make([]model.OperationCheckpoint, 0, len(definitions))
+		for index, definition := range definitions {
+			operation, err := model.NewOperation(
+				identity,
+				definition.stage,
+				definition.kind,
+				definition.name,
+				definition.ordinal,
+			)
+			if err != nil {
+				t.Fatalf("create test operation: %v", err)
+			}
+			result.Operations = append(result.Operations, model.OperationCheckpoint{
+				SchemaVersion: model.CurrentOperationCheckpointSchemaVersion,
+				Operation:     operation,
+				State:         model.OperationStateSucceeded,
+				StartedAt:     atPercent(5 + index*20),
+				UpdatedAt:     atPercent(10 + index*20),
+			})
+		}
+	}
+	var recoveryProvenAt time.Time
+	if result.Status == model.DrillStatusPassed {
+		recoveryProvenAt = probeEvidenceAt
+	}
 	evaluation, err := policy.Evaluate(document.Policy, document.RecoveryTarget, policy.Facts{
-		StartedAt:   result.StartedAt,
-		EvaluatedAt: result.FinishedAt,
-		Backup:      result.Backup,
-		Operations:  result.Operations,
+		StartedAt:        result.StartedAt,
+		EvaluatedAt:      result.FinishedAt,
+		RecoveryProvenAt: recoveryProvenAt,
+		Backup:           result.Backup,
+		Operations:       result.Operations,
 	})
 	if err != nil {
 		t.Fatalf("evaluate recovery policy: %v", err)
@@ -2032,6 +2305,107 @@ func writeDrillReport(t *testing.T, path string, result model.DrillResult) {
 	if err := (report.JSONFileSink{Path: path}).Write(context.Background(), result); err != nil {
 		t.Fatalf("write drill report %s: %v", path, err)
 	}
+}
+
+func testRecoveryProof(
+	t *testing.T,
+	target model.RecoveryTarget,
+	collectedAt time.Time,
+) (model.Check, model.EvidenceRecord) {
+	t.Helper()
+	target = target.Normalized()
+	action := "pause"
+	observation := recoveryproof.Observation{
+		SchemaVersion:           recoveryproof.ObservationSchema,
+		ReplayPauseState:        "not paused",
+		RecoveryTargetTimeline:  "latest",
+		RecoveryTargetInclusive: "on",
+		RecoveryTargetAction:    action,
+	}
+	switch target.Type {
+	case model.RecoveryTargetLatest:
+	case model.RecoveryTargetImmediate:
+		observation.InRecovery = true
+		observation.ReplayPaused = true
+		observation.ReplayPauseState = "paused"
+		observation.RecoveryTarget = "immediate"
+	case model.RecoveryTargetTimestamp:
+		observation.InRecovery = true
+		observation.ReplayPaused = true
+		observation.ReplayPauseState = "paused"
+		observation.RecoveryTargetTime = target.Value
+	case model.RecoveryTargetLSN:
+		observation.InRecovery = true
+		observation.ReplayPaused = true
+		observation.ReplayPauseState = "paused"
+		observation.RecoveryTargetLSN = target.Value
+	case model.RecoveryTargetXID:
+		observation.InRecovery = true
+		observation.ReplayPaused = true
+		observation.ReplayPauseState = "paused"
+		observation.RecoveryTargetXID = target.Value
+	case model.RecoveryTargetRestorePoint:
+		observation.InRecovery = true
+		observation.ReplayPaused = true
+		observation.ReplayPauseState = "paused"
+		observation.RecoveryTargetName = target.Value
+	default:
+		t.Fatalf("unsupported test recovery target %q", target.Type)
+	}
+	if target.Timeline != "" {
+		observation.RecoveryTargetTimeline = target.Timeline
+	}
+	stdout, err := json.Marshal(observation)
+	if err != nil {
+		t.Fatalf("marshal recovery observation: %v", err)
+	}
+	state, err := recoveryproof.Evaluate(target, observation)
+	if err != nil {
+		t.Fatalf("evaluate test recovery observation: %v", err)
+	}
+	const evidenceID = "recovery-target:observe:test"
+	inclusive := "default"
+	if target.Inclusive != nil {
+		inclusive = "false"
+		if *target.Inclusive {
+			inclusive = "true"
+		}
+	}
+	return model.Check{
+			Name:        recoveryproof.CheckName,
+			Status:      model.CheckStatusPassed,
+			Message:     "PostgreSQL runtime settings and recovery state prove target attainment",
+			EvidenceIDs: []string{evidenceID},
+			Attributes: map[string]string{
+				recoveryproof.ProofProtocolAttribute:    recoveryproof.ObservationSchema,
+				recoveryproof.RecoveryStateAttribute:    state,
+				recoveryproof.TargetTypeAttribute:       string(target.Type),
+				recoveryproof.TargetValueAttribute:      target.Value,
+				recoveryproof.TargetTimelineAttribute:   target.Timeline,
+				recoveryproof.TargetInclusiveAttribute:  inclusive,
+				recoveryproof.ConfiguredActionAttribute: action,
+			},
+		}, model.EvidenceRecord{
+			ID:          evidenceID,
+			Kind:        model.EvidenceCommand,
+			Source:      recoveryproof.EvidenceSource,
+			CollectedAt: collectedAt,
+			Command: &model.CommandEvidence{
+				Path:           "psql",
+				Args:           []string{"-X", "-A", "-t"},
+				StartedAt:      collectedAt.Add(-time.Millisecond),
+				FinishedAt:     collectedAt,
+				DurationMillis: 1,
+				ExitStatus: model.ExitStatus{
+					Started: true,
+					Exited:  true,
+					Success: true,
+				},
+				Stdout:      string(stdout),
+				StdoutBytes: int64(len(stdout)),
+			},
+			Attributes: map[string]string{"operation": "observe-recovery-target"},
+		}
 }
 
 func mustTime(t *testing.T, value string) time.Time {
