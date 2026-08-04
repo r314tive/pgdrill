@@ -604,6 +604,82 @@ func TestValidateCatalogRejectsContradictoryShowBackupMetadata(t *testing.T) {
 	}
 }
 
+func TestShowBackupAttributesParsesBarman319ServerEnvelope(t *testing.T) {
+	attributes, err := showBackupAttributes(readFixture(t, "testdata/show-backup-3.19.1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		"backup_id":         "20260804T032836",
+		"server":            "integration",
+		"status":            "DONE",
+		"backup_type":       "rsync",
+		"begin_wal":         "000000010000000000000003",
+		"end_wal":           "000000010000000000000003",
+		"begin_lsn":         "0/3000028",
+		"end_lsn":           "0/3000120",
+		"begin_time":        "2026-08-04 03:28:36.884600+00:00",
+		"end_time":          "2026-08-04 03:28:37.201032+00:00",
+		"postgres_version":  "180003",
+		"backup_method":     "rsync-concurrent",
+		"system_identifier": "7670013226550505503",
+	}
+	for key, value := range want {
+		if got := attributes[key]; got != value {
+			t.Errorf("attribute %s = %q, want %q", key, got, value)
+		}
+	}
+}
+
+func TestShowBackupAttributesRejectsAmbiguousOrConflictingEnvelope(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+		want string
+	}{
+		{
+			name: "multiple servers",
+			json: `{
+				"main":{"backup_id":"one","status":"DONE"},
+				"other":{"backup_id":"two","status":"DONE"}
+			}`,
+			want: "multiple server backup objects: main, other",
+		},
+		{
+			name: "server field conflicts with envelope",
+			json: `{"main":{"backup_id":"one","server_name":"other","status":"DONE"}}`,
+			want: `server field "other" conflicts with envelope server "main"`,
+		},
+		{
+			name: "top-level WAL conflicts with nested WAL",
+			json: `{
+				"main":{
+					"backup_id":"one",
+					"status":"DONE",
+					"begin_wal":"000000010000000000000001",
+					"base_backup_information":{"begin_wal":"000000010000000000000002"}
+				}
+			}`,
+			want: "begin WAL conflicts with base_backup_information",
+		},
+		{
+			name: "invalid nested metadata type",
+			json: `{"main":{"backup_id":"one","status":"DONE","base_backup_information":[]}}`,
+			want: `field "base_backup_information" must be an object`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := showBackupAttributes([]byte(test.json))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("showBackupAttributes() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestValidateCatalogRunsBarmanGenerateManifest(t *testing.T) {
 	runner := &fakeRunner{
 		results: []command.Result{

@@ -132,6 +132,9 @@ Implemented provider validation:
 - `barman --format json show-backup <server> <backup-id>` for selected-backup
   evidence and normalized attributes; validation requires the returned server
   and backup ID to match the request and the status to normalize to available
+- both the server-keyed Barman 3.19 JSON envelope and the legacy flat fixture
+  shape are parsed; ambiguous server envelopes and conflicting top-level versus
+  `base_backup_information` values fail validation
 - optional `barman verify-backup <server> <backup-id>` for manifest-level
   provider verification when `provider.barman_verify_backup.enabled` is true
 - optional `barman generate-manifest <server> <backup-id>` before

@@ -449,17 +449,34 @@ func showBackupAttributes(data []byte) (map[string]string, error) {
 	if err := jsonutil.DecodeOne(data, &root); err != nil {
 		return nil, fmt.Errorf("parse barman show-backup json: %w", err)
 	}
-	object, ok := root.(map[string]any)
+	rootObject, ok := root.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("barman show-backup JSON must be a backup object")
+	}
+	object, envelopeServer, err := showBackupObject(rootObject)
+	if err != nil {
+		return nil, err
 	}
 	backupID, err := adapterutil.RequiredStringAlias(object, "backup id", "backup_id", "id", "backupId")
 	if err != nil {
 		return nil, err
 	}
-	server, err := adapterutil.RequiredStringAlias(object, "server", "server_name", "server", "serverName")
+	server, serverFound, err := adapterutil.OptionalStringAlias(object, "server", "server_name", "server", "serverName")
 	if err != nil {
 		return nil, err
+	}
+	if envelopeServer != "" {
+		if serverFound && server != envelopeServer {
+			return nil, fmt.Errorf(
+				"barman show-backup server field %q conflicts with envelope server %q",
+				server,
+				envelopeServer,
+			)
+		}
+		server = envelopeServer
+	}
+	if strings.TrimSpace(server) == "" {
+		return nil, fmt.Errorf("missing server")
 	}
 	status, err := adapterutil.RequiredStringAlias(object, "status", "status")
 	if err != nil {
@@ -469,24 +486,123 @@ func showBackupAttributes(data []byte) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	baseBackupInformation, err := optionalObject(object, "base_backup_information")
+	if err != nil {
+		return nil, err
+	}
 
 	attributes := map[string]string{
 		"operation": "barman-show-backup",
+		"backup_id": backupID,
+		"server":    server,
+		"status":    status,
 	}
-	addAttribute(attributes, "backup_id", backupID)
-	addAttribute(attributes, "server", server)
-	addAttribute(attributes, "status", status)
 	addAttribute(attributes, "backup_type", backupType)
-	addAttribute(attributes, "begin_wal", getString(object, "begin_wal", "start_wal", "begin_wal_segment"))
-	addAttribute(attributes, "end_wal", getString(object, "end_wal", "finish_wal", "end_wal_segment"))
-	addAttribute(attributes, "begin_lsn", getString(object, "begin_xlog", "begin_lsn", "start_lsn"))
-	addAttribute(attributes, "end_lsn", getString(object, "end_xlog", "end_lsn", "finish_lsn"))
-	addAttribute(attributes, "begin_time", getString(object, "begin_time", "start_time", "started_at"))
-	addAttribute(attributes, "end_time", getString(object, "end_time", "finish_time", "finished_at"))
-	addAttribute(attributes, "postgres_version", getString(object, "postgres_version", "pg_version"))
-	addAttribute(attributes, "backup_method", getString(object, "backup_method"))
-	addAttribute(attributes, "system_identifier", getString(object, "system_identifier", "systemid"))
+	metadata := []struct {
+		attribute string
+		name      string
+		nested    map[string]any
+		keys      []string
+	}{
+		{attribute: "begin_wal", name: "begin WAL", nested: baseBackupInformation, keys: []string{"begin_wal", "start_wal", "begin_wal_segment"}},
+		{attribute: "end_wal", name: "end WAL", nested: baseBackupInformation, keys: []string{"end_wal", "finish_wal", "end_wal_segment"}},
+		{attribute: "begin_lsn", name: "begin LSN", nested: baseBackupInformation, keys: []string{"begin_xlog", "begin_lsn", "start_lsn"}},
+		{attribute: "end_lsn", name: "end LSN", nested: baseBackupInformation, keys: []string{"end_xlog", "end_lsn", "finish_lsn"}},
+		{attribute: "begin_time", name: "begin time", nested: baseBackupInformation, keys: []string{"begin_time", "start_time", "started_at"}},
+		{attribute: "end_time", name: "end time", nested: baseBackupInformation, keys: []string{"end_time", "finish_time", "finished_at"}},
+		{attribute: "backup_method", name: "backup method", nested: baseBackupInformation, keys: []string{"backup_method"}},
+		{attribute: "postgres_version", name: "PostgreSQL version", keys: []string{"postgresql_version", "postgres_version", "pg_version"}},
+		{attribute: "system_identifier", name: "system identifier", keys: []string{"system_identifier", "system_id", "systemid"}},
+	}
+	for _, field := range metadata {
+		value, err := showBackupValue(object, field.nested, field.name, field.keys)
+		if err != nil {
+			return nil, err
+		}
+		addAttribute(attributes, field.attribute, value)
+	}
 	return attributes, nil
+}
+
+func showBackupObject(root map[string]any) (map[string]any, string, error) {
+	if hasScalarKey(
+		root,
+		"backup_id", "id", "backupId",
+		"server_name", "server", "serverName",
+		"status",
+	) {
+		return root, "", nil
+	}
+
+	serverNames := make([]string, 0, len(root))
+	for name, value := range root {
+		if name == "_WARNING" || value == nil {
+			continue
+		}
+		if _, ok := value.(map[string]any); ok {
+			serverNames = append(serverNames, name)
+		}
+	}
+	sort.Strings(serverNames)
+	switch len(serverNames) {
+	case 0:
+		return root, "", nil
+	case 1:
+		return root[serverNames[0]].(map[string]any), serverNames[0], nil
+	default:
+		return nil, "", fmt.Errorf(
+			"barman show-backup JSON contains multiple server backup objects: %s",
+			strings.Join(serverNames, ", "),
+		)
+	}
+}
+
+func hasScalarKey(object map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		value, ok := object[key]
+		if !ok {
+			continue
+		}
+		if _, nested := value.(map[string]any); !nested {
+			return true
+		}
+	}
+	return false
+}
+
+func optionalObject(object map[string]any, key string) (map[string]any, error) {
+	value, ok := object[key]
+	if !ok || value == nil {
+		return nil, nil
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("barman show-backup field %q must be an object", key)
+	}
+	return typed, nil
+}
+
+func showBackupValue(
+	object map[string]any,
+	baseBackupInformation map[string]any,
+	name string,
+	keys []string,
+) (string, error) {
+	topLevel, err := consistentString(object, name, keys...)
+	if err != nil {
+		return "", err
+	}
+	nested, err := consistentString(baseBackupInformation, name, keys...)
+	if err != nil {
+		return "", err
+	}
+	if topLevel != "" && nested != "" && topLevel != nested {
+		return "", fmt.Errorf(
+			"barman show-backup %s conflicts with base_backup_information",
+			name,
+		)
+	}
+	return adapterutil.FirstNonEmpty(topLevel, nested), nil
 }
 
 func barmanRecoveryArgs(target model.RecoveryTarget) ([]string, error) {

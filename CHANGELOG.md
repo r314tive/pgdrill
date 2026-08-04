@@ -363,6 +363,12 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- Barman `show-backup --format json` validation now parses the real 3.19
+  server-keyed envelope and nested `base_backup_information` fields. The
+  stricter selected-backup validation added after the retained field drills had
+  accepted only a flat test shape and therefore failed a fresh exact-candidate
+  integration run before restore; fixture-driven tests now cover the observed
+  format, ambiguous servers, conflicting identities, and nested metadata.
 - Hosted demo entrypoints now reject missing option values as usage errors,
   and the runner verifies both provider and run identity before updating a
   provider's `current.json` convenience report.

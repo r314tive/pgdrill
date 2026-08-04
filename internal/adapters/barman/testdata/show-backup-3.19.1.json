@@ -1,0 +1,21 @@
+{
+  "_WARNING": [
+    "No backup strategy set for server 'integration' (using default 'concurrent_backup')."
+  ],
+  "integration": {
+    "backup_id": "20260804T032836",
+    "backup_type": "rsync",
+    "base_backup_information": {
+      "backup_method": "rsync-concurrent",
+      "begin_lsn": "0/3000028",
+      "begin_time": "2026-08-04 03:28:36.884600+00:00",
+      "begin_wal": "000000010000000000000003",
+      "end_lsn": "0/3000120",
+      "end_time": "2026-08-04 03:28:37.201032+00:00",
+      "end_wal": "000000010000000000000003"
+    },
+    "postgresql_version": 180003,
+    "status": "DONE",
+    "system_id": "7670013226550505503"
+  }
+}
