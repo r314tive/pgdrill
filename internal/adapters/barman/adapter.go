@@ -549,7 +549,11 @@ func (a *Adapter) backupID(backup model.Backup) (string, error) {
 	}
 	prefix := a.cfg.Server + "/"
 	if strings.HasPrefix(backup.ProviderID, prefix) {
-		return strings.TrimPrefix(backup.ProviderID, prefix), nil
+		backupID := strings.TrimPrefix(backup.ProviderID, prefix)
+		if backupID == "" || strings.Contains(backupID, "/") {
+			return "", fmt.Errorf("invalid barman backup provider_id %q", backup.ProviderID)
+		}
+		return backupID, nil
 	}
 	if strings.Contains(backup.ProviderID, "/") {
 		return "", fmt.Errorf("barman backup provider_id %q does not match server %q", backup.ProviderID, a.cfg.Server)

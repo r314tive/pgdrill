@@ -911,7 +911,6 @@ provider:
   pgbackrest_check:
     enabled: true
     timeout: 2m
-    no_archive_check: true
     no_archive_mode_check: true
     archive_timeout: 30s
     redact_values:
@@ -951,7 +950,7 @@ target:
 	if cfg.Provider.PGBackRest.Timeout.Duration != 2*time.Minute {
 		t.Fatalf("unexpected pgbackrest_check timeout %s", cfg.Provider.PGBackRest.Timeout.Duration)
 	}
-	if !cfg.Provider.PGBackRest.NoArchiveCheck || !cfg.Provider.PGBackRest.NoArchiveModeCheck {
+	if cfg.Provider.PGBackRest.NoArchiveCheck || !cfg.Provider.PGBackRest.NoArchiveModeCheck {
 		t.Fatalf("unexpected pgbackrest_check flags %#v", cfg.Provider.PGBackRest)
 	}
 	if cfg.Provider.PGBackRest.ArchiveTimeout.Duration != 30*time.Second {
@@ -971,6 +970,22 @@ target:
 	}
 	if got, want := cfg.Provider.PGBackRestVerify.RedactValues, []string{"pgbackrest-verify-secret"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("unexpected pgbackrest_verify redactions %#v", got)
+	}
+}
+
+func TestLoadRejectsIncompatiblePGBackRestArchiveCheckOptions(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+provider:
+  type: pgbackrest
+  pgbackrest_check:
+    enabled: true
+    no_archive_check: true
+    no_archive_mode_check: true
+target:
+  type: local
+`), "yaml")
+	if err == nil || !strings.Contains(err.Error(), "no_archive_mode_check requires archive checks to remain enabled") {
+		t.Fatalf("expected incompatible pgBackRest check options to fail, got %v", err)
 	}
 }
 

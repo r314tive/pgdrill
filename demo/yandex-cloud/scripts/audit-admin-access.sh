@@ -23,6 +23,14 @@ denial without changing the demo environment.
 EOF
 }
 
+require_option_argument() {
+  [[ "$#" -ge 2 ]] || {
+    printf '%s requires a value\n' "$1" >&2
+    usage >&2
+    exit 2
+  }
+}
+
 die() {
   printf '[pgdrill-demo] ERROR: %s\n' "$*" >&2
   exit 1
@@ -31,15 +39,18 @@ die() {
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --admin)
-      admin="${2:-}"
+      require_option_argument "$@"
+      admin="$2"
       shift 2
       ;;
     --identity)
-      identity="${2:-}"
+      require_option_argument "$@"
+      identity="$2"
       shift 2
       ;;
     --terraform-dir)
-      terraform_dir="${2:-}"
+      require_option_argument "$@"
+      terraform_dir="$2"
       shift 2
       ;;
     -h | --help)

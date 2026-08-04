@@ -88,6 +88,9 @@ func ValidateConfig(cfg config.ProviderConfig, restoreCfgs ...config.RestoreConf
 			return fmt.Errorf("provider.server is required for barman")
 		}
 	case model.ProviderPGBackRest:
+		if cfg.PGBackRest.NoArchiveCheck && cfg.PGBackRest.NoArchiveModeCheck {
+			return fmt.Errorf("provider.pgbackrest_check.no_archive_mode_check requires archive checks to remain enabled")
+		}
 		output := strings.TrimSpace(cfg.PGBackRestVerify.Output)
 		switch output {
 		case "", "none", "text":

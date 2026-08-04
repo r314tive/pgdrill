@@ -1,4 +1,4 @@
-.PHONY: build check container-check container-smoke coverage cross-compile-check demo-check demo-infra-check demo-rehearsal demo-rehearsal-pgbackrest fmt format fuzz integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot shellcheck smoke stress test test-integration-all test-integration-barman test-integration-cnpg test-integration-cnpg-plugin test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-postgresql-17 test-integration-walg test-integration-walg-s3 test-local toolchain-check torture vet workflow-check
+.PHONY: build check clean container-check container-smoke coverage cross-compile-check demo-check demo-infra-check demo-rehearsal demo-rehearsal-pgbackrest docs-check fmt format fuzz help integration-check integration-runtime-test integration-syntax-check mod-check race release-artifacts release-candidate-check release-check release-notes release-snapshot shellcheck smoke stress test test-integration-all test-integration-barman test-integration-cnpg test-integration-cnpg-plugin test-integration-native test-integration-pgbackrest test-integration-pgprobackup test-integration-postgresql-17 test-integration-walg test-integration-walg-s3 test-local toolchain-check torture vet workflow-check
 
 VERSION ?= v0.3.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -32,7 +32,31 @@ DEMO_TERRAFORM_DIR := demo/yandex-cloud/terraform
 VERSION_PKG := github.com/r314tive/pgdrill/internal/version
 LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
-check: fmt mod-check vet test cross-compile-check demo-check integration-runtime-test
+check: fmt mod-check vet test docs-check cross-compile-check demo-check integration-runtime-test
+
+help:
+	@printf '%s\n' \
+		'Core targets:' \
+		'  make build             build bin/pgdrill' \
+		'  make check             run deterministic local quality gates' \
+		'  make docs-check        validate repository-local Markdown links' \
+		'  make test-local        add race, smoke, and native Docker drills' \
+		'  make torture           add coverage, stress, and fuzz campaigns' \
+		'  make release-check     verify and package a release candidate' \
+		'  make demo-infra-check  lint demo shell and validate Terraform' \
+		'  make clean             remove reproducible local build/test caches'
+
+clean:
+	rm -rf bin dist .cache demo/yandex-cloud/terraform/.terraform
+	rm -f demo/yandex-cloud/terraform/*.plan
+	rm -f demo/yandex-cloud/terraform/*.tfplan
+	rm -f demo/yandex-cloud/terraform/.terraform.tfstate.lock.info
+	rm -f demo/yandex-cloud/terraform/crash.log
+	rm -f demo/yandex-cloud/terraform/crash.*.log
+
+docs-check:
+	go test -count=1 ./internal/doccheck
+	go test -count=1 ./internal/release -run '^TestReleaseSupportFilesAreSelfContained$$'
 
 build:
 	mkdir -p $(BINDIR)

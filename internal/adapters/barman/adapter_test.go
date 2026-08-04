@@ -987,6 +987,19 @@ func TestPlanRestoreRequiresMatchingServer(t *testing.T) {
 	}
 }
 
+func TestBackupIDRejectsMalformedScopedIdentity(t *testing.T) {
+	adapter := New(Config{Server: "main"}, nil)
+
+	for _, providerID := range []string{"main/", "main//backup", "main/backup/nested"} {
+		t.Run(providerID, func(t *testing.T) {
+			_, err := adapter.backupID(model.Backup{ProviderID: providerID})
+			if err == nil || !strings.Contains(err.Error(), "invalid barman backup provider_id") {
+				t.Fatalf("backupID(%q) error = %v", providerID, err)
+			}
+		})
+	}
+}
+
 func TestPlanRestoreRejectsInclusiveWithoutPITRTarget(t *testing.T) {
 	inclusive := false
 	_, err := New(Config{Server: "main"}, nil).PlanRestore(context.Background(), model.Backup{

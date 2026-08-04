@@ -418,6 +418,10 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if c.Provider.Type == model.ProviderPGBackRest &&
+		c.Provider.PGBackRest.NoArchiveCheck && c.Provider.PGBackRest.NoArchiveModeCheck {
+		return fmt.Errorf("provider.pgbackrest_check.no_archive_mode_check requires archive checks to remain enabled")
+	}
 	return c.validateCommon()
 }
 

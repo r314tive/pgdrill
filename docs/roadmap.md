@@ -312,6 +312,11 @@ These owner-only NFS observations are not published-release,
 invited-administrator, customer-pilot, production-RTO, or general Yandex Cloud
 compatibility claims.
 
+The observed Yandex Cloud environment was destroyed on 2026-08-02 after local
+evidence export and a reviewed Terraform destroy plan. No continuously running
+hosted demo is part of the product claim; a future session must provision and
+accept a fresh disposable environment.
+
 - Evidence-led demo contract with explicit proof and non-proof boundaries.
 - Customer discovery and one-scenario pilot acceptance checklist.
 - Three-VM Yandex Cloud WAL-G/pgBackRest topology with one public runner,

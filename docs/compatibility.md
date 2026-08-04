@@ -44,9 +44,10 @@ The release pipeline builds static `CGO_ENABLED=0` CLI archives for:
 - Linux amd64 and arm64
 - macOS amd64 and arm64
 
-Windows cross-compilation currently succeeds, but Windows runtime behavior and
-the required PostgreSQL backup tools have not been field-tested. Windows
-archives are therefore not published.
+Windows cross-compilation succeeds, and Windows-specific file-lock and
+recovered-process unit tests run on a native GitHub-hosted Windows runner.
+Complete drills and the required PostgreSQL backup tools have not been
+field-tested on Windows, so Windows archives are not published.
 
 ## Adapter Confidence
 

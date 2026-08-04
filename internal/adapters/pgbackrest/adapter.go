@@ -422,15 +422,13 @@ func (a *Adapter) backupLabel(backup model.Backup) (label string, stanza string,
 	label = backup.ProviderID
 	stanza = backup.ClusterName
 	if before, after, ok := strings.Cut(backup.ProviderID, "/"); ok {
-		if after == "" {
-			return "", "", fmt.Errorf("pgbackrest backup provider_id %q is missing backup label", backup.ProviderID)
+		if before == "" || after == "" || strings.Contains(after, "/") {
+			return "", "", fmt.Errorf("invalid pgbackrest backup provider_id %q", backup.ProviderID)
 		}
-		if before != "" {
-			if stanza != "" && stanza != before {
-				return "", "", fmt.Errorf("pgbackrest backup cluster %q does not match provider_id stanza %q", stanza, before)
-			}
-			stanza = before
+		if stanza != "" && stanza != before {
+			return "", "", fmt.Errorf("pgbackrest backup cluster %q does not match provider_id stanza %q", stanza, before)
 		}
+		stanza = before
 		label = after
 	}
 	if label == "" {

@@ -1,378 +1,161 @@
 # pgdrill
 
-`pgdrill` is an open-source recovery readiness engine for PostgreSQL.
+[![CI](https://github.com/r314tive/pgdrill/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/r314tive/pgdrill/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-It does not try to replace WAL-G, Barman, pgBackRest, pg_probackup, or
-PostgreSQL core verification tools. It orchestrates them to answer a more
-operational question:
+`pgdrill` is an open-source PostgreSQL recovery readiness engine.
 
-> Can this PostgreSQL cluster be restored right now, to the target we claim to
-> support, within the recovery expectations we publish?
+It does not create backups and does not replace WAL-G, Barman, pgBackRest,
+pg_probackup, or PostgreSQL verification tools. It orchestrates those tools to
+answer a narrower operational question:
+
+> Can a selected PostgreSQL backup be restored to the requested recovery point,
+> pass explicit checks, and be cleaned up safely?
 
 ## Status
 
-Engine v0.2 has a
-[`v0.2.0-rc.2`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.2)
-release candidate. It is suitable for controlled technical evaluation but not
-a blanket production-support claim.
+The current published release candidate is
+[`v0.2.0-rc.2`](https://github.com/r314tive/pgdrill/releases/tag/v0.2.0-rc.2).
+It is intended for controlled technical evaluation, not as a blanket
+production-support or compatibility claim.
 
-The CLI implements:
+`main` contains additional pre-GA work that is not part of that archive. The
+exact versions and environments exercised by the project are recorded in the
+[compatibility matrix](compatibility/matrix.yaml) and retained
+[field evidence](compatibility/README.md). Versions outside those cells remain
+unclaimed until they are tested explicitly.
 
-- strict configuration, read-only dependency preflight, and stable exit codes
-- WAL-G, Barman, pgBackRest, and pg_probackup discovery, validation, and local
-  restore planning
-- owned local PostgreSQL restore/start/probe/cleanup drills
-- guarded CloudNativePG backup discovery and disposable verify-cluster drills
-- bounded redacted command evidence, immutable run specs, operation
-  checkpoints, artifact references, and versioned JSON reports
-- fail-closed recovery-policy verdicts for RTO, RPO, backup age, recovery
-  target, and cleanup
-- daemon-free typed fleet validation and deterministic bounded placement
-- optional private local history for immutable specs, ordered events, terminal
-  reports, policy verdicts, and artifact references
-- stable schema identifiers plus digest-confirmed copy migration from the
-  frozen `v0.3.0-alpha.1` history compatibility floor
-- full local artifact hashing plus age-gated, history-reference-aware,
-  digest-confirmed garbage collection
-- digest-confirmed recovery of interrupted local attempts with observation-only
-  operation reconciliation, exact ownership cleanup, immutable incomplete
-  history, and a mandatory stopped-executor assertion
-- release packaging for a non-root multi-architecture OCI image assembled from
-  the exact Linux archives, plus SPDX SBOM and signed provenance workflows
-- text report inspection and Prometheus export
+The planned `v1.0.0` boundary is CLI-first. A hosted control plane, TUI, and web
+UI are not required for the engine release and remain separate roadmap work.
+See the [v1.0 release contract](docs/v1.0-release-contract.md).
 
-Native and CNPG paths share one lifecycle, cancellation, reconciliation, and
-reporting contract. Shared conformance suites cover every adapter and
-executable target. Reproducible integration harnesses exercise all four native
-providers plus separate native and Barman Cloud Plugin KinD/CNPG environments
-through real base backups, post-backup WAL replay, probes, policy, and cleanup.
-Every native-provider gate additionally proves timestamp PITR with a
-transaction on each side of the requested boundary. The WAL-G gate also kills
-the complete drill process group after durable restore intent, reconciles and
-cleans the interrupted attempt, then requires a passed retry under a new
-attempt ID. A separate WAL-G profile repeats that lifecycle against pinned
-MinIO over an internal S3-compatible network and rejects credential leakage.
+## Recovery Drill
 
-The compatibility matrix records narrow fixture, controlled, and exact-version
-field evidence. One clean `v0.1.0-alpha.10` commit has passed WAL-G 3.0.8,
-Barman 3.19.1, pgBackRest 2.58.0, and pg_probackup 2.5.16 restores with
-PostgreSQL 18.3 on Linux arm64, plus CNPG 1.26.3 / PostgreSQL 15.17 in a
-disposable KinD environment. Current `main` exercises timestamp PITR for all
-four native providers and retains exact clean-candidate latest/timestamp field
-evidence for each. The matrix also records one WAL-G S3-compatible MinIO point
-from `v0.3.0-alpha.12` on Linux arm64. A clean `v0.3.0-alpha.14` candidate
-additionally passed latest and timestamp recovery with all four native
-providers against PostgreSQL 17.10 on Linux arm64. These are exact
-version/platform points, not a blanket PostgreSQL support range. Other
-versions, object stores, platforms, and recovery targets remain unclaimed
-until separately exercised.
+A native drill executes one fail-closed lifecycle:
 
-The exact `v0.2.0-rc.2` commit
-`97ad852ecb2c9493c1c4a1e7718f61bf496efa17` passed the clean aggregate
-release-candidate gate across all four native providers and disposable CNPG
-before publication. Published checksums were then verified independently. The
-published Linux arm64 archive passed local WAL-G latest recovery and timestamp
-PITR, proving both sides of an archived transaction boundary. These are
-release and controlled-demo gates, not broader compatibility claims.
+```text
+discover -> select -> validate -> restore -> start PostgreSQL
+         -> probe -> evaluate policy -> stop -> prove cleanup -> report
+```
 
-The typed planner, stable schemas, local history, copy migration, resumable
-retention/GC, and interrupted-attempt recovery are implemented on the current
-`main` branch after `v0.2.0-rc.2`; they are not part of that published archive
-yet. The same is true of the signed archive/OCI supply-chain workflow: its
-implementation is on `main`, but it is not a published support claim until an
-exact tag has completed the workflow and its assets have been independently
-verified.
-Current `main` also implements typed CNPG Barman Cloud Plugin recovery and a
-pinned CNPG 1.29.2 live gate. The compatibility matrix records one exact
-clean-candidate Linux arm64 observation; it is not a broader version/platform
-claim or a published release result.
-Fleet scheduling, leases, remote executors, a controller/agent protocol, TUI,
-and web UI remain roadmap work. They will consume the engine contracts rather
-than become a second orchestration implementation.
+The terminal JSON report binds the result to the selected backup, provider,
+recovery target, tool versions, commands, timings, probes, policy verdicts,
+operation checkpoints, and cleanup evidence.
 
-The intended stable-product boundary and its evidence requirements are defined
-in the [v1.0 release contract](docs/v1.0-release-contract.md). `v1.0.0` is
-CLI-first and does not wait for a web UI or hosted SaaS, but it does require
-stable schemas, proven latest/PITR support cells, daemon-free planning and local
-history, signed distribution, and external pilot evidence.
-
-## Goals
-
-- Verify backup catalogs and WAL continuity through provider-specific adapters.
-- Run real restore drills into disposable targets.
-- Start restored PostgreSQL instances and run structured validation probes.
-- Produce durable evidence for audits, incidents, and SLO checks.
-- Export machine-readable reports and metrics.
-- Stay compatible with existing open-source PostgreSQL backup stacks.
-
-## Initial Providers
-
-Initial adapters are implemented for:
+Implemented provider paths:
 
 - WAL-G
 - Barman
 - pgBackRest
 - pg_probackup
+- CloudNativePG backup resources and the Barman Cloud Plugin through the
+  guarded Kubernetes verification path
 
-Additional providers can be added behind the same internal provider contract.
+The complete local restore path uses a private, disposable work directory.
+CloudNativePG uses a separately owned verify cluster. Provider-specific
+behavior is retained in evidence instead of being reduced to a generic
+success message.
 
-## Core Concepts
+## Safety Model
 
-- **Provider**: a backup system such as WAL-G, Barman, pgBackRest, or
-  pg_probackup.
-- **Restore target**: a disposable place to restore into, such as a local
-  directory, container, VM, or Kubernetes volume.
-- **Recovery target**: latest available WAL, a timestamp, an LSN, an XID, or a
-  named restore point.
-- **Probe**: a post-restore check such as `pg_isready`, `pg_amcheck`, schema
-  dump, row-count sampling, or custom SQL.
-- **Evidence**: immutable facts collected during a drill: versions, commands,
-  timings, logs, checks, and final status.
-- **Failure stage**: a stable lifecycle stage and human-readable reason for a
-  failed or aborted drill, linked to the evidence collected before failure.
-- **Run event**: an optional ordered stage transition identified by logical run
-  and execution attempt. Direct execution remains journal-free by default;
-  `-history-dir` enables the local durable journal.
-- **Operation checkpoint**: a durable intent and terminal mutation state bound
-  to one attempt. It lets a replacement executor reconcile owned resources
-  without assuming that a failed command had no effect.
-- **Artifact reference**: a digest, immutable URI, exact size, media type,
-  retention class, and redaction classification linked from bounded evidence.
-- **Recovery policy**: immutable duration and outcome assertions evaluated from
-  typed drill facts; insufficient evidence is `unknown`, not a pass.
+- Configuration is strict; unknown fields and invalid provider combinations
+  fail before execution.
+- `pgdrill doctor` validates local dependencies without reading the backup
+  catalog or creating a restore target.
+- External commands have bounded deadlines and structured exit evidence.
+- Command evidence is bounded and redacted before it enters a report.
+- Recovery policy fails closed: missing proof is `unknown`, not `passed`.
+- Cleanup removes only resources whose ownership belongs to the current
+  attempt and whose absence can be verified.
+- Interrupted-attempt recovery observes durable state and cleans owned
+  resources; it never blindly replays a provider command.
 
-The implemented full-drill target is `local`. Kubernetes is available through
-the guarded CloudNativePG `target manifest` and `target verify` paths;
-`container` remains a canonical, planned target type rather than an executable
-path. `pgdrill explain -format json` exposes this distinction explicitly.
+The restore execution identity still needs read access to the selected backup
+repository and permission to create its isolated target. Do not point
+`target.work_dir` at a PostgreSQL data directory, backup repository, or shared
+application path.
 
-## Non-Goals
+## Quick Start
 
-- Becoming another PostgreSQL backup tool.
-- Hiding provider-specific behavior behind vague success messages.
-- Claiming that a restored database is semantically correct without explicit
-  probes that prove the required invariants.
-
-## Installation
-
-The prerelease pipeline targets Linux and macOS on amd64 and arm64.
-Published archives and SHA256 checksums are available under
-[GitHub Releases](https://github.com/r314tive/pgdrill/releases). Building from
-source remains supported.
-
-New tags using the current release workflow also publish
-`ghcr.io/r314tive/pgdrill:<version>` for Linux amd64/arm64 together with SPDX
-SBOM and signed provenance assets. The OCI image contains pgdrill itself, not
-an implicitly selected WAL-G/Barman/pgBackRest/pg_probackup toolchain. See
-[docs/container-image.md](docs/container-image.md) for the runtime and
-verification boundary.
-
-To build from source, install the Go version from `.go-version` and run:
+Install a checksummed archive from
+[GitHub Releases](https://github.com/r314tive/pgdrill/releases), or build with
+the Go version recorded in [`.go-version`](.go-version):
 
 ```sh
 make build
 ./bin/pgdrill version
 ```
 
-`pgdrill` orchestrates external PostgreSQL tools. For local drills, the selected
-provider, target, and probe binaries must be installed in the execution
-environment. CNPG probe binaries run inside the restored `postgres` container;
-the pgdrill runner needs `kubectl`, not a duplicate PostgreSQL client toolchain.
-See [docs/compatibility.md](docs/compatibility.md) for the current validation
-boundary and [compatibility/matrix.yaml](compatibility/matrix.yaml) for the
-versioned machine-readable evidence matrix. Release archives include both.
+Put the verified binary on `PATH` before using the commands below.
 
-Validate the config and capture the required client versions without touching a
-backup repository, PostgreSQL server, or Kubernetes API:
+Create a private starter configuration:
 
 ```sh
-pgdrill doctor -f pgdrill.yaml
-pgdrill doctor -f pgdrill.yaml -format json
+install -d -m 0700 "$HOME/.config/pgdrill"
+pgdrill sample-config >"$HOME/.config/pgdrill/pgdrill.yaml"
+chmod 0600 "$HOME/.config/pgdrill/pgdrill.yaml"
 ```
 
-The exact scope and JSON contract are documented in
-[docs/preflight.md](docs/preflight.md).
+The generated file is a template, not a production-ready policy. Review the
+provider repository, executable paths, integrity checks, disposable target,
+recovery target, probes, policy limits, and report path before continuing.
+Inject credentials through the execution environment or an external secret
+mechanism rather than committing them to the file.
 
-Configuration is strict and all external operations have bounded deadline
-defaults. Known fields are also validated against provider and probe semantics
-before external commands start. The provider/catalog deadline is separate from
-the physical restore deadline; see
-[docs/configuration.md](docs/configuration.md).
-Recovery policy is independent from command timeouts and is documented in
-[docs/recovery-policy.md](docs/recovery-policy.md).
+Run the gates in order:
+
+```sh
+pgdrill doctor -f "$HOME/.config/pgdrill/pgdrill.yaml"
+pgdrill catalog list -f "$HOME/.config/pgdrill/pgdrill.yaml"
+pgdrill run -f "$HOME/.config/pgdrill/pgdrill.yaml"
+pgdrill report show ./pgdrill-report.json
+```
+
+`doctor` is read-only preflight. `catalog list` reads the provider catalog.
+`run` performs the physical restore and target lifecycle. Stop after the first
+failed gate and retain its terminal output and report.
+
+The [getting-started guide](docs/getting-started.md) covers execution-host
+sizing, configuration review, first-drill acceptance, failure handling, and
+automation.
+
+## Documentation
+
+The [documentation index](docs/README.md) is the stable entry point.
+
+| Need | Document |
+| --- | --- |
+| Install and run a first drill | [Getting started](docs/getting-started.md) |
+| Operate scheduled drills and evidence | [Operator guide](docs/operator-guide.md) |
+| Configure providers, targets, probes, and reports | [Configuration](docs/configuration.md) |
+| Understand pass/fail semantics | [Recovery policy](docs/recovery-policy.md) |
+| Interpret or integrate report JSON | [Report format](docs/report-format.md) |
+| Review tested version boundaries | [Compatibility](docs/compatibility.md) |
+| Rehearse the technical demo | [Demo guide](demo/README.md) |
+| Understand engine internals | [Architecture](docs/architecture.md) |
+| Contribute changes | [Contributing](CONTRIBUTING.md) |
+| Report a vulnerability | [Security](SECURITY.md) |
+
+## Non-Goals
+
+- Implementing another backup format or retention system.
+- Modifying the source PostgreSQL cluster during a restore drill.
+- Treating backup presence or provider exit code alone as recovery proof.
+- Claiming application correctness beyond configured probes.
+- Claiming that demo RTO/RPO measurements apply to production data volumes.
+- Requiring a hosted service to use the engine.
 
 ## Development
+
+The default local gate is:
 
 ```sh
 make check
 ```
 
-Release-affecting changes should also pass:
-
-```sh
-make -s release-check VERSION=v0.3.0-dev
-```
-
-Run any real local provider path independently, or all native integration gates
-in sequence:
-
-```sh
-make test-integration-walg
-make test-integration-walg-s3
-make test-integration-barman
-make test-integration-pgbackrest
-make test-integration-pgprobackup
-make test-integration-native
-make test-integration-postgresql-17
-make test-integration-cnpg
-make test-integration-cnpg-plugin
-```
-
-`make test-local` combines the normal checks, race detector, CLI smoke, and all
-filesystem-backed disposable native drills. The aggregate release-candidate
-gate additionally repeats all four native providers on PostgreSQL 17.10, runs
-the WAL-G S3-compatible profile on the default PostgreSQL 18.3 baseline, and
-runs both CNPG profiles.
-Artifacts remain under ignored `.cache`; they are not compatibility evidence
-by themselves. See
-[test/integration](test/integration/README.md) for the evidence boundary.
-
-For a clean release-candidate commit with Docker available, run the complete
-artifact, multi-architecture OCI, lint, native-provider, and both disposable
-CNPG protocol gates:
-
-```sh
-make -s release-candidate-check VERSION=v0.3.0-alpha.5
-```
-
-```sh
-go run ./cmd/pgdrill version
-go run ./cmd/pgdrill sample-config
-go run ./cmd/pgdrill explain
-go run ./cmd/pgdrill doctor -f examples/pgdrill.yaml
-go run ./cmd/pgdrill catalog list -f examples/pgdrill.yaml
-go run ./cmd/pgdrill run -f examples/pgdrill.yaml
-go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml
-go run ./cmd/pgdrill target manifest -f path/to/cnpg-manifest-config.yaml -discover
-go run ./cmd/pgdrill target verify -f path/to/cnpg-verify-config.yaml -discover -confirm-create
-go run ./cmd/pgdrill plan validate -f examples/fleet.yaml
-go run ./cmd/pgdrill plan show -f examples/fleet.yaml
-go run ./cmd/pgdrill history list -store path/to/history
-go run ./cmd/pgdrill history show -store path/to/history run-id
-go run ./cmd/pgdrill history verify -store path/to/history
-go run ./cmd/pgdrill history migrate -store path/to/history-alpha \
-  -destination path/to/history-stable
-go run ./cmd/pgdrill history prune -store path/to/history \
-  -before 2026-08-01T00:00:00Z -keep-latest 2
-go run ./cmd/pgdrill artifact verify \
-  -store path/to/report.json.artifacts -history-store path/to/history
-go run ./cmd/pgdrill artifact gc \
-  -store path/to/report.json.artifacts -history-store path/to/history \
-  -before 2026-08-01T00:00:00Z
-go run ./cmd/pgdrill attempt recover -f examples/pgdrill.yaml \
-  -run-id interrupted-run -attempt-id attempt-1 \
-  -history-store path/to/history
-go run ./cmd/pgdrill report show path/to/report.json
-go run ./cmd/pgdrill report metrics path/to/report.json
-```
-
-Automation may provide stable correlation identities with the `-run-id` or
-`-drill-id` flag and the `-attempt-id` flag. Reusing an attempt that already has
-mutation checkpoints is rejected until its orphaned state has been reconciled;
-it is not permission to replay commands. The guarded local recovery flow is
-documented in [docs/attempt-recovery.md](docs/attempt-recovery.md).
-
-Local history is opt-in for execution, so cron and CI jobs do not acquire a
-new availability dependency:
-
-```sh
-pgdrill run -f pgdrill.yaml \
-  -run-id nightly-main \
-  -attempt-id nightly-main-1 \
-  -history-dir /var/lib/pgdrill/history
-pgdrill history list -store /var/lib/pgdrill/history
-pgdrill history show -store /var/lib/pgdrill/history nightly-main
-pgdrill history verify -store /var/lib/pgdrill/history
-```
-
-Local content-addressed artifacts have a separate lifecycle. `artifact verify`
-hashes every blob and resolves references while holding the complete history
-scope under a shared lock. `artifact gc` is dry-run by default, requires a
-strict age cutoff, protects live, audit-classified, and legacy blobs, and
-applies only an exact confirmed plan digest. See
-[docs/artifact-format.md](docs/artifact-format.md).
-
-The planner never resolves credentials or creates targets. Its strict
-inventory and output contracts are documented in
-[docs/fleet-plan-format.md](docs/fleet-plan-format.md); the on-disk journal,
-crash boundaries, and upgrade policy are documented in
-[docs/history-format.md](docs/history-format.md).
-Binary and local-state upgrade, rollback, and retention preparation are
-documented in [docs/upgrade.md](docs/upgrade.md).
-
-Long-running commands handle `SIGINT` and `SIGTERM`. The active provider,
-target, or probe command is canceled first; pgdrill then uses a bounded
-finalization context for owned-target cleanup and atomic report persistence.
-Interrupted drills are reported as `aborted` and return exit code `130`.
-Uncatchable process loss can leave only history events and operation
-checkpoints. After the complete executor process group is independently
-stopped, `pgdrill attempt recover` can plan and confirm fail-closed local
-cleanup without replaying the provider command or fabricating a terminal
-report.
-
-`pgdrill run` and `pgdrill target verify` execute target-aware native-tool
-preflight automatically. Local dependencies fail before repository access or
-target mutation. CNPG validates local `kubectl` first, then checks probe clients
-inside the restored pod after it becomes Ready; both phases remain in the JSON
-drill report.
-
-CLI exit codes are stable automation inputs:
-
-- `0`: command or drill completed successfully
-- `1`: operational or verification failure
-- `2`: invalid CLI usage
-- `130`: operation interrupted or its context canceled
-
-See [docs/roadmap.md](docs/roadmap.md) for the current implementation sequence
-and CLI/UI direction. Probe configuration is documented in
-[docs/probes.md](docs/probes.md).
-CNPG target verification examples are available in
-[examples/cnpg-target-verify.yaml](examples/cnpg-target-verify.yaml) and
-[examples/cnpg-plugin-target-verify.yaml](examples/cnpg-plugin-target-verify.yaml),
-with the CronJob/RBAC surface in
-[examples/kubernetes/cnpg-target-verify-cronjob.yaml](examples/kubernetes/cnpg-target-verify-cronjob.yaml).
-A local pg_probackup drill example is available in
-[examples/pgprobackup.yaml](examples/pgprobackup.yaml).
-The evidence-led technical demo contract is documented in
-[demo/README.md](demo/README.md), with an exact-release-artifact local rehearsal
-under [demo/local](demo/local/README.md) and a reproducible, access-scoped
-Yandex Cloud WAL-G/pgBackRest baseline under
-[demo/yandex-cloud](demo/yandex-cloud/README.md).
-
-Release discipline is described in [docs/release.md](docs/release.md), and
-the versioned JSON report contract is documented in
-[docs/report-format.md](docs/report-format.md). The optional lifecycle stream is
-documented in [docs/run-event-format.md](docs/run-event-format.md), and the
-internal immutable run input is documented in
-[docs/drill-spec-format.md](docs/drill-spec-format.md). The
-interrupted local-attempt protocol is documented in
-[docs/attempt-recovery.md](docs/attempt-recovery.md). The
-daemon-free fleet and plan contracts are documented in
-[docs/fleet-plan-format.md](docs/fleet-plan-format.md), and local persistence
-is documented in [docs/history-format.md](docs/history-format.md). The local
-artifact verification and GC contract is documented in
-[docs/artifact-format.md](docs/artifact-format.md). The current pre-GA upgrade
-and rollback boundary is documented in
-[docs/upgrade.md](docs/upgrade.md). The
-engine/control-plane boundary is recorded in
-[ADR 0001](docs/adr/0001-engine-v0.2-and-control-plane-boundary.md).
-The typed topology and CLI/TUI/web sequence are expanded in
-[docs/control-plane-roadmap.md](docs/control-plane-roadmap.md).
-The GA boundary is tracked separately in
-[docs/v1.0-release-contract.md](docs/v1.0-release-contract.md).
-User-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md). Contribution
-and security reporting guidance is available in
-[CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+Use `make help` for the maintained quality, integration, release, documentation,
+and cleanup targets. Development rules and the complete verification matrix are
+documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

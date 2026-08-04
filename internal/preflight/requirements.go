@@ -3,6 +3,8 @@ package preflight
 import (
 	"fmt"
 	"maps"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/r314tive/pgdrill/internal/adapters"
@@ -172,7 +174,7 @@ func mergeRequirements(requirements []Requirement) []Requirement {
 	merged := make([]Requirement, 0, len(requirements))
 	indexes := map[string]int{}
 	for _, requirement := range requirements {
-		key := string(requirement.Tool) + "\x00" + requirement.Binary + "\x00" + strings.Join(requirement.Args, "\x00")
+		key := requirementExecutionKey(requirement)
 		if index, ok := indexes[key]; ok {
 			for _, component := range requirement.Components {
 				merged[index].Components = appendUnique(merged[index].Components, component)
@@ -184,6 +186,35 @@ func mergeRequirements(requirements []Requirement) []Requirement {
 		merged = append(merged, requirement)
 	}
 	return merged
+}
+
+func requirementExecutionKey(requirement Requirement) string {
+	var key strings.Builder
+	appendIdentityField(&key, string(requirement.Tool))
+	appendIdentityField(&key, requirement.Binary)
+	appendIdentityField(&key, strconv.Itoa(len(requirement.Args)))
+	for _, arg := range requirement.Args {
+		appendIdentityField(&key, arg)
+	}
+	appendIdentityField(&key, requirement.WorkDir)
+
+	envNames := make([]string, 0, len(requirement.Env))
+	for name := range requirement.Env {
+		envNames = append(envNames, name)
+	}
+	sort.Strings(envNames)
+	appendIdentityField(&key, strconv.Itoa(len(envNames)))
+	for _, name := range envNames {
+		appendIdentityField(&key, name)
+		appendIdentityField(&key, requirement.Env[name])
+	}
+	return key.String()
+}
+
+func appendIdentityField(key *strings.Builder, value string) {
+	key.WriteString(strconv.Itoa(len(value)))
+	key.WriteByte(':')
+	key.WriteString(value)
 }
 
 func appendUnique(values []string, additions ...string) []string {

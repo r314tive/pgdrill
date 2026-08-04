@@ -10,6 +10,27 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
+- A Windows CI lane now executes the complete Go unit suite, including native
+  Windows file-lock and recovered-process tests. This strengthens the existing
+  cross-build boundary without claiming Windows provider runtime support.
+- A documentation index, first-drill getting-started guide, and recurring
+  operator guide that separate user workflows from protocol, contributor,
+  demo, and roadmap material.
+- Uncached repository and packaged Markdown link validation in the normal
+  `make check` gate, plus explicit `make docs-check`, `make help`, and bounded
+  `make clean` targets.
+- Self-contained release documentation under its canonical repository paths,
+  with build-time validation that rejects broken links in the packaged
+  documentation and excludes local Terraform state, plans, provider caches,
+  and variable files.
+- A bounded-access Yandex Cloud participant runbook covering SSH and
+  ProxyJump setup, WAL-G and pgBackRest inspection and execution, recovery
+  claim interpretation, stop conditions, and operator escalation boundaries.
+- Explicit hosted-demo report semantics: each immutable run-specific report is
+  authoritative, while the provider's atomic `current` copy exposes the latest
+  structurally valid terminal outcome, including failures.
+- A Terraform-managed reserved public IPv4 for the Yandex Cloud runner, so
+  planned VM stops and starts preserve participant SSH destinations.
 - Local exact-release-artifact pgBackRest rehearsal and an isolated
   three-VM Yandex Cloud pgBackRest demo profile alongside the existing WAL-G
   path. Both require a real full backup, post-backup WAL replay, native
@@ -342,6 +363,46 @@ called out explicitly even while the major version is `0`.
 
 ### Fixed
 
+- Hosted demo entrypoints now reject missing option values as usage errors,
+  and the runner verifies both provider and run identity before updating a
+  provider's `current.json` convenience report.
+- Native preflight no longer merges version checks that use the same tool,
+  binary, and arguments under different environments or working directories.
+  Each distinct execution context is now checked independently.
+- Updated `golang.org/x/sys` from `v0.42.0` to `v0.44.0`, the fixed module
+  version for `GO-2026-5024`. `govulncheck` found no reachable vulnerable
+  symbols before or after the update.
+- pgBackRest configuration now rejects `no_archive_check` together with
+  `no_archive_mode_check` before preflight. pgBackRest treats the latter as
+  invalid when archive checking is disabled, so the previous combination
+  could pass pgdrill parsing but fail only when `pgbackrest check` executed.
+- The hosted demo wrapper now validates an archived terminal report before
+  atomically promoting it to the matching provider's `current.json`; readers
+  can no longer observe a partially copied file or retain malformed or
+  cross-provider current output.
+- The hosted scenario now downloads evidence by the new wrapper-issued run ID
+  instead of a possibly stale `current.json`, and retains its complete SSH
+  session when an attempt fails before producing a terminal report.
+- Release support collection now excludes nested test caches and editor
+  artifacts, preserves tracked `.env.example` templates, and rejects excessive
+  file counts or sizes before constructing archives. Support paths, bytes, and
+  executable modes now come from immutable Git-index blobs, so untracked or
+  unstaged local material cannot leak into a release archive. The allowlist now
+  also includes the sanitized fixtures and conformance tests referenced by the
+  packaged compatibility matrix, which keeps every evidence reference
+  resolvable offline.
+- Documentation link validation now rejects `file://`, Windows absolute, UNC,
+  and repository-escaping symlink targets instead of treating them as
+  self-contained or external links.
+- Barman and pgBackRest restore planning now reject empty or nested components
+  in scoped provider IDs before passing backup identifiers to native commands.
+- The Yandex Cloud participant guide now describes its actual read-only report
+  access while retaining explicit credential, repository, restore-work, and
+  general-sudo boundaries.
+- Yandex Cloud source preparation now filters `findmnt` results to NFS
+  filesystems, so a rebooted `x-systemd.automount` repository is not rejected
+  when `findmnt --target` reports both the `autofs` trigger and its active
+  `nfs4` mount.
 - pgBackRest catalog discovery once again accepts the protocol's `null`
   `prior` value for a full backup while continuing to reject non-string,
   non-null parent labels. The real integration profile now retains the raw

@@ -48,11 +48,33 @@ if [[ -e "${WORK_DIR}" ]]; then
   exit 1
 fi
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_id="${RUN_PREFIX}-${stamp}"
 console_log="${REPORT_DIR}/${run_id}.console.log"
 archived_report="${REPORT_DIR}/${run_id}.report.json"
 run_config="${REPORT_DIR}/${run_id}.config.yaml"
+
+for path in "${console_log}" "${archived_report}" "${archived_report}.sha256" "${run_config}"; do
+  [[ ! -e "${path}" ]] || {
+    printf 'refusing to replace existing run evidence: %s\n' "${path}" >&2
+    exit 1
+  }
+done
+printf 'PGDRILL_DEMO_RUN_ID=%s\n' "${run_id}"
+
+promote_current_report() {
+  local temporary
+  temporary="$(mktemp "${REPORT_DIR}/.${RUN_PREFIX}.current.XXXXXX")"
+  if ! cp -- "${archived_report}" "${temporary}"; then
+    rm -f -- "${temporary}"
+    return 1
+  fi
+  if ! chmod 0640 "${temporary}"; then
+    rm -f -- "${temporary}"
+    return 1
+  fi
+  mv -f -- "${temporary}" "${CURRENT_REPORT}"
+}
 
 sed \
   "s#path: ${CURRENT_REPORT}#path: ${archived_report}#" \
@@ -71,28 +93,30 @@ status="${PIPESTATUS[0]}"
 set -e
 
 if [[ -f "${archived_report}" ]]; then
-  cp "${archived_report}" "${CURRENT_REPORT}"
   sha256sum "${archived_report}" >"${archived_report}.sha256"
   chmod 0640 \
-    "${CURRENT_REPORT}" \
     "${archived_report}" \
     "${archived_report}.sha256" \
     "${console_log}" \
     "${run_config}"
 
-  if ! /usr/local/bin/pgdrill report show "${CURRENT_REPORT}"; then
+  if ! /usr/local/bin/pgdrill report show "${archived_report}"; then
     printf 'pgdrill report validation failed\n' >&2
-    if [[ "${status}" -eq 0 ]]; then
-      status=1
-    fi
-  fi
-  if [[ "${status}" -eq 0 ]] && ! jq -e '.status == "passed"' "${CURRENT_REPORT}" >/dev/null; then
-    printf 'pgdrill report status is not passed\n' >&2
+    status=1
+  elif ! jq -e \
+    --arg provider "${PROVIDER}" \
+    --arg run_id "${run_id}" \
+    '.provider == $provider and .id == $run_id' \
+    "${archived_report}" >/dev/null; then
+    printf 'pgdrill report identity does not match provider %s and run %s\n' \
+      "${PROVIDER}" "${run_id}" >&2
+    status=1
+  elif ! promote_current_report; then
+    printf 'could not atomically publish the current demo report\n' >&2
     status=1
   fi
-  if [[ "${status}" -eq 0 ]] &&
-    ! jq -e --arg provider "${PROVIDER}" '.provider == $provider' "${CURRENT_REPORT}" >/dev/null; then
-    printf 'pgdrill report provider does not match %s\n' "${PROVIDER}" >&2
+  if [[ "${status}" -eq 0 ]] && ! jq -e '.status == "passed"' "${archived_report}" >/dev/null; then
+    printf 'pgdrill report status is not passed\n' >&2
     status=1
   fi
 else

@@ -4,13 +4,18 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/r314tive/pgdrill/internal/compatibility"
+	"github.com/r314tive/pgdrill/internal/doccheck"
 )
 
 func TestParseTargets(t *testing.T) {
@@ -163,6 +168,229 @@ func TestValidateOptionsRequiresFullGitObjectID(t *testing.T) {
 		if _, _, err := validateOptions(opts); err == nil || !strings.Contains(err.Error(), "full 40- or 64-character") {
 			t.Fatalf("commit %q should be rejected, got %v", commit, err)
 		}
+	}
+}
+
+func TestReleaseSupportFilesAreSelfContained(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	entries, err := loadReleaseSupportFiles(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"README.md",
+		"CHANGELOG.md",
+		"compatibility/matrix.yaml",
+		"demo/README.md",
+		"demo/yandex-cloud/USER-RUNBOOK.md",
+		"docs/README.md",
+		"docs/getting-started.md",
+		"docs/operator-guide.md",
+		"examples/fleet.yaml",
+		"internal/adapters/barman/adapter_test.go",
+		"internal/adapters/barman/testdata/list-backups.json",
+		"internal/targets/local/target_test.go",
+	}
+	names := make(map[string]struct{}, len(entries))
+	extracted := t.TempDir()
+	for _, entry := range entries {
+		if _, exists := names[entry.Name]; exists {
+			t.Fatalf("duplicate release support entry %q", entry.Name)
+		}
+		names[entry.Name] = struct{}{}
+	}
+	if err := materializeReleaseSupportFiles(extracted, entries); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range want {
+		if _, ok := names[name]; !ok {
+			t.Errorf("release support files do not contain %q", name)
+		}
+	}
+	for name := range names {
+		if strings.Contains(name, "/.state/") || strings.Contains(name, "/.terraform/") ||
+			strings.HasSuffix(name, ".tfvars") || strings.HasSuffix(name, ".plan") {
+			t.Errorf("release support files contain local artifact %q", name)
+		}
+	}
+
+	issues, err := doccheck.CheckRepository(extracted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range issues {
+		t.Errorf("%s:%d: invalid packaged link %q: %s", issue.Source, issue.Line, issue.Destination, issue.Reason)
+	}
+
+	matrixPayload, err := os.ReadFile(filepath.Join(extracted, "compatibility", "matrix.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	matrix, err := compatibility.Parse(matrixPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := matrix.ValidateReferences(extracted); err != nil {
+		t.Fatalf("packaged compatibility references are not self-contained: %v", err)
+	}
+}
+
+func TestLoadReleaseSupportFilesExcludesLocalArtifacts(t *testing.T) {
+	root := newReleaseFixture(t)
+
+	want := []string{"demo/kept.txt", "demo/.env.example"}
+	for _, name := range want {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.WriteFile(path, []byte("public\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	excluded := []string{
+		"demo/.cache/cache.bin",
+		"demo/.notes/private.txt",
+		"demo/.state/report.json",
+		"demo/.terraform/provider",
+		"demo/.env.local",
+		"demo/editor.swp",
+		"demo/coverage.out",
+		"demo/terraform.tfstate.backup",
+	}
+	for _, name := range excluded {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("private\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stageReleaseFixture(t, root)
+	if err := os.WriteFile(filepath.Join(root, "demo", "untracked-secret.txt"), []byte("private\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := loadReleaseSupportFiles(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		names[entry.Name] = struct{}{}
+	}
+	for _, name := range want {
+		if _, ok := names[name]; !ok {
+			t.Errorf("release support files do not contain %q", name)
+		}
+	}
+	for _, name := range excluded {
+		if _, ok := names[name]; ok {
+			t.Errorf("release support files contain local artifact %q", name)
+		}
+	}
+	if _, ok := names["demo/untracked-secret.txt"]; ok {
+		t.Error("release support files contain an untracked file")
+	}
+}
+
+func TestLoadReleaseSupportFilesUsesIndexContentAndMode(t *testing.T) {
+	root := newReleaseFixture(t)
+	path := filepath.Join(root, "demo", "script.sh")
+	if err := os.WriteFile(path, []byte("staged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stageReleaseFixture(t, root)
+	runGit(t, root, "update-index", "--chmod=+x", "demo/script.sh")
+	if err := os.WriteFile(path, []byte("unstaged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := loadReleaseSupportFiles(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name != "demo/script.sh" {
+			continue
+		}
+		if got, want := string(entry.Body), "staged\n"; got != want {
+			t.Fatalf("release support body = %q, want indexed body %q", got, want)
+		}
+		if got, want := entry.Mode, int64(0o755); got != want {
+			t.Fatalf("release support mode = %#o, want indexed mode %#o", got, want)
+		}
+		return
+	}
+	t.Fatal("release support files do not contain demo/script.sh")
+}
+
+func TestLoadReleaseSupportFilesRejectsTrackedSymlink(t *testing.T) {
+	root := newReleaseFixture(t)
+	readme := filepath.Join(root, "README.md")
+	if err := os.Remove(readme); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("LICENSE", readme); err != nil {
+		t.Skipf("create test symlink: %v", err)
+	}
+	stageReleaseFixture(t, root)
+
+	_, err := loadReleaseSupportFiles(context.Background(), root)
+	if err == nil || !strings.Contains(err.Error(), "unsupported Git mode 120000") {
+		t.Fatalf("expected tracked symlink rejection, got %v", err)
+	}
+}
+
+func TestLoadReleaseSupportFilesRejectsOversizedFile(t *testing.T) {
+	root := newReleaseFixture(t)
+	path := filepath.Join(root, "README.md")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxReleaseSupportFileBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stageReleaseFixture(t, root)
+
+	_, err = loadReleaseSupportFiles(context.Background(), root)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected oversized release support file rejection, got %v", err)
+	}
+}
+
+func newReleaseFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range releaseRootFiles {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range releaseSupportDirectories {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, root, "init", "--quiet")
+	return root
+}
+
+func stageReleaseFixture(t *testing.T, root string) {
+	t.Helper()
+	runGit(t, root, "add", "--force", "--all")
+}
+
+func runGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", root}, args...)...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
 	}
 }
 

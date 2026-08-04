@@ -163,13 +163,13 @@ mount_repository() {
     if mountpoint --quiet "${REPOSITORY_MOUNT}"; then
       # Trigger x-systemd.automount so findmnt observes NFS, not only autofs.
       runuser -u postgres -- ls -ld "${REPOSITORY_MOUNT}/." >/dev/null 2>&1 || true
-      if [[ "$(findmnt --noheadings --raw --output FSTYPE --target "${REPOSITORY_MOUNT}")" != nfs* ]]; then
+      if [[ "$(findmnt --noheadings --raw --types nfs,nfs4 --output FSTYPE --target "${REPOSITORY_MOUNT}")" != nfs* ]]; then
         sleep 2
         continue
       fi
-      options="$(findmnt --noheadings --raw --output OPTIONS --target "${REPOSITORY_MOUNT}")"
+      options="$(findmnt --noheadings --raw --types nfs,nfs4 --output OPTIONS --target "${REPOSITORY_MOUNT}")"
       if [[ ",${options}," == *",${required_mode},"* ]]; then
-        findmnt --noheadings --output SOURCE,FSTYPE,OPTIONS --target "${REPOSITORY_MOUNT}"
+        findmnt --noheadings --types nfs,nfs4 --output SOURCE,FSTYPE,OPTIONS --target "${REPOSITORY_MOUNT}"
         return 0
       fi
       die "repository is mounted without required ${required_mode} mode: ${options}"

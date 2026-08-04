@@ -4,7 +4,7 @@ output "owner_user" {
 }
 
 output "admin_users" {
-  description = "Dedicated non-owner administrator logins created on every VM."
+  description = "Dedicated non-owner administrator logins created on the source and runner VMs."
   value       = sort(keys(var.admin_ssh_public_key_paths))
 }
 
@@ -18,6 +18,13 @@ output "admin_access" {
         "sudo -u postgres /usr/local/sbin/pgdrill-demo-doctor",
         "sudo -u postgres /usr/local/sbin/pgdrill-demo-run",
         "sudo -u postgres /usr/local/sbin/pgdrill-demo-report",
+        "sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-doctor",
+        "sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-run",
+        "sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-report",
+      ]
+      source_commands = [
+        "sudo -u postgres /usr/local/sbin/pgdrill-demo-source-status",
+        "sudo -u postgres /usr/local/sbin/pgdrill-demo-pgbackrest-source-status",
       ]
       source_command = "sudo -u postgres /usr/local/sbin/pgdrill-demo-source-status"
     }
@@ -25,7 +32,7 @@ output "admin_access" {
 }
 
 output "runner_public_ip" {
-  description = "Only public VM address in the demo topology."
+  description = "Reserved static public IPv4 attached only to the runner VM."
   value       = yandex_compute_instance.runner.network_interface[0].nat_ip_address
 }
 

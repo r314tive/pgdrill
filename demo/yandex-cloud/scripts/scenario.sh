@@ -23,6 +23,14 @@ the report, and downloads evidence into demo/yandex-cloud/.state/reports/.
 EOF
 }
 
+require_option_argument() {
+  [[ "$#" -ge 2 ]] || {
+    printf '%s requires a value\n' "$1" >&2
+    usage >&2
+    exit 2
+  }
+}
+
 sha256_files() {
   if command -v sha256sum >/dev/null; then
     sha256sum "$@"
@@ -39,15 +47,18 @@ sha256_files() {
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --provider)
-      provider="${2:-}"
+      require_option_argument "$@"
+      provider="$2"
       shift 2
       ;;
     --identity)
-      identity="${2:-}"
+      require_option_argument "$@"
+      identity="$2"
       shift 2
       ;;
     --terraform-dir)
-      terraform_dir="${2:-}"
+      require_option_argument "$@"
+      terraform_dir="$2"
       shift 2
       ;;
     -h | --help)
@@ -68,7 +79,6 @@ case "${provider}" in
     source_status="/usr/local/sbin/pgdrill-demo-source-status"
     runner_doctor="/usr/local/sbin/pgdrill-demo-doctor"
     runner_run="/usr/local/sbin/pgdrill-demo-run"
-    remote_report="/var/lib/pgdrill-demo/reports/current.json"
     remote_source_state="/var/lib/pgdrill-demo/source-state.json"
     local_suffix=""
     required_provider_checks=("wal-g-wal-verify-integrity")
@@ -78,7 +88,6 @@ case "${provider}" in
     source_status="/usr/local/sbin/pgdrill-demo-pgbackrest-source-status"
     runner_doctor="/usr/local/sbin/pgdrill-demo-pgbackrest-doctor"
     runner_run="/usr/local/sbin/pgdrill-demo-pgbackrest-run"
-    remote_report="/var/lib/pgdrill-demo/reports/pgbackrest-current.json"
     remote_source_state="/var/lib/pgdrill-demo/pgbackrest-source-state.json"
     local_suffix=".pgbackrest"
     required_provider_checks=("pgbackrest-verify")
@@ -89,7 +98,7 @@ case "${provider}" in
     ;;
 esac
 readonly provider source_prepare source_status runner_doctor runner_run
-readonly remote_report remote_source_state local_suffix
+readonly remote_source_state local_suffix
 readonly -a required_provider_checks
 
 [[ "${PGDRILL_DEMO_CONFIRM:-}" == "YES" ]] || {
@@ -134,11 +143,12 @@ printf -v proxy_command \
   "${identity}" "${known_hosts}" "${runner}"
 jump=(-o "ProxyCommand=${proxy_command}")
 
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 local_report="${report_dir}/${stamp}${local_suffix}.report.json"
 local_source_state="${report_dir}/${stamp}${local_suffix}.source-state.json"
 local_source_log="${report_dir}/${stamp}${local_suffix}.source-prepare.log"
 local_runner_log="${report_dir}/${stamp}${local_suffix}.runner-console.log"
+local_runner_session="${report_dir}/${stamp}${local_suffix}.runner-session.log"
 local_runner_inventory="${report_dir}/${stamp}${local_suffix}.runner-inventory.json"
 local_terraform_inventory="${report_dir}/${stamp}${local_suffix}.terraform-inventory.json"
 
@@ -170,50 +180,74 @@ printf '[pgdrill-demo/%s] running restore drill\n' "${provider}"
 set +e
 # shellcheck disable=SC2029
 ssh "${ssh_common[@]}" "${runner}" \
-  "sudo -u postgres '${runner_run}'"
-run_status="$?"
+  "sudo -u postgres '${runner_run}'" 2>&1 | tee "${local_runner_session}"
+run_status="${PIPESTATUS[0]}"
 set -e
 
-# Paths are selected only from the closed provider mapping above.
+run_id="$(awk -F= '/^PGDRILL_DEMO_RUN_ID=/ { print substr($0, index($0, "=") + 1); exit }' "${local_runner_session}")"
+evidence_status=0
+downloaded_evidence=("${local_source_log}" "${local_runner_session}")
+if [[ ! "${run_id}" =~ ^[0-9A-Za-z._-]+$ ]]; then
+  printf 'runner did not return one safe run-specific evidence identity\n' >&2
+  evidence_status=1
+else
+  remote_run_report="/var/lib/pgdrill-demo/reports/${run_id}.report.json"
+  remote_run_log="/var/lib/pgdrill-demo/reports/${run_id}.console.log"
+  if scp "${ssh_common[@]}" "${runner}:${remote_run_report}" "${local_report}"; then
+    downloaded_evidence+=("${local_report}")
+  else
+    printf 'could not download run-specific report %s\n' "${remote_run_report}" >&2
+    evidence_status=1
+  fi
+  if scp "${ssh_common[@]}" "${runner}:${remote_run_log}" "${local_runner_log}"; then
+    downloaded_evidence+=("${local_runner_log}")
+  else
+    printf 'could not download run-specific console log %s\n' "${remote_run_log}" >&2
+    evidence_status=1
+  fi
+fi
+
 # shellcheck disable=SC2029
-scp "${ssh_common[@]}" \
-  "${runner}:${remote_report}" \
-  "${local_report}"
-run_id="$(jq -er '.id | select(type == "string")' "${local_report}")"
-[[ "${run_id}" =~ ^[0-9A-Za-z._-]+$ ]] || {
-  printf 'terminal report contains an unsafe run id: %s\n' "${run_id}" >&2
+if scp "${ssh_common[@]}" "${jump[@]}" \
+  "${source}:${remote_source_state}" \
+  "${local_source_state}"; then
+  downloaded_evidence+=("${local_source_state}")
+else
+  printf 'could not download source state %s\n' "${remote_source_state}" >&2
+  evidence_status=1
+fi
+if scp "${ssh_common[@]}" \
+  "${runner}:/var/lib/pgdrill-demo/runner-inventory.json" \
+  "${local_runner_inventory}"; then
+  downloaded_evidence+=("${local_runner_inventory}")
+else
+  printf 'could not download runner inventory\n' >&2
+  evidence_status=1
+fi
+if terraform -chdir="${terraform_dir}" output -json demo_inventory \
+  >"${local_terraform_inventory}"; then
+  downloaded_evidence+=("${local_terraform_inventory}")
+else
+  rm -f -- "${local_terraform_inventory}"
+  printf 'could not render Terraform inventory\n' >&2
+  evidence_status=1
+fi
+
+if [[ "${run_status}" -ne 0 || "${evidence_status}" -ne 0 ]]; then
+  printf '[pgdrill-demo/%s] restore drill failed; evidence retained\n' "${provider}" >&2
+  printf 'retained evidence files:\n' >&2
+  printf '  %s\n' "${downloaded_evidence[@]}" >&2
+  sha256_files "${downloaded_evidence[@]}"
+  if [[ "${run_status}" -ne 0 ]]; then
+    exit "${run_status}"
+  fi
+  exit 1
+fi
+
+jq -e --arg run_id "${run_id}" '.id == $run_id' "${local_report}" >/dev/null || {
+  printf 'terminal report identity does not match wrapper run id %s\n' "${run_id}" >&2
   exit 1
 }
-scp "${ssh_common[@]}" \
-  "${runner}:/var/lib/pgdrill-demo/reports/${run_id}.console.log" \
-  "${local_runner_log}"
-# shellcheck disable=SC2029
-scp "${ssh_common[@]}" "${jump[@]}" \
-  "${source}:${remote_source_state}" \
-  "${local_source_state}"
-scp "${ssh_common[@]}" \
-  "${runner}:/var/lib/pgdrill-demo/runner-inventory.json" \
-  "${local_runner_inventory}"
-terraform -chdir="${terraform_dir}" output -json demo_inventory \
-  >"${local_terraform_inventory}"
-
-if [[ "${run_status}" -ne 0 ]]; then
-  printf '[pgdrill-demo/%s] restore drill failed; evidence retained\n' "${provider}" >&2
-  printf 'report:              %s\n' "${local_report}" >&2
-  printf 'source state:         %s\n' "${local_source_state}" >&2
-  printf 'source prepare log:   %s\n' "${local_source_log}" >&2
-  printf 'runner console log:   %s\n' "${local_runner_log}" >&2
-  printf 'runner inventory:     %s\n' "${local_runner_inventory}" >&2
-  printf 'Terraform inventory:  %s\n' "${local_terraform_inventory}" >&2
-  sha256_files \
-    "${local_report}" \
-    "${local_source_state}" \
-    "${local_source_log}" \
-    "${local_runner_log}" \
-    "${local_runner_inventory}" \
-    "${local_terraform_inventory}"
-  exit "${run_status}"
-fi
 
 backup_name="$(jq -er '.backup_name' "${local_source_state}")"
 jq -e \
@@ -277,6 +311,7 @@ printf 'report:              %s\n' "${local_report}"
 printf 'source state:         %s\n' "${local_source_state}"
 printf 'source prepare log:   %s\n' "${local_source_log}"
 printf 'runner console log:   %s\n' "${local_runner_log}"
+printf 'runner session log:   %s\n' "${local_runner_session}"
 printf 'runner inventory:     %s\n' "${local_runner_inventory}"
 printf 'Terraform inventory:  %s\n' "${local_terraform_inventory}"
 sha256_files \
@@ -284,5 +319,6 @@ sha256_files \
   "${local_source_state}" \
   "${local_source_log}" \
   "${local_runner_log}" \
+  "${local_runner_session}" \
   "${local_runner_inventory}" \
   "${local_terraform_inventory}"

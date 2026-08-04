@@ -4,6 +4,11 @@ This directory defines a disposable three-VM demo with independent WAL-G and
 pgBackRest local-restore profiles. It is intended for a controlled technical
 session with synthetic data. It is not a production deployment template.
 
+Invited participants should start with the
+[bounded-access user runbook](USER-RUNBOOK.md). Provisioning, source backup
+preparation, evidence export, repair, and teardown remain in this operator
+guide.
+
 Validation status: repository checks and both local release-artifact rehearsals
 pass. On 2026-07-29 UTC, the exact locally built Linux amd64 `v0.3.0-dev`
 WAL-G candidate at commit `444c525c8c104f70ada9b66e8c1b633c6d4e8a0d`,
@@ -25,8 +30,11 @@ Terraform refresh reported no changes.
 
 These are owner-operated observations against one NFS topology, not
 published-release, customer-pilot, cloud-support, or production-RTO claims.
-No invited administrator was provisioned; the bounded-access audit remains
-required before a customer session.
+That recorded rehearsal did not provision an invited administrator; the
+bounded-access audit remains a separate per-participant acceptance gate.
+The observed infrastructure was destroyed after evidence export. This module
+defines a reproducible fresh environment; it is not a continuously available
+hosted service.
 
 ## Topology
 
@@ -44,7 +52,8 @@ flowchart LR
     R --> E["JSON report + checksums + logs"]
 ```
 
-- Only the runner has a public IPv4 address.
+- Only the runner has a public IPv4 address, managed as a reserved Terraform
+  resource so planned VM stops and starts do not change participant access.
 - Source and repository SSH are reachable only through the runner security
   group.
 - The runner mounts the backup repository read-only.
@@ -107,8 +116,9 @@ This metadata-key model avoids requiring a Yandex Cloud Organization for the
 first isolated demo. A customer pilot should prefer OS Login or the customer's
 existing access system when available.
 
-After apply, hand each participant only their own private-key instructions and
-the generated destinations; never share the owner key:
+After apply, hand each participant only their own private-key instructions, the
+generated destinations, and the [user runbook](USER-RUNBOOK.md); never share
+the owner key:
 
 ```sh
 terraform output -json admin_access
@@ -133,7 +143,7 @@ proves that the administrator can use the fixed report wrapper.
 - GitHub CLI, or another authenticated way to download exact release assets.
 - Yandex Cloud CLI and an authenticated provisioning identity.
 - Permission to create Compute instances, VPC network resources, security
-  groups, a public runner address, and a shared egress gateway.
+  groups, a reserved public runner address, and a shared egress gateway.
 - An owner SSH key and the final public keys for invited administrators.
 - An immutable published pgdrill Linux amd64 release archive and its checksum.
 - Trusted public IPv4 CIDRs for every participant who needs SSH.
@@ -253,15 +263,18 @@ It performs these observable steps:
 7. Require the restored target to contain all 101 rows and the sentinel.
 8. Require readiness, SQL, `pg_amcheck`, schema dump, policy, and cleanup
    checks to pass.
-9. Download the terminal report, source boundary, source preparation log,
-   runner console log, runner inventory, and Terraform inventory into the
-   ignored `.state/reports/` directory, cross-check the selected backup and
-   expected boundary, and print their SHA-256 digests.
+9. Capture the wrapper's new run ID, then download only that run's terminal
+   report and console log together with the source boundary, source preparation
+   log, complete runner session, runner inventory, and Terraform inventory into
+   the ignored `.state/reports/` directory. The scenario cross-checks the
+   selected backup and expected boundary and prints every retained SHA-256.
 
 Each run uses its own report path, checkpoint directory, artifact directory,
-console log, and immutable run ID. `current.json` is only a convenience copy.
-Failure reports and logs are downloaded before the scenario returns the
-original nonzero drill status.
+console log, and immutable run ID. The provider's `current` report is an atomic
+convenience copy of the latest structurally valid terminal outcome, including a
+failed outcome; the scenario never uses it to identify a new attempt. Available
+failure evidence is downloaded before the scenario returns the original
+nonzero drill status.
 
 `pgbackrest check` is intentionally run on the source, where both PostgreSQL
 and the repository are available. The command still requires a configured

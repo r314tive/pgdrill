@@ -21,6 +21,9 @@ creation, pgdrill also validates:
 - provider-specific required fields, including `provider.server` for Barman
   and `provider.backup_dir` for pg_probackup
 - provider option enums such as `provider.pgbackrest_verify.output`
+- pgBackRest option dependencies: `pgbackrest_check.no_archive_mode_check`
+  cannot be combined with `no_archive_check`, because pgBackRest requires
+  archive checking to remain enabled for that mode check option
 - the `pg_verifybackup` profile and backup format
 - required and type-specific probe fields, supported modes, and named args
 

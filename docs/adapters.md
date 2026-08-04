@@ -170,9 +170,15 @@ Implemented provider validation:
 - optional `pgbackrest check` when `provider.pgbackrest_check.enabled` is true
 - optional command flags for `--no-archive-check`,
   `--no-archive-mode-check`, and `--archive-timeout=<seconds>`
+- `--no-archive-check` and `--no-archive-mode-check` are individually
+  supported but rejected together before preflight because pgBackRest does not
+  accept the mode-check option after archive checking is disabled
 - disabled by default because `pgbackrest check` validates archive
   configuration and may force PostgreSQL WAL/archive activity on the checked
   host
+- disabling the archive check does not guarantee repository-only operation;
+  when the configured stanza points to PostgreSQL, use a source-side check or
+  leave this validation disabled on an isolated restore runner
 - optional `pgbackrest verify --set=<backup-label> --output=text` when
   `provider.pgbackrest_verify.enabled` is true
 - optional verify flags for `output`, `verbose`, `timeout`, and

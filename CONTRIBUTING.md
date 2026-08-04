@@ -19,6 +19,13 @@ ShellCheck installed:
 make -s release-check VERSION=v0.0.0-dev
 ```
 
+Use `make docs-check` while editing Markdown. It rejects missing, absolute, or
+repository-escaping local links and also protects the self-contained release
+documentation bundle. `make clean` removes only reproducible build output,
+test caches, Terraform provider caches, and generated plans; it deliberately
+preserves `.notes`, compatibility evidence, Terraform state, and local
+variable files.
+
 Adversarial changes to parsers, canonical models, evidence, persistence, or
 recovery ownership should also use the reproducible quality gates:
 

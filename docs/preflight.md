@@ -49,8 +49,9 @@ this post-ready phase fails the drill and still follows normal evidence capture
 and owned-resource cleanup.
 
 Probe presets are expanded before requirements are calculated. Repeated uses of
-the same tool and binary are merged into one command while preserving the list
-of components that depend on it.
+the same tool, binary, arguments, working directory, and environment are merged
+into one command while preserving the list of components that depend on it.
+Requirements that would execute under different environments remain separate.
 
 ## Read-Only Boundary
 

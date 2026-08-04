@@ -40,6 +40,7 @@ change in `CHANGELOG.md`.
 - `go vet ./...`
 - `go test ./...`
 - Windows amd64 cross-compilation (runtime support remains unclaimed)
+- the complete Go unit suite on Windows in branch and pull-request CI
 - Bash syntax for the versioned demo scripts
 - Bash syntax for disposable integration scripts
 
@@ -119,15 +120,23 @@ source commit, release compiler, version, and commit timestamp:
 - macOS amd64
 - macOS arm64
 
-Each `.tar.gz` contains `pgdrill`, `README.md`, the canonical Apache-2.0
-`LICENSE`, project attribution in `NOTICE`, the release `.go-version` compiler
-pin, `ATTEMPT_RECOVERY.md`, `COMPATIBILITY.md`,
-`CONTAINER_IMAGE.md`, `FLEET_PLAN.md`, `HISTORY.md`, `UPGRADE.md`, the validated
-`compatibility-matrix.yaml`, and `fleet.example.yaml`. The
-release builder compiles the packaged fleet example and rejects placement
-rejections before creating archives. Archive paths, modes, ordering,
-timestamps, architecture levels, Go workspace settings, and build flags are
-normalized. The bundle also includes a SHA256 checksum file:
+Each `.tar.gz` contains `pgdrill`, the root project and legal documents, and
+the canonical `docs/`, `examples/`, `demo/`, and `compatibility/` trees. Their
+repository-relative paths are preserved so links in the packaged README and
+documentation remain valid offline. The bundle also contains only the
+allowlisted sanitized provider fixtures and conformance test files needed to
+resolve compatibility-matrix evidence references. Local Terraform state,
+provider caches, plans, test caches, editor files, ignored environment files,
+and `*.tfvars` are excluded from the bundle. Support paths, contents, and
+executable modes come from immutable blobs in the Git index; arbitrary
+untracked or unstaged working-tree content is never collected. File count,
+individual size, and total size are bounded before archive construction.
+
+The release builder validates links in the packaged documentation, validates
+the packaged compatibility matrix and its retained evidence, and compiles the
+packaged fleet example before creating any archive. Archive paths, modes,
+ordering, timestamps, architecture levels, Go workspace settings, and build
+flags are normalized. The bundle also includes a SHA256 checksum file:
 
 ```text
 pgdrill_<version>_linux_amd64.tar.gz

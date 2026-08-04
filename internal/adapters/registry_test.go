@@ -88,6 +88,17 @@ func TestNewProviderRejectsInvalidSemanticConfig(t *testing.T) {
 			want: "unsupported provider.pgbackrest_verify.output",
 		},
 		{
+			name: "pgbackrest archive checks",
+			provider: config.ProviderConfig{
+				Type: model.ProviderPGBackRest,
+				PGBackRest: config.PGBackRestConfig{
+					NoArchiveCheck:     true,
+					NoArchiveModeCheck: true,
+				},
+			},
+			want: "no_archive_mode_check requires archive checks to remain enabled",
+		},
+		{
 			name:     "pgprobackup directory",
 			provider: config.ProviderConfig{Type: model.ProviderPGProbackup},
 			want:     "provider.backup_dir is required",

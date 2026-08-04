@@ -19,10 +19,10 @@ else
   mount_repository() {
     mountpoint --quiet "${REPOSITORY_MOUNT}" || mount "${REPOSITORY_MOUNT}"
     runuser -u postgres -- ls -ld "${REPOSITORY_MOUNT}/." >/dev/null
-    [[ "$(findmnt --noheadings --raw --output FSTYPE --target "${REPOSITORY_MOUNT}")" == nfs* ]] ||
+    [[ "$(findmnt --noheadings --raw --types nfs,nfs4 --output FSTYPE --target "${REPOSITORY_MOUNT}")" == nfs* ]] ||
       die "repository path is not backed by NFS"
     local options
-    options="$(findmnt --noheadings --raw --output OPTIONS --target "${REPOSITORY_MOUNT}")"
+    options="$(findmnt --noheadings --raw --types nfs,nfs4 --output OPTIONS --target "${REPOSITORY_MOUNT}")"
     [[ ",${options}," == *",rw,"* ]] || die "repository is not mounted read-write"
   }
 fi

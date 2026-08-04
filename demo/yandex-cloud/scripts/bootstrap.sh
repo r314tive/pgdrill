@@ -22,18 +22,29 @@ Linux amd64 release archive on an already-applied Terraform demo topology.
 EOF
 }
 
+require_option_argument() {
+  [[ "$#" -ge 2 ]] || {
+    printf '%s requires a value\n' "$1" >&2
+    usage >&2
+    exit 2
+  }
+}
+
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --archive)
-      archive="${2:-}"
+      require_option_argument "$@"
+      archive="$2"
       shift 2
       ;;
     --identity)
-      identity="${2:-}"
+      require_option_argument "$@"
+      identity="$2"
       shift 2
       ;;
     --terraform-dir)
-      terraform_dir="${2:-}"
+      require_option_argument "$@"
+      terraform_dir="$2"
       shift 2
       ;;
     -h | --help)

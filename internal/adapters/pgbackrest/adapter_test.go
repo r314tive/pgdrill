@@ -455,12 +455,10 @@ func TestValidateCatalogRunsPgBackRestCheck(t *testing.T) {
 		Timeout:      time.Minute,
 		RedactValues: []string{"secret"},
 		Check: CheckConfig{
-			Enabled:            true,
-			Timeout:            2 * time.Minute,
-			NoArchiveCheck:     true,
-			NoArchiveModeCheck: true,
-			ArchiveTimeout:     30 * time.Second,
-			RedactValues:       []string{"check-secret"},
+			Enabled:        true,
+			Timeout:        2 * time.Minute,
+			ArchiveTimeout: 30 * time.Second,
+			RedactValues:   []string{"check-secret"},
 		},
 	}, runner).ValidateCatalog(context.Background(), model.BackupCatalog{}, model.Backup{}, model.RecoveryTarget{})
 	if err != nil {
@@ -478,7 +476,7 @@ func TestValidateCatalogRunsPgBackRestCheck(t *testing.T) {
 	if len(report.Evidence) != 1 {
 		t.Fatalf("expected command evidence, got %#v", report.Evidence)
 	}
-	wantArgs := []string{"--config=/etc/pgbackrest.conf", "--stanza=main", "--repo=1", "check", "--no-archive-check", "--no-archive-mode-check", "--archive-timeout=30"}
+	wantArgs := []string{"--config=/etc/pgbackrest.conf", "--stanza=main", "--repo=1", "check", "--archive-timeout=30"}
 	if !reflect.DeepEqual(runner.invocation.Args, wantArgs) {
 		t.Fatalf("unexpected check args:\ngot  %#v\nwant %#v", runner.invocation.Args, wantArgs)
 	}
@@ -487,6 +485,32 @@ func TestValidateCatalogRunsPgBackRestCheck(t *testing.T) {
 	}
 	if got, want := runner.invocation.RedactValues, []string{"secret", "check-secret"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected check redactions: got %#v want %#v", got, want)
+	}
+}
+
+func TestCheckArgsMapCompatibleArchiveOptions(t *testing.T) {
+	tests := []struct {
+		name  string
+		check CheckConfig
+		want  string
+	}{
+		{name: "disable archive check", check: CheckConfig{NoArchiveCheck: true}, want: "--no-archive-check"},
+		{name: "disable archive mode check", check: CheckConfig{NoArchiveModeCheck: true}, want: "--no-archive-mode-check"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := New(Config{Stanza: "main", Check: tt.check}, &fakeRunner{}).checkArgs()
+			count := 0
+			for _, arg := range args {
+				if arg == tt.want {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("expected %q exactly once in %#v", tt.want, args)
+			}
+		})
 	}
 }
 
@@ -812,6 +836,19 @@ func TestPlanRestoreRequiresMatchingStanza(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "configured for") {
 		t.Fatalf("expected stanza validation error, got %v", err)
+	}
+}
+
+func TestBackupLabelRejectsMalformedScopedIdentity(t *testing.T) {
+	adapter := New(Config{Stanza: "main"}, nil)
+
+	for _, providerID := range []string{"/backup", "main/", "main//backup", "main/backup/nested"} {
+		t.Run(providerID, func(t *testing.T) {
+			_, _, err := adapter.backupLabel(model.Backup{ProviderID: providerID})
+			if err == nil || !strings.Contains(err.Error(), "invalid pgbackrest backup provider_id") {
+				t.Fatalf("backupLabel(%q) error = %v", providerID, err)
+			}
+		})
 	}
 }
 

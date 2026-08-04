@@ -159,6 +159,17 @@ resource "yandex_vpc_subnet" "demo" {
   labels         = local.labels
 }
 
+resource "yandex_vpc_address" "runner_public" {
+  name        = "${var.name_prefix}-runner-public"
+  description = "Static public IPv4 for the pgdrill demo runner"
+  folder_id   = var.folder_id
+  labels      = local.labels
+
+  external_ipv4_address {
+    zone_id = var.zone
+  }
+}
+
 resource "yandex_vpc_security_group" "runner" {
   name       = "${var.name_prefix}-runner"
   network_id = yandex_vpc_network.demo.id
@@ -372,6 +383,7 @@ resource "yandex_compute_instance" "runner" {
     subnet_id          = yandex_vpc_subnet.demo.id
     ip_address         = local.runner_ip
     nat                = true
+    nat_ip_address     = yandex_vpc_address.runner_public.external_ipv4_address[0].address
     security_group_ids = [yandex_vpc_security_group.runner.id]
   }
 

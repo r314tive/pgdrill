@@ -32,6 +32,14 @@ archive may be a clean local release candidate or a published release.
 EOF
 }
 
+require_option_argument() {
+  [[ "$#" -ge 2 ]] || {
+    printf '%s requires a value\n' "$1" >&2
+    usage >&2
+    exit 2
+  }
+}
+
 die() {
   printf '[demo/local/%s] ERROR: %s\n' "${provider}" "$*" >&2
   exit 1
@@ -64,23 +72,28 @@ verify_checksums() {
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --provider)
-      provider="${2:-}"
+      require_option_argument "$@"
+      provider="$2"
       shift 2
       ;;
     --archive)
-      archive="${2:-}"
+      require_option_argument "$@"
+      archive="$2"
       shift 2
       ;;
     --archive-sha256)
-      archive_sha256="${2:-}"
+      require_option_argument "$@"
+      archive_sha256="$2"
       shift 2
       ;;
     --commit)
-      commit="${2:-}"
+      require_option_argument "$@"
+      commit="$2"
       shift 2
       ;;
     --version)
-      version="${2:-}"
+      require_option_argument "$@"
+      version="$2"
       shift 2
       ;;
     -h | --help)

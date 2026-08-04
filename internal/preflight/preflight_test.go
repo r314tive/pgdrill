@@ -181,6 +181,75 @@ func TestMergeRequirementsKeepsDistinctBinaries(t *testing.T) {
 	}
 }
 
+func TestMergeRequirementsKeepsDistinctExecutionEnvironments(t *testing.T) {
+	merged := mergeRequirements([]Requirement{
+		{
+			Tool:         model.ToolPSQL,
+			Components:   []string{"probe.one"},
+			Binary:       "psql",
+			Args:         []string{"--version"},
+			Env:          map[string]string{"PGAPPNAME": "pgdrill", "PGPORT": "5432"},
+			WorkDir:      "/work/one",
+			RedactValues: []string{"first"},
+		},
+		{
+			Tool:         model.ToolPSQL,
+			Components:   []string{"probe.two"},
+			Binary:       "psql",
+			Args:         []string{"--version"},
+			Env:          map[string]string{"PGPORT": "5432", "PGAPPNAME": "pgdrill"},
+			WorkDir:      "/work/one",
+			RedactValues: []string{"second"},
+		},
+		{
+			Tool:       model.ToolPSQL,
+			Components: []string{"probe.three"},
+			Binary:     "psql",
+			Args:       []string{"--version"},
+			Env:        map[string]string{"PGAPPNAME": "different", "PGPORT": "5432"},
+			WorkDir:    "/work/one",
+		},
+		{
+			Tool:       model.ToolPSQL,
+			Components: []string{"probe.four"},
+			Binary:     "psql",
+			Args:       []string{"--version"},
+			Env:        map[string]string{"PGAPPNAME": "pgdrill", "PGPORT": "5432"},
+			WorkDir:    "/work/two",
+		},
+	})
+
+	if len(merged) != 3 {
+		t.Fatalf("unexpected merged requirements %#v", merged)
+	}
+	if want := []string{"probe.one", "probe.two"}; !reflect.DeepEqual(merged[0].Components, want) {
+		t.Fatalf("unexpected merged components: got %#v want %#v", merged[0].Components, want)
+	}
+	if want := []string{"first", "second"}; !reflect.DeepEqual(merged[0].RedactValues, want) {
+		t.Fatalf("unexpected merged redactions: got %#v want %#v", merged[0].RedactValues, want)
+	}
+}
+
+func TestRequirementExecutionKeySeparatesFieldBoundaries(t *testing.T) {
+	first := Requirement{
+		Tool:    model.ToolPSQL,
+		Binary:  "psql",
+		Args:    []string{"x"},
+		WorkDir: "y",
+		Env:     map[string]string{"z": "w"},
+	}
+	second := Requirement{
+		Tool:    model.ToolPSQL,
+		Binary:  "psql",
+		Args:    []string{"x", "y", "z"},
+		WorkDir: "w",
+	}
+
+	if requirementExecutionKey(first) == requirementExecutionKey(second) {
+		t.Fatal("distinct execution fields produced the same requirement key")
+	}
+}
+
 type stubResponse struct {
 	result command.Result
 	err    error

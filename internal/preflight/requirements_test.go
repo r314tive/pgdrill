@@ -66,6 +66,39 @@ func TestRequirementsForLocalDrill(t *testing.T) {
 	}
 }
 
+func TestRequirementsKeepTargetAndProbePSQLContextsDistinct(t *testing.T) {
+	cfg := config.Config{
+		Provider: config.ProviderConfig{Type: model.ProviderWALG},
+		Target: config.TargetConfig{
+			Type:       model.RestoreTargetLocal,
+			PSQLBinary: "/opt/pgsql/bin/psql",
+			Env:        map[string]string{"PGAPPNAME": "pgdrill-target"},
+		},
+		Probes: []config.ProbeConfig{{
+			Type:   model.ProbeSQL,
+			Binary: "/opt/pgsql/bin/psql",
+			Query:  "select 1",
+		}},
+	}
+
+	requirements, err := Requirements(cfg)
+	if err != nil {
+		t.Fatalf("build requirements: %v", err)
+	}
+	psqlRequirements := make([]Requirement, 0, 2)
+	for _, requirement := range requirements {
+		if requirement.Tool == model.ToolPSQL {
+			psqlRequirements = append(psqlRequirements, requirement)
+		}
+	}
+	if len(psqlRequirements) != 2 {
+		t.Fatalf("expected distinct target and probe psql requirements, got %#v", psqlRequirements)
+	}
+	if want := map[string]string{"PGAPPNAME": "pgdrill-target"}; !reflect.DeepEqual(psqlRequirements[0].Env, want) || len(psqlRequirements[1].Env) != 0 {
+		t.Fatalf("unexpected psql execution environments %#v", psqlRequirements)
+	}
+}
+
 func TestProviderVersionCommands(t *testing.T) {
 	tests := []struct {
 		provider model.ProviderType
@@ -152,6 +185,20 @@ func TestRequirementsRejectInvalidExecutionConfig(t *testing.T) {
 				}},
 			},
 			want: "unsupported pg_verifybackup format",
+		},
+		{
+			name: "pgbackrest archive checks",
+			cfg: config.Config{
+				Provider: config.ProviderConfig{
+					Type: model.ProviderPGBackRest,
+					PGBackRest: config.PGBackRestConfig{
+						NoArchiveCheck:     true,
+						NoArchiveModeCheck: true,
+					},
+				},
+				Target: config.TargetConfig{Type: model.RestoreTargetLocal},
+			},
+			want: "no_archive_mode_check requires archive checks to remain enabled",
 		},
 		{
 			name: "probe",
