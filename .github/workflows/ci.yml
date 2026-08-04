@@ -44,7 +44,7 @@ jobs:
         run: make -s release-check VERSION=v0.0.0-ci
 
   windows-tests:
-    name: Go 1.26.5 (Windows tests)
+    name: Go 1.26.5 (Windows platform)
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -57,5 +57,9 @@ jobs:
         with:
           go-version: 1.26.5
           cache-dependency-path: go.sum
-      - name: Run Windows unit tests
-        run: go test ./...
+      - name: Compile Windows test graph
+        run: go test -run '^$' ./...
+      - name: Run Windows file-lock tests
+        run: go test -count=1 ./internal/filelock
+      - name: Run Windows recovered-process tests
+        run: go test -count=1 ./internal/targets/local -run '^TestWindowsIdentityBoundRecoveredProcess$'

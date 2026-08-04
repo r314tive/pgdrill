@@ -63,6 +63,11 @@ make test-integration-cnpg
 for integration scripts. Integration output is intentionally ignored and does
 not become a compatibility claim without a separate reviewed evidence update.
 
+The native Windows CI lane compiles the complete Go test graph without running
+the POSIX-oriented provider fixtures, then executes the Windows file-lock/DACL
+and identity-bound recovered-process tests. This is a portability gate, not a
+claim that provider drills are supported on Windows.
+
 Release-candidate owners should use the clean-tree aggregate gate:
 
 ```sh

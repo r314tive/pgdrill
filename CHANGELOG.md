@@ -10,9 +10,10 @@ called out explicitly even while the major version is `0`.
 
 ### Added
 
-- A Windows CI lane now executes the complete Go unit suite, including native
-  Windows file-lock and recovered-process tests. This strengthens the existing
-  cross-build boundary without claiming Windows provider runtime support.
+- A native Windows CI lane now compiles the complete Go test graph and executes
+  focused file-lock/DACL and identity-bound recovered-process tests. This
+  strengthens the existing cross-build boundary without presenting the
+  POSIX-oriented provider drill suite as Windows runtime support.
 - A documentation index, first-drill getting-started guide, and recurring
   operator guide that separate user workflows from protocol, contributor,
   demo, and roadmap material.

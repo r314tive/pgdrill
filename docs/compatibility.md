@@ -44,10 +44,12 @@ The release pipeline builds static `CGO_ENABLED=0` CLI archives for:
 - Linux amd64 and arm64
 - macOS amd64 and arm64
 
-Windows cross-compilation succeeds, and Windows-specific file-lock and
-recovered-process unit tests run on a native GitHub-hosted Windows runner.
-Complete drills and the required PostgreSQL backup tools have not been
-field-tested on Windows, so Windows archives are not published.
+Windows cross-compilation succeeds. A native GitHub-hosted Windows runner
+compiles the complete Go test graph, then executes focused file-lock/DACL and
+identity-bound recovered-process tests. It deliberately does not execute the
+POSIX-oriented provider drill suite. Complete drills and the required
+PostgreSQL backup tools have not been field-tested on Windows, so Windows
+archives are not published.
 
 ## Adapter Confidence
 
